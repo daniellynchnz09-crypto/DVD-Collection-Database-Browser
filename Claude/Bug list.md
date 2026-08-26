@@ -1,0 +1,2 @@
+Bug list
+This will list all the current bugs/security flaws or issues that have been found in the program that might not be relevant at the moment but will need to be or should be resolved in the future

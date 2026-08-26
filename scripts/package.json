@@ -1,0 +1,19 @@
+{
+  "name": "scripts",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "sync": "tsx src/sync-sheet.ts",
+    "sanitize-public-repo": "tsx src/sanitize-public-repo.ts"
+  },
+  "dependencies": {
+    "@danflix/shared": "*",
+    "@supabase/supabase-js": "^2.45.0",
+    "googleapis": "^144.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0",
+    "@types/node": "^20.0.0"
+  }
+}

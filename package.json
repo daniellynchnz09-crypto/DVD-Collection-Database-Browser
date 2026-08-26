@@ -1,0 +1,19 @@
+{
+  "name": "danflix",
+  "version": "0.0.1",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "scripts"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "sync:sheet": "npm run sync --workspace=scripts"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0"
+  }
+}

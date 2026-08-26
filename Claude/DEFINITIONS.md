@@ -1,0 +1,16 @@
+DEFINITIONS:
+dvds:
+Within these instructions I will often refer to the items in the physical media collection as DVDs. this does not mean that I am exclusively talking about DVDs but rather all the different formats of the items in my collection, it is just easier to say DVDs because the vast majority of the items in my collection are DVDs so it is how I am used to describing my collection. Just assume that when I say my DVD collection, or DVDs I am likely referring to the whole collection unless I say otherwise or there is the context of other formats in the same message in which case I am talking about the format of DVD specifically
+Steelbook:
+Some of the items in my physical media collection are steelbooks. These would be items that instead of having a plastic case instead have a steel case and have better artwork on the cover. The large majority of steelbook titles in my collection are 4K UHD Blu-Ray titles, but there are a few Blu-Ray and DVD Steelbook titles that exist in the collection too, but these are few.
+Movie Cuts:
+A Movie cut refers to an alternate version of the same movie that might be longer or shorter than the traditional theatrical cut or commonly avianlike version, these movie cuts can exist in a box set, in the special features of an existing title, or as an independent title in the collection
+Remakes:
+A remake is a remastered version of an existing movie. It might have the same genre, name, franchise or even cast and crew as the original, but it has been released on a later date. There is the potential that a remake could be confused with an original and visa versa due to their similarities in content, so it is something to be aware of. Also, two titles of the same name does not mean that they are remakes or part of the same franchise, for example, there are multiple movies called shadow, each with different genres and release dates and are individual movies that are not part of the same franchise.
+Collection:
+A collection is a box set or a DVD case that holds more than one movie. Sometimes these movies exist in the same franchise eg. John wick, John Wick Chapter 2, and John Wick Chapter 3 Parabellum. Or it may hold assorted movies of a genre, movies that star an actor, movies that feature the work of a director, different cuts of the same movie, A collection of TV Specials, A Complete Series with multiple Seasons of TV or just a random assortment of movies. Sometimes each movie might get it's own disk, sometimes there will be multiple movies on a disk, or it could even be a single disk for a two film collection. In the spreadsheet, Collections are noted with the first entry showing the collection as a whole, and subsequent entries being for each title in the collection, or each movie, cut of a movie, or season of a TV Show
+
+SQL Database:
+
+There is mention in a few of these documents about an SQL database, this mainly refers to a high performance data base that is not the Google sheets document that has the same information as the google sheets document that is used for all of the search queries done by the web app. This database may or may not be made with SQL depending on what is chosen, but for now in these planning documents it may be referred to as an SQL database, even though that may not be the case when this project is created. 
+
