@@ -77,12 +77,22 @@ export function looksLikeCollection(productTitle: string): boolean {
   return COLLECTION_HINT_WORDS.test(productTitle);
 }
 
+// UPCitemdb's titles are crowdsourced/scraped from resale listings, not just packaging -
+// found via a real scan whose product title was "Paper Planes Dvd (2015) (region 4, Non Uk
+// Standard), , Used; Acceptable Dvd": condition/listing words like "Used; Acceptable"
+// weren't being stripped, so the OMDB search query came out as "Paper Planes , , Used;
+// Acceptable" and matched nothing even though "Paper Planes" alone finds it easily.
+const MARKETPLACE_NOISE_WORDS =
+  /\b(brand new|like new|very good|good condition|acceptable|used|pre-?owned|second-?hand|free shipping|fast dispatch|fast shipping|ex-?rental|near mint|mint condition)\b/gi;
+
 /** Strips packaging/format noise from a UPC product title to get a usable OMDB search term. */
 export function cleanProductTitleForSearch(productTitle: string): string {
   return productTitle
     .replace(/\b(blu-?ray|dvd|4k|uhd|ultra ?hd|steelbook|region [a-z0-9]+|edition|disc|widescreen)\b/gi, "")
     .replace(COLLECTION_HINT_WORDS, "")
+    .replace(MARKETPLACE_NOISE_WORDS, "")
     .replace(/\(.*?\)/g, "")
+    .replace(/[,;]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
