@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  Image,
   ScrollView,
   StyleSheet,
   Switch,
@@ -26,6 +27,7 @@ interface OmdbCandidate {
   Year: string;
   imdbID: string;
   Type: string;
+  Poster: string;
 }
 
 type ShelfLocation = { before: string | null; after: string | null } | null;
@@ -319,18 +321,32 @@ export default function ConfirmScreen({
       {candidates.length > 0 ? (
         <View style={styles.section}>
           <Text style={styles.label}>{isCollection ? "Titles in this set" : "Best match"}</Text>
-          {candidates.map((c) => (
-            <TouchableOpacity
-              key={c.imdbID}
-              style={[styles.candidateRow, selected.has(c.imdbID) && styles.candidateRowSelected]}
-              onPress={() => toggleCandidate(c.imdbID)}
-            >
-              <Text style={styles.candidateText}>
-                {selected.has(c.imdbID) ? "[x] " : "[ ] "}
-                {c.Title} ({c.Year})
-              </Text>
-            </TouchableOpacity>
-          ))}
+          <Text style={styles.hint}>
+            Compare the cover art before picking - different releases of the same film (special
+            editions, re-releases) often look different but OMDB's text alone won&apos;t tell them apart.
+          </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.candidateScroll}>
+            {candidates.map((c) => (
+              <TouchableOpacity
+                key={c.imdbID}
+                style={[styles.posterCard, selected.has(c.imdbID) && styles.posterCardSelected]}
+                onPress={() => toggleCandidate(c.imdbID)}
+              >
+                {c.Poster && c.Poster !== "N/A" ? (
+                  <Image source={{ uri: c.Poster }} style={styles.posterImage} resizeMode="cover" />
+                ) : (
+                  <View style={[styles.posterImage, styles.posterPlaceholder]}>
+                    <Text style={styles.posterPlaceholderText}>No image</Text>
+                  </View>
+                )}
+                <Text style={styles.posterTitle} numberOfLines={2}>
+                  {selected.has(c.imdbID) ? "[x] " : "[ ] "}
+                  {c.Title}
+                </Text>
+                <Text style={styles.posterYear}>{c.Year}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
           {isCollection && (
             <TouchableOpacity onPress={() => setSelected(new Set())}>
               <Text style={styles.link}>None of these match - enter manually</Text>
@@ -415,6 +431,26 @@ const styles = StyleSheet.create({
   },
   candidateRowSelected: { borderColor: "#0284c7", backgroundColor: "#0c2a3a" },
   candidateText: { color: "#f4f4f5" },
+  candidateScroll: { marginTop: 4 },
+  posterCard: {
+    width: 120,
+    marginRight: 10,
+    padding: 6,
+    borderWidth: 1,
+    borderColor: "#3f3f46",
+    borderRadius: 8,
+  },
+  posterCardSelected: { borderColor: "#0284c7", backgroundColor: "#0c2a3a" },
+  posterImage: {
+    width: "100%",
+    height: 168,
+    borderRadius: 6,
+    backgroundColor: "#18181b",
+  },
+  posterPlaceholder: { alignItems: "center", justifyContent: "center" },
+  posterPlaceholderText: { color: "#71717a", fontSize: 12, textAlign: "center" },
+  posterTitle: { color: "#f4f4f5", fontSize: 13, marginTop: 6 },
+  posterYear: { color: "#a1a1aa", fontSize: 12 },
   error: { color: "#f87171" },
   button: {
     backgroundColor: "#0284c7",
