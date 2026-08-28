@@ -1,4 +1,5 @@
 import { google, sheets_v4 } from "googleapis";
+import { columnLetter, formatFieldForSheet } from "@danflix/shared";
 
 let cachedSheets: sheets_v4.Sheets | null = null;
 
@@ -57,4 +58,57 @@ export async function appendRowToSheet(row: string[]): Promise<void> {
     insertDataOption: "INSERT_ROWS",
     requestBody: { values: [row] },
   });
+}
+
+/**
+ * Patches just a few cells of an existing Sheet row (found by matching the Unique
+ * Identifier column), leaving every other cell untouched - for the barcode-backfill
+ * "link to an existing entry" flow (Claude/TECH STACK AND ARCHITECTURE.md), which only
+ * ever refreshes a handful of OMDB-sourced fields, never the whole row. Fields with no
+ * Sheet column (e.g. case_image_url) are simply skipped. Returns false if no row in the
+ * Sheet has that unique_id (shouldn't normally happen - every DB row was synced from the
+ * Sheet originally - but callers should treat it as "the Sheet wasn't updated", not throw.
+ */
+export async function updateSheetFieldsByUniqueId(
+  uniqueId: string,
+  fields: Record<string, unknown>,
+  header: string[],
+  columnIndexes: Record<string, number>
+): Promise<boolean> {
+  const uniqueIdCol = columnIndexes["unique_id"];
+  if (uniqueIdCol == null) return false;
+
+  const sheets = getSheetsClient();
+  const { sheetId, tabName } = getSheetConfig();
+  const idColLetter = columnLetter(uniqueIdCol);
+
+  const { data: idColumnData } = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId,
+    range: `${tabName}!${idColLetter}2:${idColLetter}`,
+  });
+  const ids = idColumnData.values ?? [];
+  const rowOffset = ids.findIndex((r) => r[0] === uniqueId);
+  if (rowOffset === -1) return false;
+  const rowNumber = rowOffset + 2; // +1 for the header row, +1 for 1-indexing
+
+  const { data: rowData } = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId,
+    range: `${tabName}!${rowNumber}:${rowNumber}`,
+  });
+  const row = rowData.values?.[0] ?? [];
+  while (row.length < header.length) row.push("");
+
+  for (const [field, value] of Object.entries(fields)) {
+    const index = columnIndexes[field];
+    if (index == null) continue;
+    row[index] = formatFieldForSheet(field, value);
+  }
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: sheetId,
+    range: `${tabName}!${rowNumber}:${rowNumber}`,
+    valueInputOption: "RAW",
+    requestBody: { values: [row] },
+  });
+  return true;
 }

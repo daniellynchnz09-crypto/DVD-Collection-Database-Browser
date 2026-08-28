@@ -1,6 +1,7 @@
 export interface UpcProduct {
   title: string;
   description?: string;
+  imageUrl?: string;
 }
 
 /**
@@ -10,8 +11,10 @@ export interface UpcProduct {
 export async function upcLookup(barcode: string): Promise<UpcProduct | null> {
   const res = await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${encodeURIComponent(barcode)}`);
   if (!res.ok) return null;
-  const data = (await res.json()) as { items?: { title: string; description?: string }[] };
+  const data = (await res.json()) as {
+    items?: { title: string; description?: string; images?: string[] }[];
+  };
   const item = data?.items?.[0];
   if (!item?.title) return null;
-  return { title: item.title, description: item.description };
+  return { title: item.title, description: item.description, imageUrl: item.images?.[0] };
 }

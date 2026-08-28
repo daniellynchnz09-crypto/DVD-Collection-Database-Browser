@@ -9,7 +9,15 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { confirmScan, dismissScan, type ConfirmEntry } from "../lib/scanApi";
+import {
+  confirmScan,
+  dismissScan,
+  findExistingTitle,
+  linkExistingTitle,
+  type ConfirmEntry,
+  type ExistingTitleCandidate,
+  type FindExistingResult,
+} from "../lib/scanApi";
 import type { PendingScan } from "./PendingScansScreen";
 
 interface OmdbCandidate {
@@ -20,6 +28,7 @@ interface OmdbCandidate {
 }
 
 type ShelfLocation = { before: string | null; after: string | null } | null;
+type MatchCheck = Extract<FindExistingResult, { status: "auto" | "ambiguous" }>;
 
 /**
  * Review/manual-fill form for one pending scan. Per Claude/TECH STACK AND
@@ -27,6 +36,11 @@ type ShelfLocation = { before: string | null; after: string | null } | null;
  * (format, disc count, region, special features) - those are always manual. When the
  * resolver flagged this as a collection, candidates become a checklist instead of a
  * single pick, so every checked title gets its own entry in one submit.
+ *
+ * Before creating anything (single-title case only - collections aren't matched this way
+ * yet), checks whether the title is already in the collection without a barcode attached
+ * (the bulk-backfill scenario) and offers to attach this scan to that entry instead of
+ * making a duplicate.
  */
 export default function ConfirmScreen({
   scan,
@@ -34,12 +48,12 @@ export default function ConfirmScreen({
   onBack,
 }: {
   scan: PendingScan;
-  onConfirmed: (shelfLocation: ShelfLocation) => void;
+  onConfirmed: (result: { shelfLocation: ShelfLocation; linkedTitle?: string }) => void;
   onBack: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const candidates = (scan.resolved_candidates?.omdbCandidates ?? []) as OmdbCandidate[];
-  const isCollection = Boolean((scan.resolved_candidates as { isCollection?: boolean })?.isCollection);
+  const isCollection = Boolean(scan.resolved_candidates?.isCollection);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [manualTitle, setManualTitle] = useState("");
@@ -49,6 +63,9 @@ export default function ConfirmScreen({
   const [genreLocation, setGenreLocation] = useState("");
   const [specialFeatures, setSpecialFeatures] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [checkingExisting, setCheckingExisting] = useState(false);
+  const [existingCheck, setExistingCheck] = useState<MatchCheck | null>(null);
+  const [chosenExistingId, setChosenExistingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const selectedTypes = candidates.filter((c) => selected.has(c.imdbID)).map((c) => c.Type);
@@ -70,7 +87,7 @@ export default function ConfirmScreen({
     setSubmitting(true);
     try {
       await dismissScan(scan.id);
-      onConfirmed(null);
+      onConfirmed({ shelfLocation: null });
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -78,7 +95,7 @@ export default function ConfirmScreen({
     }
   }
 
-  async function handleSubmit() {
+  async function performCreate() {
     setSubmitting(true);
     setError(null);
     try {
@@ -88,6 +105,7 @@ export default function ConfirmScreen({
         disk_region: diskRegion || null,
         genre_location: genreLocation || null,
         special_features: specialFeatures,
+        case_image_url: scan.resolved_candidates?.upcProduct?.imageUrl ?? null,
         ...(selected.size === 0 ? { title: manualTitle || scan.barcode } : {}),
       };
 
@@ -102,12 +120,78 @@ export default function ConfirmScreen({
           : [{ barcodeId: scan.barcode, manualFields }];
 
       const result = await confirmScan(scan.id, entries);
-      onConfirmed(result.shelfLocation);
+      onConfirmed({ shelfLocation: result.shelfLocation });
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setSubmitting(false);
     }
+  }
+
+  /** Confirm button: for a single (non-collection) title, check for a backfill match
+   * before creating anything - only proceeds straight to performCreate() when there's
+   * genuinely nothing to match against. */
+  async function handleConfirmPressed() {
+    setError(null);
+    if (isCollection && selected.size > 1) {
+      await performCreate();
+      return;
+    }
+
+    const titleForMatch =
+      selected.size === 1
+        ? candidates.find((c) => selected.has(c.imdbID))?.Title ?? null
+        : selected.size === 0
+          ? manualTitle.trim() || null
+          : null;
+
+    if (!titleForMatch) {
+      await performCreate();
+      return;
+    }
+
+    setCheckingExisting(true);
+    try {
+      const upcText = `${scan.resolved_candidates?.upcProduct?.title ?? ""} ${scan.resolved_candidates?.upcProduct?.description ?? ""}`.trim();
+      const result = await findExistingTitle(titleForMatch, upcText);
+      if (result.status === "none") {
+        await performCreate();
+      } else {
+        setExistingCheck(result);
+        if (result.status === "auto") setChosenExistingId(result.match.unique_id);
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setCheckingExisting(false);
+    }
+  }
+
+  async function handleAttachExisting() {
+    if (!chosenExistingId) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const imdbId = selected.size === 1 ? [...selected][0] : undefined;
+      const result = await linkExistingTitle({
+        pendingScanId: scan.id,
+        existingUniqueId: chosenExistingId,
+        barcode: scan.barcode,
+        imdbId,
+        caseImageUrl: scan.resolved_candidates?.upcProduct?.imageUrl,
+      });
+      onConfirmed({ shelfLocation: null, linkedTitle: result.linkedTitle });
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleTreatAsNew() {
+    setExistingCheck(null);
+    setChosenExistingId(null);
+    await performCreate();
   }
 
   if (scan.resolved_candidates?.existingMatch) {
@@ -136,6 +220,62 @@ export default function ConfirmScreen({
           <Text style={styles.link}>Back</Text>
         </TouchableOpacity>
       </View>
+    );
+  }
+
+  if (existingCheck) {
+    return (
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingTop: 48 + insets.top, paddingBottom: 24 + insets.bottom },
+        ]}
+      >
+        <Text style={styles.title}>Matches your collection</Text>
+        {existingCheck.status === "auto" ? (
+          <Text style={styles.body}>
+            This looks like your existing entry for &quot;{existingCheck.match.title}&quot; (
+            {existingCheck.match.format}, {existingCheck.match.disc_count} disc
+            {existingCheck.match.disc_count === 1 ? "" : "s"}). Attach this barcode and its image to
+            that entry instead of creating a new one?
+          </Text>
+        ) : (
+          <>
+            <Text style={styles.body}>
+              A few entries in your collection share this title. Which one is this disc?
+            </Text>
+            {existingCheck.candidates.map((c: ExistingTitleCandidate) => (
+              <TouchableOpacity
+                key={c.unique_id}
+                style={[
+                  styles.candidateRow,
+                  chosenExistingId === c.unique_id && styles.candidateRowSelected,
+                ]}
+                onPress={() => setChosenExistingId(c.unique_id)}
+              >
+                <Text style={styles.candidateText}>
+                  {chosenExistingId === c.unique_id ? "(o) " : "( ) "}
+                  {c.title} - {c.format}, {c.disc_count} disc{c.disc_count === 1 ? "" : "s"}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </>
+        )}
+
+        {error && <Text style={styles.error}>{error}</Text>}
+
+        <TouchableOpacity
+          style={styles.button}
+          onPress={handleAttachExisting}
+          disabled={submitting || !chosenExistingId}
+        >
+          <Text style={styles.buttonText}>{submitting ? "Saving..." : "Attach to this entry"}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={handleTreatAsNew} disabled={submitting}>
+          <Text style={styles.link}>No, this is a different item - add as new</Text>
+        </TouchableOpacity>
+      </ScrollView>
     );
   }
 
@@ -211,8 +351,14 @@ export default function ConfirmScreen({
 
       {error && <Text style={styles.error}>{error}</Text>}
 
-      <TouchableOpacity style={styles.button} onPress={handleSubmit} disabled={submitting}>
-        <Text style={styles.buttonText}>{submitting ? "Saving..." : "Confirm"}</Text>
+      <TouchableOpacity
+        style={styles.button}
+        onPress={handleConfirmPressed}
+        disabled={submitting || checkingExisting}
+      >
+        <Text style={styles.buttonText}>
+          {checkingExisting ? "Checking your collection..." : submitting ? "Saving..." : "Confirm"}
+        </Text>
       </TouchableOpacity>
     </ScrollView>
   );

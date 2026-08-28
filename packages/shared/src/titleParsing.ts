@@ -57,6 +57,28 @@ export const AUTO_CREATE_COLUMNS: { field: string; headerText: string }[] = [
   { field: "genre_location", headerText: "Genre Location" },
 ];
 
+// Cuts/versions the user names inline within a box set (e.g. "Blade Runner Final Cut")
+// rather than as a separate "edition" word - everything else gets the movie's name
+// verbatim (Claude/TECH STACK AND ARCHITECTURE.md's backfill-matching design). Used both
+// to strip the suffix for base-title matching and to flag "don't trust OMDB's runtime for
+// this one" (a single OMDB entry only has one canonical runtime, not per-cut runtimes).
+const CUT_SUFFIX_WORDS =
+  /\b(final cut|director'?s cut|extended cut|extended edition|theatrical cut|theatrical edition|ultimate cut|unrated cut|redux)\b/i;
+
+export function isCutVariantTitle(title: string): boolean {
+  return CUT_SUFFIX_WORDS.test(title);
+}
+
+/** Lowercases, strips a cut suffix and punctuation, collapses whitespace - for comparing
+ * two title strings as "the same base movie" regardless of minor formatting differences. */
+export function normalizeTitleForMatch(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(CUT_SUFFIX_WORDS, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 export function normalizeHeader(header: string): string {
   return header
     .toLowerCase()
@@ -240,6 +262,13 @@ function formatValueForSheet(value: unknown): string {
 const SHEET_FIELD_FORMATTERS: Partial<Record<string, (v: unknown) => string>> = {
   release_date: formatDateForSheet,
 };
+
+/** Formats one field's value the same way buildSheetRowFromTitle would, for callers that
+ * only need to patch a few cells in an existing row (see updateSheetFieldsByUniqueId). */
+export function formatFieldForSheet(field: string, value: unknown): string {
+  const formatter = SHEET_FIELD_FORMATTERS[field] ?? formatValueForSheet;
+  return formatter(value);
+}
 
 /**
  * Inverse of parseSheetRowToTitle: turns a `titles`-shaped object back into a raw Sheet

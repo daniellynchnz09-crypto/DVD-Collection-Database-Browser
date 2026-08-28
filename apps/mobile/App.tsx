@@ -13,7 +13,11 @@ type Screen =
   | { name: "scanner" }
   | { name: "pending" }
   | { name: "confirm"; scan: PendingScan }
-  | { name: "success"; shelfLocation: { before: string | null; after: string | null } | null };
+  | {
+      name: "success";
+      shelfLocation: { before: string | null; after: string | null } | null;
+      linkedTitle?: string;
+    };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: "scanner" });
@@ -32,13 +36,16 @@ export default function App() {
       {screen.name === "confirm" && (
         <ConfirmScreen
           scan={screen.scan}
-          onConfirmed={(shelfLocation) => setScreen({ name: "success", shelfLocation })}
+          onConfirmed={({ shelfLocation, linkedTitle }) =>
+            setScreen({ name: "success", shelfLocation, linkedTitle })
+          }
           onBack={() => setScreen({ name: "pending" })}
         />
       )}
       {screen.name === "success" && (
         <SuccessScreen
           shelfLocation={screen.shelfLocation}
+          linkedTitle={screen.linkedTitle}
           onDone={() => setScreen({ name: "scanner" })}
         />
       )}

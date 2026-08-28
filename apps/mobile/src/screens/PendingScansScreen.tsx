@@ -10,8 +10,9 @@ export interface PendingScan {
   resolved_candidates: {
     existingMatch?: { title: string };
     omdbCandidates?: { Title: string; Year: string }[];
-    upcProduct?: { title: string };
+    upcProduct?: { title: string; description?: string; imageUrl?: string };
     upcLookupFailed?: boolean;
+    isCollection?: boolean;
   };
   scanned_at: string;
 }

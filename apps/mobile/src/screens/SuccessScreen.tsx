@@ -7,16 +7,22 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
  */
 export default function SuccessScreen({
   shelfLocation,
+  linkedTitle,
   onDone,
 }: {
   shelfLocation: { before: string | null; after: string | null } | null;
+  linkedTitle?: string;
   onDone: () => void;
 }) {
   const insets = useSafeAreaInsets();
   return (
     <View style={[styles.container, { paddingTop: 24 + insets.top, paddingBottom: 24 + insets.bottom }]}>
-      <Text style={styles.title}>Added!</Text>
-      {shelfLocation && (shelfLocation.before || shelfLocation.after) ? (
+      <Text style={styles.title}>{linkedTitle ? "Updated!" : "Added!"}</Text>
+      {linkedTitle ? (
+        <Text style={styles.body}>
+          Attached this barcode and its image to your existing entry for &quot;{linkedTitle}&quot;.
+        </Text>
+      ) : shelfLocation && (shelfLocation.before || shelfLocation.after) ? (
         <Text style={styles.body}>
           Goes on the shelf{" "}
           {shelfLocation.before ? `after "${shelfLocation.before}"` : ""}

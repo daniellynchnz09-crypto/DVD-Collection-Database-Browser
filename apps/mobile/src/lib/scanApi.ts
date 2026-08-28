@@ -36,3 +36,37 @@ export function confirmScan(pendingScanId: string, entries: ConfirmEntry[]) {
 export function dismissScan(pendingScanId: string) {
   return post<ConfirmResult>("/api/scan/confirm", { pendingScanId, dismiss: true });
 }
+
+export interface ExistingTitleCandidate {
+  unique_id: string;
+  title: string;
+  format: string;
+  disc_count: number;
+}
+
+export type FindExistingResult =
+  | { status: "none" }
+  | { status: "auto"; match: ExistingTitleCandidate }
+  | { status: "ambiguous"; candidates: ExistingTitleCandidate[] };
+
+/** Backfill matching: is this scanned disc actually a title already in the collection? */
+export function findExistingTitle(title: string, upcText: string) {
+  return post<FindExistingResult>("/api/scan/find-existing", { title, upcText });
+}
+
+interface LinkExistingResult {
+  success: boolean;
+  linkedTitle: string;
+}
+
+/** Attaches the barcode (+ image + a conservative metadata refresh) to an existing entry
+ * instead of creating a duplicate row. */
+export function linkExistingTitle(params: {
+  pendingScanId: string;
+  existingUniqueId: string;
+  barcode: string;
+  imdbId?: string;
+  caseImageUrl?: string;
+}) {
+  return post<LinkExistingResult>("/api/scan/link-existing", params);
+}

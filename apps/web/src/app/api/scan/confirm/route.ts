@@ -155,6 +155,7 @@ export async function POST(request: Request) {
       studio: manual.studio ?? null,
       disk_region: manual.disk_region ?? null,
       barcode_id: entry.barcodeId ?? null,
+      case_image_url: manual.case_image_url ?? null,
       genre_location: manual.genre_location ?? null,
       depicted_era_start:
         manual.depicted_era_start ??
