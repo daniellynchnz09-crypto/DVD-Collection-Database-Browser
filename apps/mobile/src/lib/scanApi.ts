@@ -37,6 +37,12 @@ export function dismissScan(pendingScanId: string) {
   return post<ConfirmResult>("/api/scan/confirm", { pendingScanId, dismiss: true });
 }
 
+/** Deletes a stray/junk pending scan outright - e.g. a barcode glimpsed on a neighbouring
+ * disc while lining up a shot, never meant to be catalogued. */
+export function discardScan(pendingScanId: string) {
+  return post<ConfirmResult>("/api/scan/confirm", { pendingScanId, discard: true });
+}
+
 export interface ExistingTitleCandidate {
   unique_id: string;
   title: string;

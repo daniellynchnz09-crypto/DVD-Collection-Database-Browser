@@ -73,6 +73,10 @@ async function computeShelfLocation(
  * `{ pendingScanId, dismiss: true }` (no entries) instead marks the pending scan
  * confirmed without creating anything - for the re-scan case, where the resolver already
  * found an existingMatch and there's nothing new to write.
+ *
+ * `{ pendingScanId, discard: true }` deletes the pending scan outright - for a stray/junk
+ * read (e.g. a barcode briefly glimpsed on a neighbouring disc while lining up a shot)
+ * that was never meant to be catalogued at all.
  */
 export async function POST(request: Request) {
   const authError = requireScanSecret(request);
@@ -85,6 +89,11 @@ export async function POST(request: Request) {
   }
 
   const supabase = getSupabaseServerClient();
+
+  if (body?.discard === true) {
+    await supabase.from("pending_scans").delete().eq("id", pendingScanId);
+    return NextResponse.json({ success: true, createdTitleIds: [], shelfLocation: null });
+  }
 
   if (body?.dismiss === true) {
     await supabase.from("pending_scans").update({ status: "confirmed" }).eq("id", pendingScanId);

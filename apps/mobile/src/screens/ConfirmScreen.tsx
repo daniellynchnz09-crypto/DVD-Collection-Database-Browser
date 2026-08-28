@@ -11,6 +11,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   confirmScan,
+  discardScan,
   dismissScan,
   findExistingTitle,
   linkExistingTitle,
@@ -87,7 +88,7 @@ export default function ConfirmScreen({
     setSubmitting(true);
     try {
       await dismissScan(scan.id);
-      onConfirmed({ shelfLocation: null });
+      onBack();
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -194,6 +195,21 @@ export default function ConfirmScreen({
     await performCreate();
   }
 
+  /** For a stray/junk read (e.g. a neighbouring disc's barcode glimpsed while lining up a
+   * shot) that was never meant to be catalogued at all - deletes it outright. */
+  async function handleDiscard() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await discardScan(scan.id);
+      onBack();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   if (scan.resolved_candidates?.existingMatch) {
     return (
       <View
@@ -215,6 +231,9 @@ export default function ConfirmScreen({
         </Text>
         <TouchableOpacity style={styles.button} onPress={handleDismiss} disabled={submitting}>
           <Text style={styles.buttonText}>Dismiss</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={handleDiscard} disabled={submitting}>
+          <Text style={styles.link}>Not this - discard the scan</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={onBack}>
           <Text style={styles.link}>Back</Text>
@@ -274,6 +293,9 @@ export default function ConfirmScreen({
         </TouchableOpacity>
         <TouchableOpacity onPress={handleTreatAsNew} disabled={submitting}>
           <Text style={styles.link}>No, this is a different item - add as new</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={handleDiscard} disabled={submitting}>
+          <Text style={styles.link}>Neither - this was a stray scan, discard it</Text>
         </TouchableOpacity>
       </ScrollView>
     );
@@ -359,6 +381,9 @@ export default function ConfirmScreen({
         <Text style={styles.buttonText}>
           {checkingExisting ? "Checking your collection..." : submitting ? "Saving..." : "Confirm"}
         </Text>
+      </TouchableOpacity>
+      <TouchableOpacity onPress={handleDiscard} disabled={submitting || checkingExisting}>
+        <Text style={styles.link}>This was a stray scan - discard it</Text>
       </TouchableOpacity>
     </ScrollView>
   );

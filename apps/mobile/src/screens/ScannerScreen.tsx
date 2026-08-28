@@ -4,6 +4,12 @@ import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "ex
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { queueScan } from "../lib/scanApi";
 
+// How long a gap in sightings of the same barcode means "you moved away and came back"
+// rather than "still holding it in frame." Comfortably longer than the ~1s interval
+// CameraView re-fires at, short enough that deliberately rescanning the same disc later
+// still works normally.
+const SIGHTING_GAP_MS = 2000;
+
 /**
  * Scan-then-resolve-later (Claude/TECH STACK AND ARCHITECTURE.md): this screen only
  * ever records the barcode and returns to scanning immediately - no network wait, no
@@ -15,7 +21,13 @@ export default function ScannerScreen({ onGoToPending }: { onGoToPending: () => 
   const [permission, requestPermission] = useCameraPermissions();
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const busyRef = useRef(false);
-  const lastBarcodeRef = useRef<{ code: string; at: number } | null>(null);
+  // Tracks the barcode currently held in view, not just "recently scanned" - CameraView
+  // fires onBarcodeScanned repeatedly (roughly every frame) for as long as the same code
+  // stays in shot, so a fixed cooldown re-arms and re-queues the same disc over and over
+  // while you're just holding it steady. Only queue again once the gap since the last
+  // sighting of this code exceeds SIGHTING_GAP_MS - i.e. you actually pointed away and
+  // came back, not "3 seconds passed while continuously staring at the same barcode."
+  const activeBarcodeRef = useRef<{ code: string; lastSeenAt: number } | null>(null);
 
   if (!permission) {
     return <View style={styles.container} />;
@@ -35,11 +47,17 @@ export default function ScannerScreen({ onGoToPending }: { onGoToPending: () => 
   async function handleBarcodeScanned(result: BarcodeScanningResult) {
     const barcode = result.data;
     const now = Date.now();
-    // Debounce: ignore the same barcode re-firing within 3s (CameraView keeps scanning
-    // the same frame while it's in view) and ignore anything while a queue call is in flight.
+
+    // Refresh the "still holding this code" clock on every single frame, independent of
+    // busyRef below - otherwise a slow network call could let the clock go stale and
+    // cause one spurious re-queue right as the busy window clears.
+    const active = activeBarcodeRef.current;
+    const stillHoldingSameCode =
+      active?.code === barcode && now - active.lastSeenAt < SIGHTING_GAP_MS;
+    activeBarcodeRef.current = { code: barcode, lastSeenAt: now };
+    if (stillHoldingSameCode) return;
+
     if (busyRef.current) return;
-    if (lastBarcodeRef.current?.code === barcode && now - lastBarcodeRef.current.at < 3000) return;
-    lastBarcodeRef.current = { code: barcode, at: now };
     busyRef.current = true;
 
     try {
