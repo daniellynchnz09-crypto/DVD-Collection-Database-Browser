@@ -23,7 +23,7 @@ export default function ScannerScreen({ onGoToPending }: { onGoToPending: () => 
 
   if (!permission.granted) {
     return (
-      <View style={styles.container}>
+      <View style={styles.permissionContainer}>
         <Text style={styles.message}>Camera access is needed to scan disc barcodes.</Text>
         <TouchableOpacity style={styles.button} onPress={requestPermission}>
           <Text style={styles.buttonText}>Grant Camera Access</Text>
@@ -74,7 +74,15 @@ export default function ScannerScreen({ onGoToPending }: { onGoToPending: () => 
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#000", justifyContent: "center", alignItems: "center", padding: 24, gap: 16 },
+  container: { flex: 1, backgroundColor: "#000" },
+  permissionContainer: {
+    flex: 1,
+    backgroundColor: "#000",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+    gap: 16,
+  },
   camera: { flex: 1 },
   overlay: {
     position: "absolute",
