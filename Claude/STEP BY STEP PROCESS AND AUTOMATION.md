@@ -11,6 +11,8 @@ SETUP:
 
 BARCODE SCANNING: (barely defined as I have no idea how to do this part)
 
+[Now concretely designed as part of Phase 1 - see Claude/TECH STACK AND ARCHITECTURE.md's "BARCODE SCANNING PIPELINE" section for the resolved approach: scanning is decoupled from lookup (scan queues instantly, a separate resolver looks things up against UPCitemdb + OMDB at a safe rate), collections are handled via an OMDB-assisted checklist the user confirms, and documentary chronological ordering uses a regex-inferred "depicted era" field with manual fallback. This section's original notes are kept as-is below for context.]
+
 1. An app needs to be created for scanner part
 2. Create android phone app
 3. perhaps app exported as some sort of .apk to download onto my phone

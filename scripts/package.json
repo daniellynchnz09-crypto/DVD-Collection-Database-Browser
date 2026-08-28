@@ -4,11 +4,13 @@
   "private": true,
   "scripts": {
     "sync": "tsx src/sync-sheet.ts",
+    "resolve-scans": "tsx src/resolve-pending-scans.ts",
     "sanitize-public-repo": "tsx src/sanitize-public-repo.ts"
   },
   "dependencies": {
     "@danflix/shared": "*",
     "@supabase/supabase-js": "^2.45.0",
+    "dotenv": "^16.4.5",
     "googleapis": "^144.0.0"
   },
   "devDependencies": {

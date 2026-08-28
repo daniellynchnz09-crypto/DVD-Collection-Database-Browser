@@ -20,6 +20,15 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow DVD Database to access your camera to scan disc barcodes.",
+          "barcodeScannerEnabled": true
+        }
+      ]
+    ]
   }
 }

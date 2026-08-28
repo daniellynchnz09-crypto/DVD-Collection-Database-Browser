@@ -6,7 +6,7 @@ This document turns the plan in AIM.md and STEP BY STEP PROCESS AND AUTOMATION.m
 
 **REPO / MONOREPO LAYOUT**
 
-One monorepo (Turborepo + pnpm workspaces) during development, split into the public/private GitHub repos described in Claude.md at publish time (see PUBLIC VS PRIVATE BUILD PIPELINE below).
+One monorepo (Turborepo + npm workspaces — pnpm was the original plan, but its global install hit a Windows permissions error via corepack, so npm workspaces are used instead; functionally equivalent) during development, split into the public/private GitHub repos described in Claude.md at publish time (see PUBLIC VS PRIVATE BUILD PIPELINE below).
 
 - apps/web — Next.js (TypeScript) web app. Deployed to Vercel. This is the Netflix/IMDB-hybrid browse and search experience described in WEB APP DESIGN.md.
 - apps/mobile — Expo/React Native app. Same browse/search UI reused where practical, plus the barcode scanner screen. Exported to an APK via `eas build --platform android` so it can be sideloaded per STEP BY STEP PROCESS AND AUTOMATION.md's "export as .apk" note.
@@ -40,21 +40,29 @@ Row Level Security: public read access for anything the browse/search UI needs; 
 
 **GOOGLE SHEET SYNC**
 
-Direction starts one-way (Sheet → Supabase), because ~3,000 existing entries already live in the Sheet and Supabase starts empty. A Google Apps Script `onEdit` trigger posts changed rows to a small sync endpoint (a Vercel API route or a Supabase Edge Function), which upserts into Postgres keyed on unique_id.
+Phase 0 ran a one-off manual sync (`scripts/src/sync-sheet.ts`, Sheet → Supabase) to get the real ~3,063 existing entries into the private Supabase project for the first time — that script also auto-created the Unique Identifier/Barcode Identifier/Genre Location columns the Sheet didn't have yet, and backfilled a UUID into every row.
 
-Once the app can also originate writes (barcode scans, or edits made through Direct Database Access), those writes go to Supabase first, then push back to the Sheet via the Sheets API, so both stay in sync. The `last_updated` column is what lets the sync logic detect which side changed most recently and avoid clobbering a newer edit. Supabase remains the source of truth for anything the live app reads, per STEP BY STEP PROCESS AND AUTOMATION.md step 1 — the Sheet becomes a mirror/manual-entry surface rather than the primary store.
+Ongoing sync is bidirectional and near-real-time, not one-way or manual, because the user will keep editing the Sheet directly (typos, genre reclassification, bulk cleanup) alongside app-originated writes, and the database must never go stale relative to either source:
+- **Sheet → Supabase**: a Google Apps Script bound to the spreadsheet with an `onEdit(e)` trigger `UrlFetchApp.fetch()`s the edited row to a `/api/sheet-webhook` endpoint (`apps/web`, secret-gated), which upserts just that row into Postgres using the same field-normalization helpers as everything else (`packages/shared/src/titleParsing.ts`). See BARCODE SCANNING PIPELINE below — the Apps Script source lives in `apps/sheet-scripts/onEdit.gs` since Apps Script itself runs inside the Sheet, not in this codebase; the user pastes it in via Extensions → Apps Script.
+- **Supabase → Sheet**: writes that originate from the app (barcode-scan confirms, later Direct Database Access edits) go to Supabase first, then push back to the Sheet via the Sheets API, reusing the same append/update logic `sync-sheet.ts` established.
+
+The `last_updated` column (auto-set by a Postgres trigger on every row write) is available if last-write-wins conflict detection is ever needed, but isn't load-bearing yet since each direction currently writes disjoint fields per event rather than racing on the same row.
 
 
 
 **BARCODE SCANNING PIPELINE (Aim One)**
 
-1. Expo camera screen (expo-camera / a barcode-scanning library) reads the UPC/EAN barcode on the disc case.
-2. The barcode is looked up against a UPC/EAN lookup service to identify the physical release.
-3. Cross-reference against Blu-ray.com for disc-specific details (region, disc count, special features) — Blu-ray.com has no public API, so this step is either a careful, low-volume/rate-limited fetch or, if that proves unreliable or against their terms, a manual-entry fallback. This should be revisited once we're actually implementing it.
-4. Cross-reference against OMDB for movie metadata (OMDB is prioritized over IMDB per RESOURCES.md, since OMDB has a public API and IMDB does not).
-5. Anything still unresolved is asked of the user through a sequence of dialog boxes (mirroring how Claude's own clarifying-question UI works, per STEP BY STEP PROCESS AND AUTOMATION.md), skipping fields that don't apply (e.g. never asking for a season number on a movie).
-6. The completed entry (and, if applicable, every title in a collection at once) is written to Supabase, then synced to the Sheet.
-7. A shelf-location suggestion is computed from genre_location: alphabetical order within that genre, by release date for same-titled entries, with the historical-chronology exception for documentaries called out in STEP BY STEP PROCESS AND AUTOMATION.md.
+Blu-ray.com is confirmed to have no API or sanctioned query path at all (their own forum: "Does blu-ray.com provide an API for developers? No" — asked repeatedly since 2018, never changed), and their per-IP scraping tolerance is undocumented and unprotected, so it's excluded entirely as a data source, not just deprioritized.
+
+The user also clarified this isn't just steady-state logging of new purchases — the entire existing collection needs its barcode/case-image data backfilled too, which is a bulk operation, not a trickle. That reshapes the pipeline: **scanning and lookup are decoupled**, so a free API's daily rate limit never gates how fast the user can physically scan their shelves.
+
+1. Expo camera screen (`expo-camera`'s `CameraView`, `barcodeScannerSettings.barcodeTypes: ['ean13','upc_a','upc_e']`, `onBarcodeScanned`, permission via `useCameraPermissions()` — confirmed current for SDK 57; the older `expo-barcode-scanner` package is deprecated/removed since SDK 51) reads the barcode and immediately writes `{ barcode, scanned_at }` to a new `pending_scans` Supabase table via a secret-gated endpoint, then returns straight to the camera. No network wait, no per-scan lookup — the user can scan hundreds of discs in one sitting.
+2. A **resolver** (reusable function, called from both a manual script and, later, a scheduled job) works through `pending_scans` at a safe rate: looks the barcode up against UPCitemdb (chosen UPC/EAN lookup service — free tier, no signup/card, 100 requests/day; the only other options found either have no free tier at all or an undocumented one, and buying UPCitemdb's cheapest paid tier is $99/mo, which is only worth it as a one-time month if the free-tier backfill drain feels too slow later — not decided now), then cross-references OMDB for movie metadata (OMDB prioritized over IMDB per RESOURCES.md, since OMDB has a public API and IMDB doesn't) using OMDB's own `Type` field (`movie`/`series`/`episode`) to know whether TV-only fields even apply. Marks each pending scan `resolved` (found confident candidates) or `needs_manual` (nothing confident found).
+3. A pending-scans review screen (mobile) lists resolved/needs-manual entries; the user confirms the suggested match, edits fields, or fills in manually — mirroring Claude's own clarifying-question style per STEP BY STEP PROCESS AND AUTOMATION.md (skipping fields that don't apply, e.g. never asking for a season number on a movie).
+4. **Collections**: since individual titles inside a box set have no barcode of their own, the resolver additionally strips filler words from the collection's product title ("4-Film Collection", "Box Set") to extract a likely franchise/director/actor name, searches OMDB for that, and presents the results as a checklist in the review screen ("which of these are actually in this set?") rather than assuming automatically. Checked titles get their own prefilled entries; an "add a title not found here" manual option covers gaps.
+5. **Documentary chronology**: the user's physical shelf splits documentaries into a contemporary/alphabetical section and a "History Documentary" section ordered by the era each one *depicts* (often explicit in the title/synopsis — "The Spanish Civil War", "1936-1939"). A nullable `depicted_era_start` (integer year) column on `titles` is prefilled by a regex pass over the title+synopsis looking for a year/decade/range, falling back to a manual field when nothing is found — no LLM/AI inference call added for this, the regex-plus-manual-fallback approach covers what the user described.
+6. On confirm, the completed entry (and every checked title in a collection) is written to Supabase, then to the Sheet.
+7. Shelf-location suggestion: alphabetical order within `genre_location`, except when `genre_location` is the History Documentary bucket, which orders by `depicted_era_start` instead.
 8. The scanner returns to the camera view, ready for the next disc.
 
 Note: neither Rotten Tomatoes nor Letterboxd exposes a public API. Their scores are needed for search/sort (WEB APP DESIGN.md's Advanced Search filters) but not for identifying a disc, so fetching those can happen asynchronously after the entry is created rather than blocking the scan flow.
@@ -106,11 +114,11 @@ This keeps the "public build = subset + anonymized" rule enforced by tooling rat
 
 This refines STEP BY STEP PROCESS AND AUTOMATION.md's existing sequence into engineering phases. Each phase maps back to the section of that document it fulfills.
 
-Phase 0 — Foundations
-Set up the Turborepo, both Supabase projects, the core schema, and the one-way Sheet → Supabase sync. (Maps to STEP BY STEP PROCESS AND AUTOMATION.md's SETUP and steps 1-4 of STEP BY STEP PROCESS FOR ENTIRE BUILD.)
+Phase 0 — Foundations (done)
+Turborepo, both Supabase projects, the core schema, and the real ~3,063-row collection synced from the Sheet into the private project. (Maps to STEP BY STEP PROCESS AND AUTOMATION.md's SETUP and steps 1-4 of STEP BY STEP PROCESS FOR ENTIRE BUILD.)
 
 Phase 1 — Barcode Scanning
-Build the Expo scanner screen, the lookup/cross-reference pipeline, the manual-fill dialog flow, and the shelf-location suggestion. (Maps to BARCODE SCANNING and steps 5-7.)
+The scan → queue → resolve → review/confirm pipeline (including collections and documentary chronology, brought forward into this phase rather than deferred), the shelf-location suggestion, and the bidirectional Sheet ⇄ Supabase sync. (Maps to BARCODE SCANNING and steps 5-7.)
 
 Phase 2 — Web Browse/Search
 Header, Home/Browse rows, basic search, and the four title-page templates. (Maps to WEB APP DESIGN.md HOME/BROWSE PAGE and TITLE PAGES, and steps 8-13.)
@@ -129,3 +137,5 @@ Each phase ends with the bugfix/refine step the original document already specif
 
 - Original STEP BY STEP PROCESS AND AUTOMATION.md phrasing left the database engine unspecified ("may or may not be made with SQL"). Decided: Postgres via Supabase.
 - A browser-based PWA scanner (using the phone browser's camera, no separate app) was considered as a lower-effort alternative to a native app, and rejected in favor of Expo/React Native to match the original "export as .apk" vision.
+- An early Phase 1 draft deferred collections and documentary chronological ordering to a later phase; the user asked for both to be tackled within Phase 1 itself instead (deprioritized to build last within it, not pushed to a separate phase) — see BARCODE SCANNING PIPELINE above.
+- Considered live per-scan lookup (scan → immediate API call → show match) as the barcode-scanning flow; rejected once the user clarified the entire existing collection needs backfilling in bulk, since a 100/day free API limit would then gate physical scanning speed. Decoupled via a pending_scans queue + separate resolver instead.

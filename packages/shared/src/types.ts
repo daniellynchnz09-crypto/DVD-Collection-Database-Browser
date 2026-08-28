@@ -5,6 +5,10 @@
  * `titles` table in supabase/migrations/0001_init.sql exactly.
  */
 
+// Common values, useful as suggestions in a filter/entry UI - not an exhaustive
+// enum. The `titles` table stores movie_or_tv as free text (see 0001_init.sql):
+// the real collection has legitimate categories beyond these (TV Movie, TV
+// Episode, Live Performance, ...), matching RESOURCES.md's own "... etc.".
 export type MovieOrTv =
   | "Movie"
   | "Short"
@@ -19,7 +23,7 @@ export type YesNo = "y" | "n";
 export interface Title {
   unique_id: string;
   title: string;
-  movie_or_tv: MovieOrTv;
+  movie_or_tv: string;
   season_no: string | null;
   part_of_season_no: string | null;
   episode_count: number | null;
@@ -62,7 +66,7 @@ export interface TasteProfile {
 
 /** Range and set filters usable in Advanced Search and taste profiles. */
 export interface TitleFilters {
-  movieOrTv?: MovieOrTv[];
+  movieOrTv?: string[];
   releaseYearRange?: [number, number];
   runtimeRange?: [number, number];
   genre?: string[];

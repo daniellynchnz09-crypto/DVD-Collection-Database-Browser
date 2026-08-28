@@ -28,5 +28,7 @@ Intergrate Danfl1x 4.0 titles from server into web app and database somehow, ask
 
 
 
-Build the public-repo sanitization script described in TECH STACK AND ARCHITECTURE.md (points the public build at the public Supabase project, strips Letterboxd integration code, confirms taste-profile names are anonymized) so the public/private GitHub split in Claude.md is enforced automatically before each push rather than done by hand.
+~~Build the public-repo sanitization script...~~ Done in Phase 0 (scripts/src/sanitize-public-repo.ts).
+
+If the barcode-backfill queue (Phase 1) feels too slow on UPCitemdb's free 100/day tier, consider paying for a single month of their $99/mo DEV tier (20,000/day) to blast through the backlog, then drop back to free for ongoing 20-50/day use. Not decided - just here so it isn't forgotten as an option.
 

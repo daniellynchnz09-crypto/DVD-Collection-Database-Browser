@@ -10,9 +10,11 @@ create table if not exists titles (
 
   -- Core spreadsheet columns (Claude/RESOURCES.md)
   title text not null,
-  movie_or_tv text not null check (
-    movie_or_tv in ('Movie', 'Short', 'Video', 'Documentary', 'TV Series', 'TV Mini-Series', 'TV Special')
-  ),
+  -- Free text, not a fixed enum: RESOURCES.md's own spec lists this as open-ended ("... etc.")
+  -- and the real collection has legitimate categories beyond the original 7
+  -- (TV Movie, TV Episode, Live Performance, ...). sync-sheet.ts normalizes casing/typos
+  -- on the way in, but does not force values into a closed set.
+  movie_or_tv text not null,
   season_no text,
   part_of_season_no text,
   episode_count integer,
