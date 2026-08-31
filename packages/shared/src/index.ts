@@ -4,5 +4,4 @@ export * from "./tasteProfile";
 export * from "./titleParsing";
 export * from "./omdb";
 export * from "./upc";
-export * from "./scanResolver";
 export * from "./formatHints";

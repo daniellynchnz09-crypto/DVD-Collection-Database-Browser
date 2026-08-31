@@ -1,13 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { upcLookup } from "./upc";
 import {
   cleanProductTitleForSearch,
+  extractProductYear,
   filterCandidatesByMaxYear,
+  inferDepictedEraStart,
   looksLikeCollection,
   omdbSearch,
-} from "./omdb";
-import { inferDepictedEraStart } from "./titleParsing";
-import { extractProductYear } from "./formatHints";
+  upcLookup,
+} from "@danflix/shared";
+import { matchPosterToCandidates } from "./posterMatch";
 
 /**
  * Works through `pending_scans` at a safe rate (UPCitemdb's free tier is 100 req/day -
@@ -15,6 +16,14 @@ import { extractProductYear } from "./formatHints";
  * between apps/web/src/app/api/scan/resolve/route.ts (callable on demand / by a future
  * Vercel Cron job) and scripts/src/resolve-pending-scans.ts (runnable by hand) so the
  * two never drift.
+ *
+ * Lives in packages/backend rather than packages/shared because matchPosterToCandidates
+ * pulls in Jimp for image decoding - fine for Node (this API route / this script), but
+ * Metro (the mobile app's bundler) can't resolve the Node-core polyfills real image
+ * decoders need (util/stream for PNG's zlib inflate). packages/shared is the one package
+ * the mobile app also depends on, so anything Node-only that isn't safe for Metro to even
+ * *see* belongs here instead, not there - see posterMatch.ts's own comment for the exact
+ * failure this avoids.
  */
 export async function resolvePendingScansBatch(
   supabase: SupabaseClient,
@@ -70,12 +79,27 @@ export async function resolvePendingScansBatch(
     const isCollection = looksLikeCollection(upcProduct.title);
     const depictedEraStart = inferDepictedEraStart(upcProduct.title, upcProduct.description);
 
+    // Box-set covers don't correspond to any single film's poster, and the checklist flow
+    // already handles picking multiple titles - auto-matching only makes sense for a
+    // single-title scan with its own listing photo to compare against.
+    const posterMatch =
+      !isCollection && upcProduct.imageUrl && omdbCandidates.length > 0
+        ? await matchPosterToCandidates(upcProduct.imageUrl, omdbCandidates)
+        : null;
+
     const status = omdbCandidates.length > 0 ? "resolved" : "needs_manual";
     await supabase
       .from("pending_scans")
       .update({
         status,
-        resolved_candidates: { upcProduct, omdbCandidates, isCollection, depictedEraStart, productYear },
+        resolved_candidates: {
+          upcProduct,
+          omdbCandidates,
+          isCollection,
+          depictedEraStart,
+          productYear,
+          posterMatch,
+        },
       })
       .eq("id", scan.id);
 

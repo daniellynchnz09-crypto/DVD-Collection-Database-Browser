@@ -1,5 +1,5 @@
 /**
- * Manual runner for the shared resolver (packages/shared/src/scanResolver.ts) - works
+ * Manual runner for the shared resolver (packages/backend/src/scanResolver.ts) - works
  * through pending_scans at a safe rate against UPCitemdb's free 100/day tier. Run by
  * hand (`npm run resolve-scans` from the repo root) until a Vercel Cron job can call
  * apps/web's /api/scan/resolve automatically once deployed. See Claude/TECH STACK AND
@@ -11,7 +11,7 @@
 
 import "dotenv/config";
 import { createClient } from "@supabase/supabase-js";
-import { resolvePendingScansBatch } from "@danflix/shared";
+import { resolvePendingScansBatch } from "@danflix/backend";
 
 async function main() {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OMDB_API_KEY } = process.env;

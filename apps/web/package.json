@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@danflix/backend": "*",
     "@danflix/shared": "*",
     "@supabase/supabase-js": "^2.45.0",
     "googleapis": "^144.0.0",

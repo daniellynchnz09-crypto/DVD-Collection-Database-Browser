@@ -1,0 +1,21 @@
+{
+  "name": "@danflix/backend",
+  "version": "0.0.1",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@danflix/shared": "*",
+    "@jimp/core": "^1.6.1",
+    "@jimp/js-jpeg": "^1.6.1",
+    "@jimp/js-png": "^1.6.1",
+    "@jimp/plugin-hash": "^1.6.1",
+    "@supabase/supabase-js": "^2.45.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

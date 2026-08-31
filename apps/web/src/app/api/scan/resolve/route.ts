@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { requireScanSecret } from "@/lib/scanAuth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
-import { resolvePendingScansBatch } from "@danflix/shared";
+import { resolvePendingScansBatch } from "@danflix/backend";
 
 /**
- * Thin wrapper around the shared resolver (packages/shared/src/scanResolver.ts) - meant
- * to be called periodically (a manual script for now, a Vercel Cron job once deployed)
- * rather than per-scan, since scanning and lookup are deliberately decoupled.
+ * Thin wrapper around the shared resolver (packages/backend/src/scanResolver.ts - a
+ * separate Node-only workspace from packages/shared, since it pulls in Jimp for image
+ * decoding and Metro can't bundle that for the mobile app) - meant to be called
+ * periodically (a manual script for now, a Vercel Cron job once deployed) rather than
+ * per-scan, since scanning and lookup are deliberately decoupled.
  */
 export async function POST(request: Request) {
   const authError = requireScanSecret(request);

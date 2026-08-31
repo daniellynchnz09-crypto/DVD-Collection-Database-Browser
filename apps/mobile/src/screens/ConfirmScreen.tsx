@@ -31,6 +31,12 @@ interface OmdbCandidate {
   Poster: string;
 }
 
+interface PosterMatch {
+  bestImdbId: string | null;
+  distances: Record<string, number>;
+  confident: boolean;
+}
+
 type ShelfLocation = { before: string | null; after: string | null } | null;
 type MatchCheck = Extract<FindExistingResult, { status: "auto" | "ambiguous" }>;
 
@@ -59,8 +65,20 @@ export default function ConfirmScreen({
   const candidates = (scan.resolved_candidates?.omdbCandidates ?? []) as OmdbCandidate[];
   const isCollection = Boolean(scan.resolved_candidates?.isCollection);
   const upcProduct = scan.resolved_candidates?.upcProduct;
+  const posterMatch = (scan.resolved_candidates as { posterMatch?: PosterMatch | null })
+    ?.posterMatch;
+  const autoMatched = posterMatch?.confident ? posterMatch : null;
+  const autoMatchedCandidate = autoMatched
+    ? candidates.find((c) => c.imdbID === autoMatched.bestImdbId) ?? null
+    : null;
 
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Starts collapsed to just the auto-matched candidate when the listing's own photo
+  // confidently matched one poster - "Not this item" reveals the full list to pick from
+  // manually instead.
+  const [showAllCandidates, setShowAllCandidates] = useState(!autoMatchedCandidate);
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(autoMatchedCandidate ? [autoMatchedCandidate.imdbID] : [])
+  );
   // Best-effort starting guesses from the UPC listing text - always editable, never
   // presented as confirmed fact. Packaging/marketing words ("Special Edition") are already
   // stripped by cleanProductTitleForSearch since those never belong in a title per how this
@@ -86,6 +104,11 @@ export default function ConfirmScreen({
 
   const selectedTypes = candidates.filter((c) => selected.has(c.imdbID)).map((c) => c.Type);
   const showTvFields = selectedTypes.some((t) => t === "series" || t === "episode");
+
+  function handleNotThisItem() {
+    setShowAllCandidates(true);
+    setSelected(new Set());
+  }
 
   function toggleCandidate(imdbId: string) {
     setSelected((prev) => {
@@ -342,7 +365,35 @@ export default function ConfirmScreen({
         </View>
       )}
 
-      {candidates.length > 0 ? (
+      {autoMatchedCandidate && !showAllCandidates ? (
+        <View style={styles.section}>
+          <Text style={styles.label}>Matched by cover photo</Text>
+          <View style={[styles.posterCard, styles.posterCardSelected, styles.autoMatchCard]}>
+            {autoMatchedCandidate.Poster && autoMatchedCandidate.Poster !== "N/A" ? (
+              <Image
+                source={{ uri: autoMatchedCandidate.Poster }}
+                style={styles.posterImage}
+                resizeMode="cover"
+              />
+            ) : (
+              <View style={[styles.posterImage, styles.posterPlaceholder]}>
+                <Text style={styles.posterPlaceholderText}>No image</Text>
+              </View>
+            )}
+            <Text style={styles.posterTitle} numberOfLines={2}>
+              {autoMatchedCandidate.Title}
+            </Text>
+            <Text style={styles.posterYear}>{autoMatchedCandidate.Year}</Text>
+          </View>
+          <Text style={styles.hint}>
+            The scanned item's own photo was compared against every candidate's poster - this one
+            matched clearly. Still worth a glance before confirming.
+          </Text>
+          <TouchableOpacity onPress={handleNotThisItem}>
+            <Text style={styles.link}>Not this item - show what it was compared against</Text>
+          </TouchableOpacity>
+        </View>
+      ) : candidates.length > 0 ? (
         <View style={styles.section}>
           <Text style={styles.label}>{isCollection ? "Titles in this set" : "Best match"}</Text>
           <Text style={styles.hint}>
@@ -471,6 +522,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   posterCardSelected: { borderColor: "#0284c7", backgroundColor: "#0c2a3a" },
+  autoMatchCard: { width: 160, marginRight: 0 },
   posterImage: {
     width: "100%",
     height: 168,
