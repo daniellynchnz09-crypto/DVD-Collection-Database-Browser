@@ -35,3 +35,17 @@ export function extractDiscCountHint(text: string): number | null {
   if (wordMatch) return WORD_DISC_COUNTS[wordMatch[1].toLowerCase()];
   return null;
 }
+
+/**
+ * The year a reseller listing annotates (e.g. "Paper Planes Dvd (2015)") is the disc's own
+ * home-video release year, not necessarily the film's theatrical year - home video always
+ * follows theatrical release, never precedes it. So this is a useful upper bound: any OMDB
+ * candidate whose Year is *after* this can be eliminated outright, since a disc can't exist
+ * for a film that hadn't been released yet (see filterCandidatesByMaxYear in omdb.ts).
+ */
+export function extractProductYear(text: string): number | null {
+  const match = text.match(/\b(19[0-9]{2}|20[0-9]{2})\b/);
+  if (!match) return null;
+  const year = parseInt(match[1], 10);
+  return year <= new Date().getFullYear() + 1 ? year : null;
+}

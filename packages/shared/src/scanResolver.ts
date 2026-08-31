@@ -1,7 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { upcLookup } from "./upc";
-import { cleanProductTitleForSearch, looksLikeCollection, omdbSearch } from "./omdb";
+import {
+  cleanProductTitleForSearch,
+  filterCandidatesByMaxYear,
+  looksLikeCollection,
+  omdbSearch,
+} from "./omdb";
 import { inferDepictedEraStart } from "./titleParsing";
+import { extractProductYear } from "./formatHints";
 
 /**
  * Works through `pending_scans` at a safe rate (UPCitemdb's free tier is 100 req/day -
@@ -55,7 +61,12 @@ export async function resolvePendingScansBatch(
     }
 
     const searchQuery = cleanProductTitleForSearch(upcProduct.title);
-    const omdbCandidates = searchQuery ? await omdbSearch(searchQuery) : [];
+    const rawCandidates = searchQuery ? await omdbSearch(searchQuery) : [];
+    // A listing's year is the disc's own home-video release year, not necessarily the
+    // film's - but home video always follows theatrical release, so it's a valid upper
+    // bound: no film released after this year could already have a disc for it.
+    const productYear = extractProductYear(`${upcProduct.title} ${upcProduct.description ?? ""}`);
+    const omdbCandidates = filterCandidatesByMaxYear(rawCandidates, productYear);
     const isCollection = looksLikeCollection(upcProduct.title);
     const depictedEraStart = inferDepictedEraStart(upcProduct.title, upcProduct.description);
 
@@ -64,7 +75,7 @@ export async function resolvePendingScansBatch(
       .from("pending_scans")
       .update({
         status,
-        resolved_candidates: { upcProduct, omdbCandidates, isCollection, depictedEraStart },
+        resolved_candidates: { upcProduct, omdbCandidates, isCollection, depictedEraStart, productYear },
       })
       .eq("id", scan.id);
 

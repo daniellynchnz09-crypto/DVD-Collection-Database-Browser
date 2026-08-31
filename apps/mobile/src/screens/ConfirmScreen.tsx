@@ -10,6 +10,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { cleanProductTitleForSearch, extractFormatHint } from "@danflix/shared";
 import {
   confirmScan,
   discardScan,
@@ -57,10 +58,22 @@ export default function ConfirmScreen({
   const insets = useSafeAreaInsets();
   const candidates = (scan.resolved_candidates?.omdbCandidates ?? []) as OmdbCandidate[];
   const isCollection = Boolean(scan.resolved_candidates?.isCollection);
+  const upcProduct = scan.resolved_candidates?.upcProduct;
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [manualTitle, setManualTitle] = useState("");
-  const [format, setFormat] = useState("DVD");
+  // Best-effort starting guesses from the UPC listing text - always editable, never
+  // presented as confirmed fact. Packaging/marketing words ("Special Edition") are already
+  // stripped by cleanProductTitleForSearch since those never belong in a title per how this
+  // collection is catalogued (see Claude/TECH STACK AND ARCHITECTURE.md's Collections note).
+  const [manualTitle, setManualTitle] = useState(() =>
+    upcProduct?.title ? cleanProductTitleForSearch(upcProduct.title) : ""
+  );
+  const [format, setFormat] = useState(() => {
+    const hint = upcProduct
+      ? extractFormatHint(`${upcProduct.title} ${upcProduct.description ?? ""}`)
+      : null;
+    return hint ?? "DVD";
+  });
   const [discCount, setDiscCount] = useState("1");
   const [diskRegion, setDiskRegion] = useState("");
   const [genreLocation, setGenreLocation] = useState("");
@@ -318,6 +331,17 @@ export default function ConfirmScreen({
 
       {isCollection && <Text style={styles.hint}>Looks like a collection - check every title actually in this set.</Text>}
 
+      {upcProduct?.imageUrl && (
+        <View style={styles.section}>
+          <Text style={styles.label}>Your scanned item</Text>
+          <Image source={{ uri: upcProduct.imageUrl }} style={styles.scannedImage} resizeMode="contain" />
+          <Text style={styles.hint}>
+            Compare this against the candidates below - it's a photo of the actual listing, not a
+            generic poster, so it's the best way to confirm the specific release.
+          </Text>
+        </View>
+      )}
+
       {candidates.length > 0 ? (
         <View style={styles.section}>
           <Text style={styles.label}>{isCollection ? "Titles in this set" : "Best match"}</Text>
@@ -412,6 +436,12 @@ const styles = StyleSheet.create({
   body: { color: "#e4e4e7" },
   hint: { color: "#a1a1aa", fontStyle: "italic" },
   link: { color: "#38bdf8" },
+  scannedImage: {
+    width: "100%",
+    height: 220,
+    borderRadius: 8,
+    backgroundColor: "#18181b",
+  },
   section: { gap: 6 },
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   label: { color: "#a1a1aa" },

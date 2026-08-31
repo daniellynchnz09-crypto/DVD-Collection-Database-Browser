@@ -85,9 +85,19 @@ export function looksLikeCollection(productTitle: string): boolean {
 const MARKETPLACE_NOISE_WORDS =
   /\b(brand new|like new|very good|good condition|acceptable|used|pre-?owned|second-?hand|free shipping|fast dispatch|fast shipping|ex-?rental|near mint|mint condition)\b/gi;
 
-/** Strips packaging/format noise from a UPC product title to get a usable OMDB search term. */
+// "<qualifier> Edition" is packaging/marketing fluff, not a content distinction - unlike
+// CUT_SUFFIX_WORDS in titleParsing.ts ("Final Cut", "Director's Cut"), which the user
+// deliberately keeps in a title because it names an actually different edit of the film.
+// A "Special Edition"/"Collector's Edition"/etc. re-release is still the same cut, just
+// different bonus-features packaging, so it never belongs in the `title` field.
+const PACKAGING_EDITION_WORDS =
+  /\b(special|deluxe|collector'?s?|anniversary|limited|premium|gift set)\s+edition\b/gi;
+
+/** Strips packaging/format noise from a UPC product title to get a usable OMDB search term
+ * (and a reasonable starting guess for the `title` field when there's no OMDB pick yet). */
 export function cleanProductTitleForSearch(productTitle: string): string {
   return productTitle
+    .replace(PACKAGING_EDITION_WORDS, "")
     .replace(/\b(blu-?ray|dvd|4k|uhd|ultra ?hd|steelbook|region [a-z0-9]+|edition|disc|widescreen)\b/gi, "")
     .replace(COLLECTION_HINT_WORDS, "")
     .replace(MARKETPLACE_NOISE_WORDS, "")
@@ -95,4 +105,23 @@ export function cleanProductTitleForSearch(productTitle: string): string {
     .replace(/[,;]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * Eliminates OMDB candidates whose Year is chronologically impossible given the disc's own
+ * release year (see extractProductYear in formatHints.ts) - a DVD/Blu-ray can't exist for a
+ * film that hadn't been released yet. Never eliminates everything (falls back to the
+ * unfiltered list) since the product year is itself just a best-effort text extraction, not
+ * a guarantee.
+ */
+export function filterCandidatesByMaxYear(
+  candidates: OmdbSearchCandidate[],
+  maxYear: number | null
+): OmdbSearchCandidate[] {
+  if (maxYear == null) return candidates;
+  const filtered = candidates.filter((c) => {
+    const year = parseInt(c.Year, 10);
+    return Number.isNaN(year) ? true : year <= maxYear;
+  });
+  return filtered.length > 0 ? filtered : candidates;
 }
