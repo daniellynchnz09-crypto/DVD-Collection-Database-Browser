@@ -5,7 +5,8 @@
   "scripts": {
     "sync": "tsx src/sync-sheet.ts",
     "resolve-scans": "tsx src/resolve-pending-scans.ts",
-    "sanitize-public-repo": "tsx src/sanitize-public-repo.ts"
+    "sanitize-public-repo": "tsx src/sanitize-public-repo.ts",
+    "keep-alive": "tsx src/keep-alive.ts"
   },
   "dependencies": {
     "@danflix/backend": "*",

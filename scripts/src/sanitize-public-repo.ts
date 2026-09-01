@@ -36,6 +36,11 @@ const EXCLUDE_DIRS = new Set([
   "dist",
   "build",
   "web-build",
+  // Keep-alive CI (Claude/TECH STACK AND ARCHITECTURE.md's "Hosting / Keep-Alive"
+  // section) already pings the public project from the private repo's own Action -
+  // duplicating the workflow into the public repo would just be a second, secret-less
+  // schedule doing nothing every 3 days, which is confusing without being useful.
+  ".github",
 ]);
 // Excludes real env files (.env, .env.local, .env.production, ...) but keeps
 // .env.example templates - those are safe, documented placeholders, not secrets.
