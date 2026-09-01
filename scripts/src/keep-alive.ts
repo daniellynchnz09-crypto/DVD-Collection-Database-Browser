@@ -5,11 +5,12 @@
  * Run on a schedule via .github/workflows/keep-alive.yml every 3 days, well inside
  * the 7-day window. Also runnable by hand: `npm run keep-alive` from the repo root.
  *
- * The private project is pinged with its service-role key (already required by the
- * other scripts in this folder - see .env.example). The public project only needs
- * its anon key, since a read against a public-read table is all this requires.
- * Either target is skipped (not treated as a failure) if its env vars are unset,
- * so this doubles as a local single-project check if you only fill in one side.
+ * Both projects are pinged with their anon key, not the service-role key the other
+ * scripts in this folder need - a read against titles' public-read RLS policy is
+ * all a keep-alive ping requires, so there's no reason to hand a more powerful key
+ * to a scheduled CI job than the task actually needs. Either target is skipped (not
+ * treated as a failure) if its env vars are unset, so this doubles as a local
+ * single-project check if you only fill in one side.
  */
 
 import "dotenv/config";
@@ -25,7 +26,7 @@ const targets: KeepAliveTarget[] = [
   {
     name: "private",
     url: process.env.SUPABASE_URL,
-    key: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    key: process.env.SUPABASE_ANON_KEY,
   },
   {
     name: "public",
