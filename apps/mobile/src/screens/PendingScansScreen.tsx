@@ -153,8 +153,12 @@ export default function PendingScansScreen({
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: 16 + insets.top }]}>
         <View style={styles.headerRow}>
-          <TouchableOpacity onPress={selectionMode ? cancelSelecting : onBack}>
-            <Text style={styles.link}>{selectionMode ? "Cancel" : "< Scanner"}</Text>
+          <TouchableOpacity
+            style={styles.backButton}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            onPress={selectionMode ? cancelSelecting : onBack}
+          >
+            <Text style={styles.backButtonText}>{selectionMode ? "Cancel" : "< Scanner"}</Text>
           </TouchableOpacity>
           {selectionMode ? (
             <TouchableOpacity onPress={confirmDelete} disabled={selectedIds.size === 0 || deleting}>
@@ -230,6 +234,8 @@ const styles = StyleSheet.create({
   },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   link: { color: "#38bdf8" },
+  backButton: { paddingVertical: 10, paddingRight: 12, marginLeft: -8 },
+  backButtonText: { color: "#38bdf8", fontSize: 17, fontWeight: "600" },
   deleteLink: { color: "#f87171" },
   deleteLinkDisabled: { color: "#52171a" },
   title: { color: "#f4f4f5", fontSize: 18, fontWeight: "700" },
