@@ -78,9 +78,13 @@ function groupByDate(scans: PendingScan[]): ScanSection[] {
 export default function PendingScansScreen({
   onSelect,
   onBack,
+  onDeleted,
 }: {
   onSelect: (scan: PendingScan) => void;
   onBack: () => void;
+  /** Called with the barcodes of every scan just deleted, so the scanner's re-scan
+   * cooldown can forget them - the user explicitly said they want to rescan it. */
+  onDeleted?: (barcodes: string[]) => void;
 }) {
   const insets = useSafeAreaInsets();
   const [scans, setScans] = useState<PendingScan[]>([]);
@@ -140,8 +144,11 @@ export default function PendingScansScreen({
 
   async function doDelete() {
     setDeleting(true);
+    const idsToDelete = [...selectedIds];
+    const barcodes = scans.filter((s) => selectedIds.has(s.id)).map((s) => s.barcode);
     try {
-      await Promise.all([...selectedIds].map((id) => discardScan(id)));
+      await Promise.all(idsToDelete.map((id) => discardScan(id)));
+      onDeleted?.(barcodes);
     } finally {
       setDeleting(false);
       cancelSelecting();

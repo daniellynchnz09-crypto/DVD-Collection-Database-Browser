@@ -56,10 +56,14 @@ export default function ConfirmScreen({
   scan,
   onConfirmed,
   onBack,
+  onDiscarded,
 }: {
   scan: PendingScan;
   onConfirmed: (result: { shelfLocation: ShelfLocation; linkedTitle?: string }) => void;
   onBack: () => void;
+  /** Called with the barcode when this scan is discarded, so the scanner's re-scan
+   * cooldown can forget it - the user explicitly said they want to rescan it. */
+  onDiscarded?: (barcode: string) => void;
 }) {
   const insets = useSafeAreaInsets();
   const candidates = (scan.resolved_candidates?.omdbCandidates ?? []) as OmdbCandidate[];
@@ -240,6 +244,7 @@ export default function ConfirmScreen({
     setError(null);
     try {
       await discardScan(scan.id);
+      onDiscarded?.(scan.barcode);
       onBack();
     } catch (err) {
       setError((err as Error).message);

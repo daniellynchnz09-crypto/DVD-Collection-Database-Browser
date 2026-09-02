@@ -10,19 +10,26 @@ import { queueScan } from "../lib/scanApi";
 // still works normally.
 const SIGHTING_GAP_MS = 2000;
 
-// How long to remember a barcode after it's queued, so pointing back at the same case a
-// few seconds or minutes later doesn't create a second pending_scans row for it. Different
-// physical releases of the same movie have different barcodes, so this never blocks
-// scanning an actual second copy - only an accidental repeat of the exact same one.
-const RECENT_QUEUE_COOLDOWN_MS = 5 * 60 * 1000;
-
 /**
  * Scan-then-resolve-later (Claude/TECH STACK AND ARCHITECTURE.md): this screen only
  * ever records the barcode and returns to scanning immediately - no network wait, no
  * per-scan lookup, so a free API's daily limit never gates how fast you can physically
  * scan a shelf. Review/confirm happens later in PendingScansScreen.
+ *
+ * `wasRecentlyQueued`/`markQueued` implement the "don't re-queue the same barcode within
+ * 5 minutes" rule - they're owned by App.tsx rather than local state here because this
+ * screen unmounts every time you navigate to Pending Scans and back, which would
+ * otherwise silently reset the cooldown on every trip to review scans.
  */
-export default function ScannerScreen({ onGoToPending }: { onGoToPending: () => void }) {
+export default function ScannerScreen({
+  onGoToPending,
+  wasRecentlyQueued,
+  markQueued,
+}: {
+  onGoToPending: () => void;
+  wasRecentlyQueued: (barcode: string) => boolean;
+  markQueued: (barcode: string) => void;
+}) {
   const insets = useSafeAreaInsets();
   const [permission, requestPermission] = useCameraPermissions();
   const [lastMessage, setLastMessage] = useState<string | null>(null);
@@ -34,8 +41,6 @@ export default function ScannerScreen({ onGoToPending }: { onGoToPending: () => 
   // sighting of this code exceeds SIGHTING_GAP_MS - i.e. you actually pointed away and
   // came back, not "3 seconds passed while continuously staring at the same barcode."
   const activeBarcodeRef = useRef<{ code: string; lastSeenAt: number } | null>(null);
-  // barcode -> time it was last successfully queued, for the RECENT_QUEUE_COOLDOWN_MS check.
-  const recentlyQueuedRef = useRef<Map<string, number>>(new Map());
 
   if (!permission) {
     return <View style={styles.container} />;
@@ -65,8 +70,7 @@ export default function ScannerScreen({ onGoToPending }: { onGoToPending: () => 
     activeBarcodeRef.current = { code: barcode, lastSeenAt: now };
     if (stillHoldingSameCode) return;
 
-    const lastQueuedAt = recentlyQueuedRef.current.get(barcode);
-    if (lastQueuedAt !== undefined && now - lastQueuedAt < RECENT_QUEUE_COOLDOWN_MS) {
+    if (wasRecentlyQueued(barcode)) {
       setLastMessage(`Already queued ${barcode} recently - skipped duplicate scan.`);
       return;
     }
@@ -76,7 +80,7 @@ export default function ScannerScreen({ onGoToPending }: { onGoToPending: () => 
 
     try {
       await queueScan(barcode);
-      recentlyQueuedRef.current.set(barcode, now);
+      markQueued(barcode);
       setLastMessage(`Scanned ${barcode} - queued for lookup.`);
     } catch (err) {
       setLastMessage(`Failed to queue ${barcode}: ${(err as Error).message}`);
