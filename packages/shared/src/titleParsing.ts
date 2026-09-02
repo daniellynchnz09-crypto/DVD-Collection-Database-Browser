@@ -47,6 +47,8 @@ export const HEADER_ALIASES: Record<string, string> = {
   "disc region": "disk_region",
   "barcode identifier": "barcode_id",
   "genre location": "genre_location",
+  "steelbook": "steelbook",
+  "release name": "release_name",
 };
 
 // Columns the sync script/webhook will add to the Sheet itself if missing, per
@@ -55,6 +57,8 @@ export const AUTO_CREATE_COLUMNS: { field: string; headerText: string }[] = [
   { field: "unique_id", headerText: "Unique Identifier" },
   { field: "barcode_id", headerText: "Barcode Identifier" },
   { field: "genre_location", headerText: "Genre Location" },
+  { field: "steelbook", headerText: "Steelbook" },
+  { field: "release_name", headerText: "Release Name" },
 ];
 
 // Cuts/versions the user names inline within a box set (e.g. "Blade Runner Final Cut")
@@ -225,6 +229,8 @@ export function parseSheetRowToTitle(
     disk_region: cleanCell(row[columnIndexes["disk_region"]]),
     barcode_id: cleanCell(row[columnIndexes["barcode_id"]]),
     genre_location: cleanCell(row[columnIndexes["genre_location"]]),
+    steelbook: toBoolean(row[columnIndexes["steelbook"]]),
+    release_name: cleanCell(row[columnIndexes["release_name"]]),
   };
 }
 

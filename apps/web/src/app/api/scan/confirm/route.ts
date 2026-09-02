@@ -150,6 +150,7 @@ export async function POST(request: Request) {
       rating: manual.rating ?? omdbFields.rating ?? null,
       format: manual.format ?? "DVD",
       disc_count: manual.disc_count ?? 1,
+      steelbook: manual.steelbook ?? false,
       special_features: manual.special_features ?? false,
       special_features_disc_count: manual.special_features_disc_count ?? null,
       special_features_disc_format: manual.special_features_disc_format ?? null,
@@ -166,6 +167,7 @@ export async function POST(request: Request) {
       barcode_id: entry.barcodeId ?? null,
       case_image_url: manual.case_image_url ?? null,
       genre_location: manual.genre_location ?? null,
+      release_name: manual.release_name ?? null,
       depicted_era_start:
         manual.depicted_era_start ??
         inferDepictedEraStart(String(manual.title ?? omdbFields.title ?? ""), synopsis),

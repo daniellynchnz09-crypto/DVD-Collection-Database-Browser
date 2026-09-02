@@ -49,3 +49,26 @@ export function extractProductYear(text: string): number | null {
   const year = parseInt(match[1], 10);
   return year <= new Date().getFullYear() + 1 ? year : null;
 }
+
+// Official region-coding schemes, verified against current region-code references
+// (September 2026) rather than assumed - DVD uses numeric regions 1-6 (7 is reserved/
+// unused and 8 is airline/cruise-only, both excluded here as never realistic for a
+// physical collection) plus region-free; Blu-ray uses three letter regions (A/B/C) plus
+// region-free; Ultra HD Blu-ray carries no region coding at all, so "All" is the only
+// real option, though the rare documented exception means the field stays free-text-
+// capable regardless of this suggested list.
+const DVD_REGIONS = ["1", "2", "3", "4", "5", "6", "All"];
+const BLURAY_REGIONS = ["A", "B", "C", "All"];
+const UHD_REGIONS = ["All"];
+
+/** Which disc-region options make sense for a given format string, or null when the
+ * format isn't a recognized disc type (VHS, CD, ...) and no narrower list applies. Checks
+ * 4K/UHD before Blu-ray for the same reason extractFormatHint does - a "4K UHD Blu-ray"
+ * combo format is UHD's region-free scheme, not Blu-ray's A/B/C one. */
+export function getDiskRegionOptions(format: string): string[] | null {
+  const normalized = format.toLowerCase();
+  if (/4k|ultra ?hd|uhd/.test(normalized)) return UHD_REGIONS;
+  if (/blu-?ray/.test(normalized)) return BLURAY_REGIONS;
+  if (/dvd/.test(normalized)) return DVD_REGIONS;
+  return null;
+}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Image,
   ScrollView,
@@ -10,7 +10,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { cleanProductTitleForSearch, extractFormatHint } from "@danflix/shared";
+import { cleanProductTitleForSearch, extractFormatHint, getDiskRegionOptions } from "@danflix/shared";
 import {
   confirmScan,
   discardScan,
@@ -21,6 +21,8 @@ import {
   type ExistingTitleCandidate,
   type FindExistingResult,
 } from "../lib/scanApi";
+import { loadFieldOptions, type FieldOptions } from "../lib/fieldOptions";
+import AutocompleteInput from "../components/AutocompleteInput";
 import type { PendingScan } from "./PendingScansScreen";
 
 interface OmdbCandidate {
@@ -99,7 +101,17 @@ export default function ConfirmScreen({
   const [discCount, setDiscCount] = useState("1");
   const [diskRegion, setDiskRegion] = useState("");
   const [genreLocation, setGenreLocation] = useState("");
+  // Verbatim edition/packaging title (e.g. "Gladiator Special Edition"), distinct from the
+  // canonical `title` above - blank/left matching the title means "n/a" (see
+  // Claude/TECH STACK AND ARCHITECTURE.md). Never auto-filled: unlike title/format, there's
+  // no reliable signal in the UPC listing for which words are "part of the release name"
+  // vs. ordinary packaging noise, so this is manual-only.
+  const [releaseName, setReleaseName] = useState("");
+  const [steelbook, setSteelbook] = useState(false);
   const [specialFeatures, setSpecialFeatures] = useState(false);
+  const [specialFeaturesDiscCount, setSpecialFeaturesDiscCount] = useState("");
+  const [specialFeaturesDiscFormat, setSpecialFeaturesDiscFormat] = useState("");
+  const [fieldOptions, setFieldOptions] = useState<FieldOptions | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [checkingExisting, setCheckingExisting] = useState(false);
   const [existingCheck, setExistingCheck] = useState<MatchCheck | null>(null);
@@ -108,6 +120,21 @@ export default function ConfirmScreen({
 
   const selectedTypes = candidates.filter((c) => selected.has(c.imdbID)).map((c) => c.Type);
   const showTvFields = selectedTypes.some((t) => t === "series" || t === "episode");
+
+  useEffect(() => {
+    loadFieldOptions().then(setFieldOptions);
+  }, []);
+
+  // 4K UHD Blu-ray carries no region coding at all - default the field to "All" as soon
+  // as the format looks like 4K, but only while the user hasn't already typed something
+  // of their own in here (never stomp a deliberate manual entry).
+  useEffect(() => {
+    if (diskRegion.trim() !== "") return;
+    if (getDiskRegionOptions(format)?.length === 1) setDiskRegion(getDiskRegionOptions(format)![0]);
+  }, [format]);
+
+  const diskRegionOptions = getDiskRegionOptions(format) ?? fieldOptions?.diskRegion ?? [];
+  const showSpecialFeaturesDiscFields = specialFeatures && (parseInt(discCount, 10) || 1) > 1;
 
   function handleNotThisItem() {
     setShowAllCandidates(true);
@@ -142,17 +169,37 @@ export default function ConfirmScreen({
     setSubmitting(true);
     setError(null);
     try {
+      const chosen = candidates.filter((c) => selected.has(c.imdbID));
+
+      // "Matches the title" only has one obvious meaning for a single title (or a manual
+      // entry) - a collection scan shares one release_name across every member title
+      // (like format/disc_count/steelbook already do, since it's one physical box), so
+      // there's no single "the title" to compare against there and whatever was typed
+      // is kept as-is.
+      const comparisonTitle = chosen.length === 1 ? chosen[0].Title : manualTitle || scan.barcode;
+      const trimmedReleaseName = releaseName.trim();
+      const finalReleaseName =
+        chosen.length > 1 || (trimmedReleaseName && trimmedReleaseName.toLowerCase() !== comparisonTitle.trim().toLowerCase())
+          ? trimmedReleaseName || null
+          : null;
+
       const manualFields = {
         format,
         disc_count: parseInt(discCount, 10) || 1,
         disk_region: diskRegion || null,
         genre_location: genreLocation || null,
+        steelbook,
+        release_name: finalReleaseName,
         special_features: specialFeatures,
+        special_features_disc_count: showSpecialFeaturesDiscFields
+          ? parseInt(specialFeaturesDiscCount, 10) || null
+          : null,
+        special_features_disc_format: showSpecialFeaturesDiscFields
+          ? specialFeaturesDiscFormat || null
+          : null,
         case_image_url: scan.resolved_candidates?.upcProduct?.imageUrl ?? null,
         ...(selected.size === 0 ? { title: manualTitle || scan.barcode } : {}),
       };
-
-      const chosen = candidates.filter((c) => selected.has(c.imdbID));
       const entries: ConfirmEntry[] =
         chosen.length > 0
           ? chosen.map((c, i) => ({
@@ -443,10 +490,20 @@ export default function ConfirmScreen({
           <TextInput style={styles.input} value={manualTitle} onChangeText={setManualTitle} placeholder="Title" placeholderTextColor="#71717a" />
         </View>
       )}
+      <View style={styles.section}>
+        <Text style={styles.label}>Release Name (if different from Title)</Text>
+        <TextInput
+          style={styles.input}
+          value={releaseName}
+          onChangeText={setReleaseName}
+          placeholder="e.g. Gladiator Special Edition"
+          placeholderTextColor="#71717a"
+        />
+      </View>
 
       <View style={styles.section}>
         <Text style={styles.label}>Format</Text>
-        <TextInput style={styles.input} value={format} onChangeText={setFormat} placeholderTextColor="#71717a" />
+        <AutocompleteInput value={format} onChangeText={setFormat} options={fieldOptions?.format ?? []} />
       </View>
       <View style={styles.section}>
         <Text style={styles.label}>Disc Count</Text>
@@ -454,16 +511,53 @@ export default function ConfirmScreen({
       </View>
       <View style={styles.section}>
         <Text style={styles.label}>Disk Region</Text>
-        <TextInput style={styles.input} value={diskRegion} onChangeText={setDiskRegion} placeholder="e.g. 4, A, Free" placeholderTextColor="#71717a" />
+        <AutocompleteInput
+          value={diskRegion}
+          onChangeText={setDiskRegion}
+          options={diskRegionOptions}
+          placeholder="e.g. 4, A, All"
+        />
       </View>
       <View style={styles.section}>
         <Text style={styles.label}>Genre Location (shelf section)</Text>
-        <TextInput style={styles.input} value={genreLocation} onChangeText={setGenreLocation} placeholder="e.g. Action, History Documentary" placeholderTextColor="#71717a" />
+        <AutocompleteInput
+          value={genreLocation}
+          onChangeText={setGenreLocation}
+          options={fieldOptions?.genreLocation ?? []}
+          placeholder="e.g. Action, History Documentary"
+        />
+      </View>
+      <View style={[styles.section, styles.row]}>
+        <Text style={styles.label}>Steelbook</Text>
+        <Switch value={steelbook} onValueChange={setSteelbook} />
       </View>
       <View style={[styles.section, styles.row]}>
         <Text style={styles.label}>Special Features</Text>
         <Switch value={specialFeatures} onValueChange={setSpecialFeatures} />
       </View>
+      {showSpecialFeaturesDiscFields && (
+        <>
+          <View style={styles.section}>
+            <Text style={styles.label}>Number of Special Features Discs</Text>
+            <TextInput
+              style={styles.input}
+              value={specialFeaturesDiscCount}
+              onChangeText={setSpecialFeaturesDiscCount}
+              keyboardType="number-pad"
+              placeholder="e.g. 1"
+              placeholderTextColor="#71717a"
+            />
+          </View>
+          <View style={styles.section}>
+            <Text style={styles.label}>Format of Special Features Discs</Text>
+            <AutocompleteInput
+              value={specialFeaturesDiscFormat}
+              onChangeText={setSpecialFeaturesDiscFormat}
+              options={fieldOptions?.format ?? []}
+            />
+          </View>
+        </>
+      )}
 
       {showTvFields && <Text style={styles.hint}>TV-specific fields (season/episode) can be refined later via Direct Database Access.</Text>}
 
