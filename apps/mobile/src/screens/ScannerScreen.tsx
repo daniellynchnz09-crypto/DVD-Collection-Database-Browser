@@ -10,6 +10,12 @@ import { queueScan } from "../lib/scanApi";
 // still works normally.
 const SIGHTING_GAP_MS = 2000;
 
+// How long to remember a barcode after it's queued, so pointing back at the same case a
+// few seconds or minutes later doesn't create a second pending_scans row for it. Different
+// physical releases of the same movie have different barcodes, so this never blocks
+// scanning an actual second copy - only an accidental repeat of the exact same one.
+const RECENT_QUEUE_COOLDOWN_MS = 5 * 60 * 1000;
+
 /**
  * Scan-then-resolve-later (Claude/TECH STACK AND ARCHITECTURE.md): this screen only
  * ever records the barcode and returns to scanning immediately - no network wait, no
@@ -28,6 +34,8 @@ export default function ScannerScreen({ onGoToPending }: { onGoToPending: () => 
   // sighting of this code exceeds SIGHTING_GAP_MS - i.e. you actually pointed away and
   // came back, not "3 seconds passed while continuously staring at the same barcode."
   const activeBarcodeRef = useRef<{ code: string; lastSeenAt: number } | null>(null);
+  // barcode -> time it was last successfully queued, for the RECENT_QUEUE_COOLDOWN_MS check.
+  const recentlyQueuedRef = useRef<Map<string, number>>(new Map());
 
   if (!permission) {
     return <View style={styles.container} />;
@@ -57,11 +65,18 @@ export default function ScannerScreen({ onGoToPending }: { onGoToPending: () => 
     activeBarcodeRef.current = { code: barcode, lastSeenAt: now };
     if (stillHoldingSameCode) return;
 
+    const lastQueuedAt = recentlyQueuedRef.current.get(barcode);
+    if (lastQueuedAt !== undefined && now - lastQueuedAt < RECENT_QUEUE_COOLDOWN_MS) {
+      setLastMessage(`Already queued ${barcode} recently - skipped duplicate scan.`);
+      return;
+    }
+
     if (busyRef.current) return;
     busyRef.current = true;
 
     try {
       await queueScan(barcode);
+      recentlyQueuedRef.current.set(barcode, now);
       setLastMessage(`Scanned ${barcode} - queued for lookup.`);
     } catch (err) {
       setLastMessage(`Failed to queue ${barcode}: ${(err as Error).message}`);
