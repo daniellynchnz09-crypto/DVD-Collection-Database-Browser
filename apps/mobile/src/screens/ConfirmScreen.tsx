@@ -106,11 +106,16 @@ export default function ConfirmScreen({
   const [diskRegion, setDiskRegion] = useState(draft?.diskRegion ?? "");
   const [genreLocation, setGenreLocation] = useState(draft?.genreLocation ?? "");
   // Verbatim edition/packaging title (e.g. "Gladiator Special Edition"), distinct from the
-  // canonical `title` above - blank/left matching the title means "n/a" (see
-  // Claude/TECH STACK AND ARCHITECTURE.md). Never auto-filled: unlike title/format, there's
-  // no reliable signal in the UPC listing for which words are "part of the release name"
-  // vs. ordinary packaging noise, so this is manual-only.
+  // canonical `title` above - saved as null/"n/a" whenever releaseNameMatchesTitle is
+  // checked, regardless of whatever's left in the text field (see Claude/TECH STACK AND
+  // ARCHITECTURE.md). Never auto-filled: unlike title/format, there's no reliable signal
+  // in the UPC listing for which words are "part of the release name" vs. ordinary
+  // packaging noise, so this is manual-only. Defaults checked since most discs' release
+  // name is just their title.
   const [releaseName, setReleaseName] = useState(draft?.releaseName ?? "");
+  const [releaseNameMatchesTitle, setReleaseNameMatchesTitle] = useState(
+    draft?.releaseNameMatchesTitle ?? true
+  );
   const [steelbook, setSteelbook] = useState(draft?.steelbook ?? false);
   const [specialFeatures, setSpecialFeatures] = useState(draft?.specialFeatures ?? false);
   const [specialFeaturesDiscCount, setSpecialFeaturesDiscCount] = useState(draft?.specialFeaturesDiscCount ?? "");
@@ -146,6 +151,7 @@ export default function ConfirmScreen({
       selected: [...selected],
       manualTitle,
       releaseName,
+      releaseNameMatchesTitle,
       format,
       discCount,
       diskRegion,
@@ -161,6 +167,7 @@ export default function ConfirmScreen({
     selected,
     manualTitle,
     releaseName,
+    releaseNameMatchesTitle,
     format,
     discCount,
     diskRegion,
@@ -210,25 +217,13 @@ export default function ConfirmScreen({
     try {
       const chosen = candidates.filter((c) => selected.has(c.imdbID));
 
-      // "Matches the title" only has one obvious meaning for a single title (or a manual
-      // entry) - a collection scan shares one release_name across every member title
-      // (like format/disc_count/steelbook already do, since it's one physical box), so
-      // there's no single "the title" to compare against there and whatever was typed
-      // is kept as-is.
-      const comparisonTitle = chosen.length === 1 ? chosen[0].Title : manualTitle || scan.barcode;
-      const trimmedReleaseName = releaseName.trim();
-      const finalReleaseName =
-        chosen.length > 1 || (trimmedReleaseName && trimmedReleaseName.toLowerCase() !== comparisonTitle.trim().toLowerCase())
-          ? trimmedReleaseName || null
-          : null;
-
       const manualFields = {
         format,
         disc_count: parseInt(discCount, 10) || 1,
         disk_region: diskRegion || null,
         genre_location: genreLocation || null,
         steelbook,
-        release_name: finalReleaseName,
+        release_name: releaseNameMatchesTitle ? null : releaseName.trim() || null,
         special_features: specialFeatures,
         special_features_disc_count: showSpecialFeaturesDiscFields
           ? parseInt(specialFeaturesDiscCount, 10) || null
@@ -533,11 +528,23 @@ export default function ConfirmScreen({
         </View>
       )}
       <View style={styles.section}>
-        <Text style={styles.label}>Release Name (if different from Title)</Text>
+        <View style={styles.row}>
+          <Text style={styles.label}>Release Name (if different from Title)</Text>
+          <TouchableOpacity
+            style={styles.checkboxRow}
+            onPress={() => setReleaseNameMatchesTitle((prev) => !prev)}
+          >
+            <View style={[styles.checkbox, releaseNameMatchesTitle && styles.checkboxChecked]}>
+              {releaseNameMatchesTitle && <Text style={styles.checkboxMark}>✓</Text>}
+            </View>
+            <Text style={styles.checkboxLabel}>Same as Title</Text>
+          </TouchableOpacity>
+        </View>
         <TextInput
           style={styles.input}
           value={releaseName}
           onChangeText={setReleaseName}
+          editable={!releaseNameMatchesTitle}
           placeholder="e.g. Gladiator Special Edition"
           placeholderTextColor="#71717a"
         />
@@ -644,6 +651,19 @@ const styles = StyleSheet.create({
     padding: 10,
     color: "#f4f4f5",
   },
+  checkboxRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  checkbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: "#52525b",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  checkboxChecked: { backgroundColor: "#38bdf8", borderColor: "#38bdf8" },
+  checkboxMark: { color: "#09090b", fontSize: 11, fontWeight: "700" },
+  checkboxLabel: { color: "#a1a1aa", fontSize: 13 },
   candidateRow: {
     padding: 10,
     borderWidth: 1,

@@ -13,6 +13,7 @@ export interface ConfirmDraft {
   selected: string[];
   manualTitle: string;
   releaseName: string;
+  releaseNameMatchesTitle: boolean;
   format: string;
   discCount: string;
   diskRegion: string;
