@@ -1,8 +1,6 @@
 import { useEffect, useState } from "react";
 import {
   Image,
-  KeyboardAvoidingView,
-  Platform,
   ScrollView,
   StyleSheet,
   Switch,
@@ -11,6 +9,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cleanProductTitleForSearch, extractFormatHint, getDiskRegionOptions } from "@danflix/shared";
 import {
@@ -431,23 +430,20 @@ export default function ConfirmScreen({
   }
 
   return (
-    <KeyboardAvoidingView
+    // KeyboardAvoidingView's built-in "padding"/"height" behaviors kept trading one bug
+    // for another on Android (a blank gap above the keyboard vs. fields still hidden
+    // behind it) - KeyboardAwareScrollView actually measures the focused field and
+    // scrolls it into view instead of just padding/resizing blindly.
+    <KeyboardAwareScrollView
       style={styles.container}
-      // Android already resizes the window natively for the keyboard (adjustResize) -
-      // giving KeyboardAvoidingView its own "height" behavior on top of that double-
-      // adjusts and leaves a blank gap above the keyboard. iOS has no such native
-      // resize, so it still needs RN to pad manually.
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={insets.top}
+      contentContainerStyle={[
+        styles.scrollContent,
+        { paddingTop: 48 + insets.top, paddingBottom: 24 + insets.bottom },
+      ]}
+      keyboardShouldPersistTaps="handled"
+      enableOnAndroid
+      extraScrollHeight={20}
     >
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={[
-          styles.scrollContent,
-          { paddingTop: 48 + insets.top, paddingBottom: 24 + insets.bottom },
-        ]}
-        keyboardShouldPersistTaps="handled"
-      >
       <TouchableOpacity onPress={onBack}>
         <Text style={styles.link}>{"< Pending Scans"}</Text>
       </TouchableOpacity>
@@ -636,14 +632,12 @@ export default function ConfirmScreen({
       <TouchableOpacity onPress={handleDiscard} disabled={submitting || checkingExisting}>
         <Text style={styles.link}>This was a stray scan - discard it</Text>
       </TouchableOpacity>
-      </ScrollView>
-    </KeyboardAvoidingView>
+    </KeyboardAwareScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#09090b" },
-  scrollView: { flex: 1 },
   scrollContent: { padding: 16, paddingTop: 48, gap: 12 },
   title: { color: "#f4f4f5", fontSize: 18, fontWeight: "700" },
   body: { color: "#e4e4e7" },
