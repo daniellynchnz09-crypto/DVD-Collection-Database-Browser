@@ -3,15 +3,22 @@ import { NextResponse } from "next/server";
 import { requireScanSecret } from "@/lib/scanAuth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { appendRowToSheet, getSheetHeaderAndColumns } from "@/lib/googleSheets";
+import { canonicalizeValue } from "@/lib/canonicalizeValue";
 import {
   buildColumnIndexes,
   buildSheetRowFromTitle,
+  cleanFreeText,
   inferDepictedEraStart,
+  normalizeFormat,
   omdbGetById,
   parseOmdbReleaseDate,
   parseOmdbRuntimeMins,
 } from "@danflix/shared";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
 
 interface ConfirmEntry {
   imdbId?: string;
@@ -133,10 +140,27 @@ export async function POST(request: Request) {
       }
     }
 
+    // Normalizes scanner-entered free text so random capitalization/spacing never creates
+    // a near-duplicate of a category the collection already uses. `format` has a small
+    // fixed set of legitimate spellings (normalizeFormat's FORMAT_ALIASES); Disk Region and
+    // Genre Location are genuinely open-ended, so canonicalizeValue resolves against
+    // whatever's already in `titles` instead. Title/Release Name only get whitespace
+    // tidied, never case-folded - they're proper nouns/verbatim text where casing matters.
+    const cleanDiskRegion = await canonicalizeValue(
+      supabase,
+      "disk_region",
+      cleanFreeText(asString(manual.disk_region))
+    );
+    const cleanGenreLocation = await canonicalizeValue(
+      supabase,
+      "genre_location",
+      cleanFreeText(asString(manual.genre_location))
+    );
+
     const uniqueId = randomUUID();
     const title: Record<string, unknown> = {
       unique_id: uniqueId,
-      title: manual.title ?? omdbFields.title ?? "Unknown Title",
+      title: cleanFreeText(asString(manual.title)) ?? omdbFields.title ?? "Unknown Title",
       movie_or_tv: manual.movie_or_tv ?? omdbFields.movie_or_tv ?? "Movie",
       season_no: manual.season_no ?? null,
       part_of_season_no: manual.part_of_season_no ?? null,
@@ -148,12 +172,12 @@ export async function POST(request: Request) {
       franchise: manual.franchise ?? null,
       sub_franchise: manual.sub_franchise ?? null,
       rating: manual.rating ?? omdbFields.rating ?? null,
-      format: manual.format ?? "DVD",
+      format: normalizeFormat(asString(manual.format)) ?? "DVD",
       disc_count: manual.disc_count ?? 1,
       steelbook: manual.steelbook ?? false,
       special_features: manual.special_features ?? false,
       special_features_disc_count: manual.special_features_disc_count ?? null,
-      special_features_disc_format: manual.special_features_disc_format ?? null,
+      special_features_disc_format: normalizeFormat(asString(manual.special_features_disc_format)),
       animation_or_live_action: manual.animation_or_live_action ?? "Live Action",
       documentary: manual.documentary ?? "n",
       is_collection: manual.is_collection ?? false,
@@ -163,11 +187,11 @@ export async function POST(request: Request) {
       rotten_tomatoes_page: manual.rotten_tomatoes_page ?? null,
       imdb_page: manual.imdb_page ?? omdbFields.imdb_page ?? null,
       studio: manual.studio ?? null,
-      disk_region: manual.disk_region ?? null,
+      disk_region: cleanDiskRegion,
       barcode_id: entry.barcodeId ?? null,
       case_image_url: manual.case_image_url ?? null,
-      genre_location: manual.genre_location ?? null,
-      release_name: manual.release_name ?? null,
+      genre_location: cleanGenreLocation,
+      release_name: cleanFreeText(asString(manual.release_name)),
       depicted_era_start:
         manual.depicted_era_start ??
         inferDepictedEraStart(String(manual.title ?? omdbFields.title ?? ""), synopsis),

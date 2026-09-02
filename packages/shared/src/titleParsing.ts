@@ -159,6 +159,16 @@ export function normalizeFormat(value: string | undefined): string | null {
   return FORMAT_ALIASES[normalizeFormatKey(cleaned)] ?? cleaned;
 }
 
+/** Trims and collapses internal whitespace ("Gladiator  Special Edition " ->
+ * "Gladiator Special Edition"), without any case-folding - title/release_name are proper
+ * nouns/verbatim packaging text where casing is meaningful, so unlike normalizeFormat or
+ * apps/web's canonicalizeValue, this never merges into an existing value. */
+export function cleanFreeText(value: string | undefined): string | null {
+  const cleaned = cleanCell(value);
+  if (cleaned == null) return null;
+  return cleaned.replace(/\s+/g, " ");
+}
+
 /** Converts a 0-indexed column number to its Sheets column letter(s) (0 -> A, 26 -> AA, ...). */
 export function columnLetter(index: number): string {
   let letter = "";
