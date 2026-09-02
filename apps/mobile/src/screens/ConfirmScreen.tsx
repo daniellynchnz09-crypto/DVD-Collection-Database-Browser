@@ -433,9 +433,11 @@ export default function ConfirmScreen({
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      // Clears the tab/nav bar area so the keyboard doesn't have to push past it too -
-      // matters most for fields near the bottom of this long form.
+      // Android already resizes the window natively for the keyboard (adjustResize) -
+      // giving KeyboardAvoidingView its own "height" behavior on top of that double-
+      // adjusts and leaves a blank gap above the keyboard. iOS has no such native
+      // resize, so it still needs RN to pad manually.
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={insets.top}
     >
       <ScrollView
