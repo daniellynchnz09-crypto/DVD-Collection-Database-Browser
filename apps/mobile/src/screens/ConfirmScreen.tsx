@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import {
   Image,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   Switch,
@@ -429,13 +431,21 @@ export default function ConfirmScreen({
   }
 
   return (
-    <ScrollView
+    <KeyboardAvoidingView
       style={styles.container}
-      contentContainerStyle={[
-        styles.scrollContent,
-        { paddingTop: 48 + insets.top, paddingBottom: 24 + insets.bottom },
-      ]}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      // Clears the tab/nav bar area so the keyboard doesn't have to push past it too -
+      // matters most for fields near the bottom of this long form.
+      keyboardVerticalOffset={insets.top}
     >
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingTop: 48 + insets.top, paddingBottom: 24 + insets.bottom },
+        ]}
+        keyboardShouldPersistTaps="handled"
+      >
       <TouchableOpacity onPress={onBack}>
         <Text style={styles.link}>{"< Pending Scans"}</Text>
       </TouchableOpacity>
@@ -624,12 +634,14 @@ export default function ConfirmScreen({
       <TouchableOpacity onPress={handleDiscard} disabled={submitting || checkingExisting}>
         <Text style={styles.link}>This was a stray scan - discard it</Text>
       </TouchableOpacity>
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#09090b" },
+  scrollView: { flex: 1 },
   scrollContent: { padding: 16, paddingTop: 48, gap: 12 },
   title: { color: "#f4f4f5", fontSize: 18, fontWeight: "700" },
   body: { color: "#e4e4e7" },
