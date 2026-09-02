@@ -7,9 +7,12 @@
  * guess when the text doesn't clearly say.
  */
 
+// Canonical spellings match packages/shared/src/titleParsing.ts's FORMAT_ALIASES, so a
+// scan-time guess and a manually-typed Sheet value never disagree on how to spell the
+// same format.
 const FORMAT_PATTERNS: { pattern: RegExp; format: string }[] = [
-  { pattern: /\b4k|ultra ?hd|uhd\b/i, format: "4K UHD" },
-  { pattern: /\bblu-?ray\b/i, format: "Blu-ray" },
+  { pattern: /\b4k|ultra ?hd|uhd\b/i, format: "4K UHD Blu-Ray" },
+  { pattern: /\bblu-?ray\b/i, format: "Blu-Ray" },
   { pattern: /\bvhs\b/i, format: "VHS" },
   { pattern: /\bdvd\b/i, format: "DVD" },
 ];

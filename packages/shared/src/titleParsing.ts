@@ -129,6 +129,36 @@ export function normalizeMovieOrTv(value: string | undefined): string | null {
   return MOVIE_OR_TV_ALIASES[normalizeHeader(cleaned)] ?? cleaned;
 }
 
+// The real sheet had ~19 distinct spellings for really 7 physical formats - casing drift
+// (DVd, BLu-Ray, Blu Ray) and inconsistent spacing (double space, missing hyphen). Unlike
+// normalizeHeader, this deliberately keeps "(...)" content - "DVD (Custom Burn)" and plain
+// "DVD" are genuinely different physical media (a home-burned disc vs. an official
+// pressing), not a spelling variant of each other, and 3D discs are their own real
+// sub-format too - only casing/spacing noise gets collapsed. `format` is free text in the
+// DB (not a fixed enum), so an unrecognized value still passes through as-is.
+export const FORMAT_ALIASES: Record<string, string> = {
+  "dvd": "DVD",
+  "dvd (custom burn)": "DVD (Custom Burn)",
+  "dvd 3d": "DVD 3D",
+  "blu-ray": "Blu-Ray",
+  "blu ray": "Blu-Ray",
+  "blu-ray 3d": "Blu-Ray 3D",
+  "4k uhd": "4K UHD Blu-Ray",
+  "4k uhd blu-ray": "4K UHD Blu-Ray",
+  "cd movie": "CD Movie",
+  "cd": "CD Movie",
+};
+
+function normalizeFormatKey(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+export function normalizeFormat(value: string | undefined): string | null {
+  const cleaned = cleanCell(value);
+  if (cleaned == null) return null;
+  return FORMAT_ALIASES[normalizeFormatKey(cleaned)] ?? cleaned;
+}
+
 /** Converts a 0-indexed column number to its Sheets column letter(s) (0 -> A, 26 -> AA, ...). */
 export function columnLetter(index: number): string {
   let letter = "";
@@ -211,7 +241,7 @@ export function parseSheetRowToTitle(
     franchise: cleanCell(row[columnIndexes["franchise"]]),
     sub_franchise: cleanCell(row[columnIndexes["sub_franchise"]]),
     rating: cleanCell(row[columnIndexes["rating"]]),
-    format: cleanCell(row[columnIndexes["format"]]) ?? "DVD",
+    format: normalizeFormat(row[columnIndexes["format"]]) ?? "DVD",
     disc_count: toInt(row[columnIndexes["disc_count"]]) ?? 1,
     special_features: toBoolean(row[columnIndexes["special_features"]]),
     special_features_disc_count: toInt(row[columnIndexes["special_features_disc_count"]]),

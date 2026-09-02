@@ -39,6 +39,8 @@ Schema: one core table modeled directly on the "All DVDs and Specs" Google Sheet
 
 Row Level Security: public read access for anything the browse/search UI needs; all writes require the authenticated owner (Supabase Auth, single account — see AUTH below). This is the actual security boundary, not just hiding UI elements.
 
+**Format normalization**: the real Sheet had accumulated ~19 distinct spellings of Format for really 7 physical formats (casing drift like "BLu-Ray"/"Blu Ray", double spaces, "4k" vs "4K") - noticed via the Confirm screen's Format autocomplete showing several near-duplicate suggestions for the same thing. `packages/shared/src/titleParsing.ts`'s `FORMAT_ALIASES`/`normalizeFormat` is the single canonical mapping (DVD, DVD (Custom Burn), DVD 3D, Blu-Ray, Blu-Ray 3D, 4K UHD Blu-Ray, CD Movie - Custom Burn and the 3D variants are deliberately kept as their own distinct formats, not folded into plain DVD/Blu-Ray, since they're genuinely different physical media, not spelling variants), applied automatically to every Sheet sync from here on and also used to keep `extractFormatHint`'s scan-time guesses (`packages/shared/src/formatHints.ts`) spelled identically. `scripts/src/backfill-format-normalization.ts` (one-time, already run) cleaned up the 132 existing rows that predated this - verified end to end (Sheet edited, re-synced, and the resulting Supabase distinct-value counts checked against the predicted merge) down to exactly the canonical set with no strays.
+
 
 
 **GOOGLE SHEET SYNC**
