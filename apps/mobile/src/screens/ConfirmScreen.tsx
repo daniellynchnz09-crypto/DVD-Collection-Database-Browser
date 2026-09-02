@@ -22,6 +22,7 @@ import {
   type FindExistingResult,
 } from "../lib/scanApi";
 import { loadFieldOptions, type FieldOptions } from "../lib/fieldOptions";
+import { clearConfirmDraft, getConfirmDraft, saveConfirmDraft } from "../lib/confirmDrafts";
 import AutocompleteInput from "../components/AutocompleteInput";
 import type { PendingScan } from "./PendingScansScreen";
 
@@ -77,40 +78,43 @@ export default function ConfirmScreen({
   const autoMatchedCandidate = autoMatched
     ? candidates.find((c) => c.imdbID === autoMatched.bestImdbId) ?? null
     : null;
+  const draft = getConfirmDraft(scan.id);
 
   // Starts collapsed to just the auto-matched candidate when the listing's own photo
   // confidently matched one poster - "Not this item" reveals the full list to pick from
-  // manually instead.
-  const [showAllCandidates, setShowAllCandidates] = useState(!autoMatchedCandidate);
+  // manually instead. (Or, if a draft exists - the user was already partway through this
+  // scan and left - restores exactly what they'd chosen instead of these defaults.)
+  const [showAllCandidates, setShowAllCandidates] = useState(draft?.showAllCandidates ?? !autoMatchedCandidate);
   const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(autoMatchedCandidate ? [autoMatchedCandidate.imdbID] : [])
+    () => new Set(draft?.selected ?? (autoMatchedCandidate ? [autoMatchedCandidate.imdbID] : []))
   );
   // Best-effort starting guesses from the UPC listing text - always editable, never
   // presented as confirmed fact. Packaging/marketing words ("Special Edition") are already
   // stripped by cleanProductTitleForSearch since those never belong in a title per how this
   // collection is catalogued (see Claude/TECH STACK AND ARCHITECTURE.md's Collections note).
-  const [manualTitle, setManualTitle] = useState(() =>
-    upcProduct?.title ? cleanProductTitleForSearch(upcProduct.title) : ""
+  const [manualTitle, setManualTitle] = useState(
+    () => draft?.manualTitle ?? (upcProduct?.title ? cleanProductTitleForSearch(upcProduct.title) : "")
   );
   const [format, setFormat] = useState(() => {
+    if (draft?.format) return draft.format;
     const hint = upcProduct
       ? extractFormatHint(`${upcProduct.title} ${upcProduct.description ?? ""}`)
       : null;
     return hint ?? "DVD";
   });
-  const [discCount, setDiscCount] = useState("1");
-  const [diskRegion, setDiskRegion] = useState("");
-  const [genreLocation, setGenreLocation] = useState("");
+  const [discCount, setDiscCount] = useState(draft?.discCount ?? "1");
+  const [diskRegion, setDiskRegion] = useState(draft?.diskRegion ?? "");
+  const [genreLocation, setGenreLocation] = useState(draft?.genreLocation ?? "");
   // Verbatim edition/packaging title (e.g. "Gladiator Special Edition"), distinct from the
   // canonical `title` above - blank/left matching the title means "n/a" (see
   // Claude/TECH STACK AND ARCHITECTURE.md). Never auto-filled: unlike title/format, there's
   // no reliable signal in the UPC listing for which words are "part of the release name"
   // vs. ordinary packaging noise, so this is manual-only.
-  const [releaseName, setReleaseName] = useState("");
-  const [steelbook, setSteelbook] = useState(false);
-  const [specialFeatures, setSpecialFeatures] = useState(false);
-  const [specialFeaturesDiscCount, setSpecialFeaturesDiscCount] = useState("");
-  const [specialFeaturesDiscFormat, setSpecialFeaturesDiscFormat] = useState("");
+  const [releaseName, setReleaseName] = useState(draft?.releaseName ?? "");
+  const [steelbook, setSteelbook] = useState(draft?.steelbook ?? false);
+  const [specialFeatures, setSpecialFeatures] = useState(draft?.specialFeatures ?? false);
+  const [specialFeaturesDiscCount, setSpecialFeaturesDiscCount] = useState(draft?.specialFeaturesDiscCount ?? "");
+  const [specialFeaturesDiscFormat, setSpecialFeaturesDiscFormat] = useState(draft?.specialFeaturesDiscFormat ?? "");
   const [fieldOptions, setFieldOptions] = useState<FieldOptions | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [checkingExisting, setCheckingExisting] = useState(false);
@@ -132,6 +136,40 @@ export default function ConfirmScreen({
     if (diskRegion.trim() !== "") return;
     if (getDiskRegionOptions(format)?.length === 1) setDiskRegion(getDiskRegionOptions(format)![0]);
   }, [format]);
+
+  // Keeps the draft cache current on every change, so leaving this scan half-finished
+  // (back to Pending Scans, or even backgrounding the whole app) and coming back to it
+  // later restores exactly this state instead of the freshly-computed defaults above.
+  useEffect(() => {
+    saveConfirmDraft(scan.id, {
+      showAllCandidates,
+      selected: [...selected],
+      manualTitle,
+      releaseName,
+      format,
+      discCount,
+      diskRegion,
+      genreLocation,
+      steelbook,
+      specialFeatures,
+      specialFeaturesDiscCount,
+      specialFeaturesDiscFormat,
+    });
+  }, [
+    scan.id,
+    showAllCandidates,
+    selected,
+    manualTitle,
+    releaseName,
+    format,
+    discCount,
+    diskRegion,
+    genreLocation,
+    steelbook,
+    specialFeatures,
+    specialFeaturesDiscCount,
+    specialFeaturesDiscFormat,
+  ]);
 
   const diskRegionOptions = getDiskRegionOptions(format) ?? fieldOptions?.diskRegion ?? [];
   const showSpecialFeaturesDiscFields = specialFeatures && (parseInt(discCount, 10) || 1) > 1;
@@ -157,6 +195,7 @@ export default function ConfirmScreen({
     setSubmitting(true);
     try {
       await dismissScan(scan.id);
+      clearConfirmDraft(scan.id);
       onBack();
     } catch (err) {
       setError((err as Error).message);
@@ -210,6 +249,7 @@ export default function ConfirmScreen({
           : [{ barcodeId: scan.barcode, manualFields }];
 
       const result = await confirmScan(scan.id, entries);
+      clearConfirmDraft(scan.id);
       onConfirmed({ shelfLocation: result.shelfLocation });
     } catch (err) {
       setError((err as Error).message);
@@ -270,6 +310,7 @@ export default function ConfirmScreen({
         imdbId,
         caseImageUrl: scan.resolved_candidates?.upcProduct?.imageUrl,
       });
+      clearConfirmDraft(scan.id);
       onConfirmed({ shelfLocation: null, linkedTitle: result.linkedTitle });
     } catch (err) {
       setError((err as Error).message);
@@ -291,6 +332,7 @@ export default function ConfirmScreen({
     setError(null);
     try {
       await discardScan(scan.id);
+      clearConfirmDraft(scan.id);
       onDiscarded?.(scan.barcode);
       onBack();
     } catch (err) {
