@@ -51,11 +51,24 @@ export async function getSheetHeaderAndColumns(): Promise<{
 export async function appendRowToSheet(row: string[]): Promise<void> {
   const sheets = getSheetsClient();
   const { sheetId, tabName } = getSheetConfig();
-  await sheets.spreadsheets.values.append({
+
+  // values.append's own "find the table, append after it" auto-detection is unreliable
+  // on this sheet: its grid is fixed at exactly 4000 rows, and appends kept landing at
+  // row 4000 regardless of where the real data actually ended (confirmed live - it
+  // misplaced the first real scan-confirmed row, "Paper Planes", leaving ~935 blank rows
+  // above it). Computing the target row explicitly - via the Title column, which is
+  // NOT NULL so it's non-blank on every real row - sidesteps that auto-detection
+  // entirely instead of trying to out-guess it.
+  const { data } = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId,
-    range: tabName,
+    range: `${tabName}!A:A`,
+  });
+  const nextRow = (data.values?.length ?? 1) + 1;
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: sheetId,
+    range: `${tabName}!${nextRow}:${nextRow}`,
     valueInputOption: "RAW",
-    insertDataOption: "INSERT_ROWS",
     requestBody: { values: [row] },
   });
 }

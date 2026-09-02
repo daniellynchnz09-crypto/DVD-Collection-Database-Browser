@@ -302,11 +302,20 @@ function formatValueForSheet(value: unknown): string {
   return String(value);
 }
 
-// Fields needing a different sheet representation than their raw DB value
-// (booleans/arrays already stringify sensibly via formatValueForSheet - only
-// dates need reformatting, dd/mm/yyyy in the Sheet vs yyyy-mm-dd in Postgres).
+// Confirmed against the real Sheet's existing convention (e.g. "154mins", no space) -
+// running_time_mins is a plain integer in Postgres, but the Sheet expects the unit typed
+// directly after the number. toInt() already reads this back fine either way, since
+// parseInt stops at the first non-digit character.
+function formatRunningTimeForSheet(value: unknown): string {
+  if (value == null || value === "") return "n/a";
+  return `${value}mins`;
+}
+
+// Fields needing a different sheet representation than their raw DB value (booleans/
+// arrays already stringify sensibly via formatValueForSheet).
 const SHEET_FIELD_FORMATTERS: Partial<Record<string, (v: unknown) => string>> = {
   release_date: formatDateForSheet,
+  running_time_mins: formatRunningTimeForSheet,
 };
 
 /** Formats one field's value the same way buildSheetRowFromTitle would, for callers that
