@@ -19,6 +19,10 @@ export interface OmdbDetail {
   imdbRating: string;
   imdbID: string;
   Type: string;
+  // Multi-source aggregate scores OMDB already bundles in - includes a "Rotten Tomatoes"
+  // entry (e.g. Value "85%") whenever the title actually has a critics score, without
+  // needing to touch Rotten Tomatoes' own site just to find that out.
+  Ratings?: { Source: string; Value: string }[];
 }
 
 function getApiKey(): string {

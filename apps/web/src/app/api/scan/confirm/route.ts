@@ -14,6 +14,7 @@ import {
   parseOmdbReleaseDate,
   parseOmdbRuntimeMins,
 } from "@danflix/shared";
+import { lookupRottenTomatoesPage } from "@danflix/backend";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 function asString(value: unknown): string | undefined {
@@ -144,6 +145,17 @@ export async function POST(request: Request) {
           rating: detail.Rated !== "N/A" ? detail.Rated : null,
           imdb_page: `https://www.imdb.com/title/${detail.imdbID}/`,
         };
+
+        // Only bother looking Rotten Tomatoes up at all once OMDB's own Ratings array has
+        // already confirmed a critics score exists - skips the fetch entirely for titles
+        // with none, and never overrides a link the user already typed in themselves.
+        if (!asString(manual.rotten_tomatoes_page)) {
+          const rtRating = detail.Ratings?.find((r) => r.Source === "Rotten Tomatoes");
+          const percent = rtRating ? parseInt(rtRating.Value, 10) : NaN;
+          if (!Number.isNaN(percent)) {
+            omdbFields.rotten_tomatoes_page = await lookupRottenTomatoesPage(detail.Title, percent);
+          }
+        }
       }
     }
 
@@ -191,7 +203,7 @@ export async function POST(request: Request) {
       name_of_collection: manual.name_of_collection ?? null,
       title_in_a_collection: manual.title_in_a_collection ?? false,
       number_of_titles_in_collection: manual.number_of_titles_in_collection ?? null,
-      rotten_tomatoes_page: manual.rotten_tomatoes_page ?? null,
+      rotten_tomatoes_page: manual.rotten_tomatoes_page ?? omdbFields.rotten_tomatoes_page ?? null,
       imdb_page: manual.imdb_page ?? omdbFields.imdb_page ?? null,
       studio: (isMultiTitleEntry ? undefined : manual.studio) ?? null,
       disk_region: cleanDiskRegion,
