@@ -18,6 +18,8 @@ export interface ConfirmDraft {
   discCount: string;
   diskRegion: string;
   genreLocation: string;
+  rating: string;
+  studio: string;
   steelbook: boolean;
   specialFeatures: boolean;
   specialFeaturesDiscCount: string;

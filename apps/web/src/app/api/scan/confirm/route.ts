@@ -114,6 +114,13 @@ export async function POST(request: Request) {
   const { header } = await getSheetHeaderAndColumns();
   const columnIndexes = buildColumnIndexes(header);
 
+  // A box set's cover only ever shows one rating/studio for the whole collection, not
+  // necessarily any single film's own - so manual rating/studio only ever applies to a
+  // single-entry submission, regardless of what the client sends. Enforced here (not just
+  // in ConfirmScreen) since manualFields is otherwise shared verbatim across every member
+  // of a multi-title collection.
+  const isMultiTitleEntry = entries.length > 1;
+
   const createdIds: string[] = [];
   let primaryShelfLocation: { before: string | null; after: string | null } | null = null;
 
@@ -171,7 +178,7 @@ export async function POST(request: Request) {
       director: manual.director ?? omdbFields.director ?? [],
       franchise: manual.franchise ?? null,
       sub_franchise: manual.sub_franchise ?? null,
-      rating: manual.rating ?? omdbFields.rating ?? null,
+      rating: (isMultiTitleEntry ? undefined : manual.rating) ?? omdbFields.rating ?? null,
       format: normalizeFormat(asString(manual.format)) ?? "DVD",
       disc_count: manual.disc_count ?? 1,
       steelbook: manual.steelbook ?? false,
@@ -186,7 +193,7 @@ export async function POST(request: Request) {
       number_of_titles_in_collection: manual.number_of_titles_in_collection ?? null,
       rotten_tomatoes_page: manual.rotten_tomatoes_page ?? null,
       imdb_page: manual.imdb_page ?? omdbFields.imdb_page ?? null,
-      studio: manual.studio ?? null,
+      studio: (isMultiTitleEntry ? undefined : manual.studio) ?? null,
       disk_region: cleanDiskRegion,
       barcode_id: entry.barcodeId ?? null,
       case_image_url: manual.case_image_url ?? null,

@@ -106,6 +106,11 @@ export default function ConfirmScreen({
   const [discCount, setDiscCount] = useState(draft?.discCount ?? "1");
   const [diskRegion, setDiskRegion] = useState(draft?.diskRegion ?? "");
   const [genreLocation, setGenreLocation] = useState(draft?.genreLocation ?? "");
+  // Manual-only, deliberately never auto-filled from OMDB's "Rated" field - that's a US
+  // MPAA-style value and often just "Not Rated" even for titles that do carry a real NZ/
+  // Oceania classification on the physical case, which is the authoritative source here.
+  const [rating, setRating] = useState(draft?.rating ?? "");
+  const [studio, setStudio] = useState(draft?.studio ?? "");
   // Verbatim edition/packaging title (e.g. "Gladiator Special Edition"), distinct from the
   // canonical `title` above - saved as null/"n/a" whenever releaseNameMatchesTitle is
   // checked, regardless of whatever's left in the text field (see Claude/TECH STACK AND
@@ -157,6 +162,8 @@ export default function ConfirmScreen({
       discCount,
       diskRegion,
       genreLocation,
+      rating,
+      studio,
       steelbook,
       specialFeatures,
       specialFeaturesDiscCount,
@@ -173,6 +180,8 @@ export default function ConfirmScreen({
     discCount,
     diskRegion,
     genreLocation,
+    rating,
+    studio,
     steelbook,
     specialFeatures,
     specialFeaturesDiscCount,
@@ -181,6 +190,12 @@ export default function ConfirmScreen({
 
   const diskRegionOptions = getDiskRegionOptions(format) ?? fieldOptions?.diskRegion ?? [];
   const showSpecialFeaturesDiscFields = specialFeatures && (parseInt(discCount, 10) || 1) > 1;
+  // A box set's cover only ever shows one rating/studio for the whole collection, which
+  // isn't necessarily any single film's own rating - so manual Rating/Studio entry only
+  // applies when this scan is producing exactly one title. For an actual multi-title
+  // collection, each member instead keeps whatever OMDB itself has for that specific
+  // title (already computed per-entry server-side), imperfect as that sometimes is.
+  const isMultiTitleCollection = selected.size > 1;
 
   function handleNotThisItem() {
     setShowAllCandidates(true);
@@ -223,6 +238,8 @@ export default function ConfirmScreen({
         disc_count: parseInt(discCount, 10) || 1,
         disk_region: diskRegion || null,
         genre_location: genreLocation || null,
+        rating: isMultiTitleCollection ? null : rating.trim() || null,
+        studio: isMultiTitleCollection ? null : studio.trim() || null,
         steelbook,
         release_name: releaseNameMatchesTitle ? null : releaseName.trim() || null,
         special_features: specialFeatures,
@@ -584,6 +601,33 @@ export default function ConfirmScreen({
           placeholder="e.g. Action, History Documentary"
         />
       </View>
+      {isMultiTitleCollection ? (
+        <Text style={styles.hint}>
+          Rating and Studio aren&apos;t set here for a multi-title collection - the box's
+          own cover rating isn&apos;t necessarily any single film's, so each title keeps
+          whatever OMDB has instead. Fix up per-title afterward if needed.
+        </Text>
+      ) : (
+        <>
+          <View style={styles.section}>
+            <Text style={styles.label}>Rating (from the case)</Text>
+            <AutocompleteInput
+              value={rating}
+              onChangeText={setRating}
+              options={fieldOptions?.rating ?? []}
+              placeholder="e.g. G, PG, M, R13"
+            />
+          </View>
+          <View style={styles.section}>
+            <Text style={styles.label}>Studio</Text>
+            <AutocompleteInput
+              value={studio}
+              onChangeText={setStudio}
+              options={fieldOptions?.studio ?? []}
+            />
+          </View>
+        </>
+      )}
       <View style={[styles.section, styles.row]}>
         <Text style={styles.label}>Steelbook</Text>
         <Switch value={steelbook} onValueChange={setSteelbook} />
