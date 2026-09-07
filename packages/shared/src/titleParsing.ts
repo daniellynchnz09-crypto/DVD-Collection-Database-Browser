@@ -340,11 +340,29 @@ function formatRunningTimeForSheet(value: unknown): string {
   return `${value}mins`;
 }
 
+// The real Sheet's boolean convention isn't actually uniform: columns whose header
+// literally says "(y/n)" (Collection, Title in a Collection) genuinely use abbreviated
+// "y"/"n" as their dominant existing spelling, but "Special Features" (no such qualifier
+// in its header) has always predominantly used full "Yes"/"No" (confirmed against the
+// real data: 1587 "no"/1429 "yes" vs. a single stray "y") - formatValueForSheet's blanket
+// boolean -> "y"/"n" was silently wrong for this one column the whole time, only noticed
+// once a scan-confirmed row (Paper Planes) got written with "y" instead of matching every
+// other row's "Yes". toBoolean() already accepted both spellings on the read side (its
+// YES_VALUES set includes "yes"/"Yes"), so only the write side needed fixing. Steelbook
+// (this project's own new column, no legacy data, header also unqualified) follows the
+// same "Yes"/"No" convention for consistency with Special Features' naming style.
+function formatYesNoForSheet(value: unknown): string {
+  if (value == null || value === "") return "n/a";
+  return value ? "Yes" : "No";
+}
+
 // Fields needing a different sheet representation than their raw DB value (booleans/
-// arrays already stringify sensibly via formatValueForSheet).
+// arrays not listed here already stringify sensibly via formatValueForSheet).
 const SHEET_FIELD_FORMATTERS: Partial<Record<string, (v: unknown) => string>> = {
   release_date: formatDateForSheet,
   running_time_mins: formatRunningTimeForSheet,
+  special_features: formatYesNoForSheet,
+  steelbook: formatYesNoForSheet,
 };
 
 /** Formats one field's value the same way buildSheetRowFromTitle would, for callers that
