@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import {
   Image,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   Switch,
@@ -9,7 +11,6 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cleanProductTitleForSearch, extractFormatHint, getDiskRegionOptions } from "@danflix/shared";
 import {
@@ -46,6 +47,12 @@ interface PosterMatch {
 
 type ShelfLocation = { before: string | null; after: string | null } | null;
 type MatchCheck = Extract<FindExistingResult, { status: "auto" | "ambiguous" }>;
+
+// A generous static reserve below the last field/button, roughly matching a typical
+// on-screen keyboard's height - guarantees there's always room to scroll the Confirm
+// button clear of the keyboard by hand, regardless of how well (or not) the platform's
+// own keyboard-avoidance behaves for a given field.
+const KEYBOARD_SAFETY_PADDING = 300;
 
 /**
  * Review/manual-fill form for one pending scan. Per Claude/TECH STACK AND
@@ -497,20 +504,26 @@ export default function ConfirmScreen({
   }
 
   return (
-    // KeyboardAvoidingView's built-in "padding"/"height" behaviors kept trading one bug
-    // for another on Android (a blank gap above the keyboard vs. fields still hidden
-    // behind it) - KeyboardAwareScrollView actually measures the focused field and
-    // scrolls it into view instead of just padding/resizing blindly.
-    <KeyboardAwareScrollView
-      style={styles.container}
-      contentContainerStyle={[
-        styles.scrollContent,
-        { paddingTop: 48 + insets.top, paddingBottom: 24 + insets.bottom },
-      ]}
-      keyboardShouldPersistTaps="handled"
-      enableOnAndroid
-      extraScrollHeight={20}
-    >
+    // Two different automatic approaches (KeyboardAvoidingView's "height" behavior, then
+    // the react-native-keyboard-aware-scroll-view library) each proved inconsistent on
+    // Android in real testing - one left a blank gap above the keyboard, the other
+    // sometimes still let the keyboard cover a field and other times over-corrected,
+    // pushing the Confirm button half out of the safe area. Settled on the simplest thing
+    // that can't go wrong: iOS gets real padding-based avoidance (it has no native
+    // equivalent to Android's adjustResize, so it actually needs this); Android relies
+    // entirely on its own native window resize (app.json's softwareKeyboardLayoutMode) and
+    // just gets a generous static bottom padding, so the user can always manually scroll
+    // the last field/button clear of the keyboard - no dynamic keyboard-height tracking
+    // or third-party heuristics left to go stale or double-adjust.
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingTop: 48 + insets.top, paddingBottom: 24 + insets.bottom + KEYBOARD_SAFETY_PADDING },
+        ]}
+        keyboardShouldPersistTaps="handled"
+      >
       <TouchableOpacity onPress={onBack}>
         <Text style={styles.link}>{"< Pending Scans"}</Text>
       </TouchableOpacity>
@@ -733,12 +746,14 @@ export default function ConfirmScreen({
       <TouchableOpacity onPress={handleDiscard} disabled={submitting || checkingExisting}>
         <Text style={styles.link}>This was a stray scan - discard it</Text>
       </TouchableOpacity>
-    </KeyboardAwareScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#09090b" },
+  scrollView: { flex: 1 },
   scrollContent: { padding: 16, paddingTop: 48, gap: 12 },
   title: { color: "#f4f4f5", fontSize: 18, fontWeight: "700" },
   body: { color: "#e4e4e7" },
