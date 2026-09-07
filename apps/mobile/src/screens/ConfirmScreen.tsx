@@ -18,9 +18,11 @@ import {
   dismissScan,
   findExistingTitle,
   linkExistingTitle,
+  previewTmdbFields,
   type ConfirmEntry,
   type ExistingTitleCandidate,
   type FindExistingResult,
+  type TmdbPreview,
 } from "../lib/scanApi";
 import { loadFieldOptions, type FieldOptions } from "../lib/fieldOptions";
 import { clearConfirmDraft, getConfirmDraft, saveConfirmDraft } from "../lib/confirmDrafts";
@@ -131,6 +133,12 @@ export default function ConfirmScreen({
   const [specialFeaturesDiscCount, setSpecialFeaturesDiscCount] = useState(draft?.specialFeaturesDiscCount ?? "");
   const [specialFeaturesDiscFormat, setSpecialFeaturesDiscFormat] = useState(draft?.specialFeaturesDiscFormat ?? "");
   const [fieldOptions, setFieldOptions] = useState<FieldOptions | null>(null);
+  // "Would TMDb find anything for this specific title" - keeps the manual Rating/Studio
+  // fields hidden by default (TMDB now auto-fills both at confirm time - see
+  // Claude/TECH STACK AND ARCHITECTURE.md's TMDb section) and only reveals one once TMDb
+  // has genuinely come up empty for that specific field.
+  const [tmdbPreview, setTmdbPreview] = useState<TmdbPreview | null>(null);
+  const [tmdbPreviewLoading, setTmdbPreviewLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [checkingExisting, setCheckingExisting] = useState(false);
   const [existingCheck, setExistingCheck] = useState<MatchCheck | null>(null);
@@ -201,6 +209,43 @@ export default function ConfirmScreen({
   // collection, each member instead keeps whatever OMDB itself has for that specific
   // title (already computed per-entry server-side), imperfect as that sometimes is.
   const isMultiTitleCollection = selected.size > 1;
+  const singleSelectedImdbId = !isMultiTitleCollection && selected.size === 1 ? [...selected][0] : null;
+
+  // Re-checks TMDb every time the chosen candidate changes - a different film can have
+  // different TMDb availability. No candidate selected at all (pure manual entry, no
+  // imdbId to look up) means TMDb can never be tried, so the fields show immediately
+  // rather than waiting on a preview that will never resolve.
+  useEffect(() => {
+    if (!singleSelectedImdbId) {
+      setTmdbPreview(null);
+      setTmdbPreviewLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setTmdbPreviewLoading(true);
+    previewTmdbFields(singleSelectedImdbId)
+      .then((result) => {
+        if (!cancelled) setTmdbPreview(result);
+      })
+      .catch(() => {
+        if (!cancelled) setTmdbPreview({ rating: null, studio: null });
+      })
+      .finally(() => {
+        if (!cancelled) setTmdbPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [singleSelectedImdbId]);
+
+  // While a lookup for the current candidate is still in flight, keep the fields hidden
+  // rather than briefly showing them and then hiding them again once TMDb answers.
+  const showRatingField = singleSelectedImdbId
+    ? !tmdbPreviewLoading && !tmdbPreview?.rating
+    : true;
+  const showStudioField = singleSelectedImdbId
+    ? !tmdbPreviewLoading && !tmdbPreview?.studio
+    : true;
 
   function handleNotThisItem() {
     setShowAllCandidates(true);
@@ -604,28 +649,40 @@ export default function ConfirmScreen({
       {isMultiTitleCollection ? (
         <Text style={styles.hint}>
           Rating and Studio aren&apos;t set here for a multi-title collection - the box's
-          own cover rating isn&apos;t necessarily any single film's, so each title keeps
-          whatever OMDB has instead. Fix up per-title afterward if needed.
+          own cover rating isn&apos;t necessarily any single film's, so each title gets its
+          own from TMDb instead once confirmed.
         </Text>
       ) : (
         <>
-          <View style={styles.section}>
-            <Text style={styles.label}>Rating (from the case)</Text>
-            <AutocompleteInput
-              value={rating}
-              onChangeText={setRating}
-              options={fieldOptions?.rating ?? []}
-              placeholder="e.g. G, PG, M, R13"
-            />
-          </View>
-          <View style={styles.section}>
-            <Text style={styles.label}>Studio</Text>
-            <AutocompleteInput
-              value={studio}
-              onChangeText={setStudio}
-              options={fieldOptions?.studio ?? []}
-            />
-          </View>
+          {singleSelectedImdbId && tmdbPreviewLoading && (
+            <Text style={styles.hint}>Checking TMDb for Rating/Studio...</Text>
+          )}
+          {singleSelectedImdbId && !tmdbPreviewLoading && !showRatingField && !showStudioField && (
+            <Text style={styles.hint}>Rating and Studio will be filled in from TMDb.</Text>
+          )}
+          {showRatingField && (
+            <View style={styles.section}>
+              <Text style={styles.label}>
+                Rating{singleSelectedImdbId ? " (not on TMDb - from the case)" : " (from the case)"}
+              </Text>
+              <AutocompleteInput
+                value={rating}
+                onChangeText={setRating}
+                options={fieldOptions?.rating ?? []}
+                placeholder="e.g. G, PG, M, R13"
+              />
+            </View>
+          )}
+          {showStudioField && (
+            <View style={styles.section}>
+              <Text style={styles.label}>Studio{singleSelectedImdbId ? " (not on TMDb)" : ""}</Text>
+              <AutocompleteInput
+                value={studio}
+                onChangeText={setStudio}
+                options={fieldOptions?.studio ?? []}
+              />
+            </View>
+          )}
         </>
       )}
       <View style={[styles.section, styles.row]}>

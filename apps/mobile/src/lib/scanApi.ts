@@ -60,6 +60,18 @@ export function findExistingTitle(title: string, upcText: string) {
   return post<FindExistingResult>("/api/scan/find-existing", { title, upcText });
 }
 
+export interface TmdbPreview {
+  rating: string | null;
+  studio: string | null;
+}
+
+/** Read-only "would TMDb find anything for this title" check - lets ConfirmScreen keep
+ * the manual Rating/Studio fields hidden by default and only reveal one once TMDb has
+ * genuinely come up empty for that specific field. */
+export function previewTmdbFields(imdbId: string) {
+  return post<TmdbPreview>("/api/scan/tmdb-preview", { imdbId });
+}
+
 interface LinkExistingResult {
   success: boolean;
   linkedTitle: string;
