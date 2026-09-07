@@ -10,6 +10,12 @@ import { queueScan } from "../lib/scanApi";
 // still works normally.
 const SIGHTING_GAP_MS = 2000;
 
+// How long the same barcode must be held continuously in frame before it's actually
+// queued - a brief accidental glimpse (lining up the shot, a neighbouring disc's barcode
+// passing through frame) no longer queues instantly; only a barcode the user is
+// deliberately holding steady does.
+const COUNTDOWN_MS = 3000;
+
 /**
  * Scan-then-resolve-later (Claude/TECH STACK AND ARCHITECTURE.md): this screen only
  * ever records the barcode and returns to scanning immediately - no network wait, no
@@ -33,14 +39,22 @@ export default function ScannerScreen({
   const insets = useSafeAreaInsets();
   const [permission, requestPermission] = useCameraPermissions();
   const [lastMessage, setLastMessage] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState<{ code: string; secondsLeft: number } | null>(null);
   const busyRef = useRef(false);
-  // Tracks the barcode currently held in view, not just "recently scanned" - CameraView
-  // fires onBarcodeScanned repeatedly (roughly every frame) for as long as the same code
-  // stays in shot, so a fixed cooldown re-arms and re-queues the same disc over and over
-  // while you're just holding it steady. Only queue again once the gap since the last
-  // sighting of this code exceeds SIGHTING_GAP_MS - i.e. you actually pointed away and
-  // came back, not "3 seconds passed while continuously staring at the same barcode."
-  const activeBarcodeRef = useRef<{ code: string; lastSeenAt: number } | null>(null);
+  // Tracks the barcode currently held in view - CameraView fires onBarcodeScanned
+  // repeatedly (roughly every frame) for as long as the same code stays in shot.
+  // `firstSeenAt` drives the hold-steady countdown below; `lastSeenAt` (refreshed every
+  // frame) is what decides whether a new sighting is "still the same hold" or "you looked
+  // away and came back" (gap since last sighting exceeds SIGHTING_GAP_MS) - a brief gap
+  // between frames doesn't reset the countdown, but actually pointing elsewhere does.
+  // `queued` stops the countdown from re-firing on every subsequent frame once this
+  // exact hold has already been queued.
+  const pendingBarcodeRef = useRef<{
+    code: string;
+    firstSeenAt: number;
+    lastSeenAt: number;
+    queued: boolean;
+  } | null>(null);
 
   if (!permission) {
     return <View style={styles.container} />;
@@ -61,14 +75,30 @@ export default function ScannerScreen({
     const barcode = result.data;
     const now = Date.now();
 
-    // Refresh the "still holding this code" clock on every single frame, independent of
-    // busyRef below - otherwise a slow network call could let the clock go stale and
-    // cause one spurious re-queue right as the busy window clears.
-    const active = activeBarcodeRef.current;
-    const stillHoldingSameCode =
-      active?.code === barcode && now - active.lastSeenAt < SIGHTING_GAP_MS;
-    activeBarcodeRef.current = { code: barcode, lastSeenAt: now };
-    if (stillHoldingSameCode) return;
+    const pending = pendingBarcodeRef.current;
+    const continuingSameHold =
+      pending?.code === barcode && now - pending.lastSeenAt < SIGHTING_GAP_MS;
+
+    if (continuingSameHold) {
+      pending.lastSeenAt = now;
+    } else {
+      // A genuinely new code, or the same code seen again after too long a gap (you
+      // pointed away and came back) - either way this is a fresh hold, so the countdown
+      // starts over rather than picking up wherever the last one left off.
+      pendingBarcodeRef.current = { code: barcode, firstSeenAt: now, lastSeenAt: now, queued: false };
+    }
+    const current = pendingBarcodeRef.current!;
+
+    if (current.queued) return;
+
+    const elapsed = now - current.firstSeenAt;
+    if (elapsed < COUNTDOWN_MS) {
+      setCountdown({ code: barcode, secondsLeft: Math.ceil((COUNTDOWN_MS - elapsed) / 1000) });
+      return;
+    }
+
+    current.queued = true;
+    setCountdown(null);
 
     if (wasRecentlyQueued(barcode)) {
       setLastMessage(`Already queued ${barcode} recently - skipped duplicate scan.`);
@@ -101,7 +131,13 @@ export default function ScannerScreen({
       />
       <View style={[styles.overlay, { paddingBottom: 20 + insets.bottom }]}>
         <Text style={styles.hint}>Point the camera at the disc case's barcode</Text>
-        {lastMessage && <Text style={styles.message}>{lastMessage}</Text>}
+        {countdown ? (
+          <Text style={styles.countdown}>
+            Barcode detected - hold steady... {countdown.secondsLeft}
+          </Text>
+        ) : (
+          lastMessage && <Text style={styles.message}>{lastMessage}</Text>
+        )}
         <TouchableOpacity style={styles.button} onPress={onGoToPending}>
           <Text style={styles.buttonText}>Review Pending Scans</Text>
         </TouchableOpacity>
@@ -132,6 +168,7 @@ const styles = StyleSheet.create({
   },
   hint: { color: "#e4e4e7", textAlign: "center" },
   message: { color: "#38bdf8", textAlign: "center" },
+  countdown: { color: "#fbbf24", textAlign: "center", fontSize: 16, fontWeight: "700" },
   button: {
     backgroundColor: "#0284c7",
     paddingVertical: 12,
