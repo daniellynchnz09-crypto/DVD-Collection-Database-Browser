@@ -20,6 +20,7 @@ import {
   findExistingTitle,
   linkExistingTitle,
   previewTmdbFields,
+  searchTitleOnOmdb,
   type ConfirmEntry,
   type ExistingTitleCandidate,
   type FindExistingResult,
@@ -74,16 +75,32 @@ export default function ConfirmScreen({
   onDiscarded?: (barcode: string) => void;
 }) {
   const insets = useSafeAreaInsets();
-  const candidates = (scan.resolved_candidates?.omdbCandidates ?? []) as OmdbCandidate[];
   const isCollection = Boolean(scan.resolved_candidates?.isCollection);
   const upcProduct = scan.resolved_candidates?.upcProduct;
   const posterMatch = (scan.resolved_candidates as { posterMatch?: PosterMatch | null })
     ?.posterMatch;
+  const draft = getConfirmDraft(scan.id);
+  // OMDB candidates, either from the automatic resolver (a real UPC listing gave it a
+  // title to search with) or from the manual title-search step below (the barcode came
+  // back with no usable product data at all, so there was nothing to search with until
+  // the user typed a title) - state rather than a derived const so a manual search's
+  // results can populate it and hand off to all the same selection/poster/TMDb-preview
+  // machinery below, unchanged.
+  const [candidates, setCandidates] = useState<OmdbCandidate[]>(
+    () => draft?.candidates ?? ((scan.resolved_candidates?.omdbCandidates ?? []) as OmdbCandidate[])
+  );
   const autoMatched = posterMatch?.confident ? posterMatch : null;
   const autoMatchedCandidate = autoMatched
     ? candidates.find((c) => c.imdbID === autoMatched.bestImdbId) ?? null
     : null;
-  const draft = getConfirmDraft(scan.id);
+  // Only the "barcode gave literally nothing" case needs the title-search step - if a UPC
+  // listing came back (even one OMDB couldn't find a match for), the user still has a
+  // product photo/description to work from and the ordinary manual-entry form below is
+  // enough; there's no title text to search with in that case anyway.
+  const [titleSearchQuery, setTitleSearchQuery] = useState(draft?.titleSearchQuery ?? "");
+  const [titleSearching, setTitleSearching] = useState(false);
+  const [hasSearchedOrSkipped, setHasSearchedOrSkipped] = useState(draft?.hasSearchedOrSkipped ?? false);
+  const needsTitleSearch = candidates.length === 0 && !upcProduct && !hasSearchedOrSkipped;
 
   // Starts collapsed to just the auto-matched candidate when the listing's own photo
   // confidently matched one poster - "Not this item" reveals the full list to pick from
@@ -182,6 +199,9 @@ export default function ConfirmScreen({
       specialFeatures,
       specialFeaturesDiscCount,
       specialFeaturesDiscFormat,
+      candidates,
+      titleSearchQuery,
+      hasSearchedOrSkipped,
     });
   }, [
     scan.id,
@@ -200,7 +220,36 @@ export default function ConfirmScreen({
     specialFeatures,
     specialFeaturesDiscCount,
     specialFeaturesDiscFormat,
+    candidates,
+    titleSearchQuery,
+    hasSearchedOrSkipped,
   ]);
+
+  /** Runs the typed title through the same OMDB search the automatic resolver uses,
+   * handing the results to the existing candidate-picker/poster/TMDb-preview UI below
+   * exactly as if a real UPC listing had produced them. */
+  async function handleTitleSearch() {
+    const query = titleSearchQuery.trim();
+    if (!query) return;
+    setTitleSearching(true);
+    setError(null);
+    try {
+      const result = await searchTitleOnOmdb(query);
+      setCandidates(result.candidates);
+      setHasSearchedOrSkipped(true);
+      if (!manualTitle) setManualTitle(query);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setTitleSearching(false);
+    }
+  }
+
+  /** Skips straight to the ordinary manual-entry form instead of searching OMDB at all. */
+  function handleSkipTitleSearch() {
+    if (!manualTitle) setManualTitle(titleSearchQuery.trim());
+    setHasSearchedOrSkipped(true);
+  }
 
   const diskRegionOptions = getDiskRegionOptions(format) ?? fieldOptions?.diskRegion ?? [];
   const showSpecialFeaturesDiscFields = specialFeatures && (parseInt(discCount, 10) || 1) > 1;
@@ -526,6 +575,36 @@ export default function ConfirmScreen({
       </TouchableOpacity>
       <Text style={styles.title}>Barcode {scan.barcode}</Text>
 
+      {needsTitleSearch ? (
+        <View style={styles.section}>
+          <Text style={styles.hint}>
+            This barcode didn&apos;t come back with any product data at all. What&apos;s the title?
+          </Text>
+          <TextInput
+            style={styles.input}
+            value={titleSearchQuery}
+            onChangeText={setTitleSearchQuery}
+            placeholder="Title"
+            placeholderTextColor="#71717a"
+            autoFocus
+          />
+          {error && <Text style={styles.error}>{error}</Text>}
+          <TouchableOpacity
+            style={styles.button}
+            onPress={handleTitleSearch}
+            disabled={titleSearching || !titleSearchQuery.trim()}
+          >
+            <Text style={styles.buttonText}>{titleSearching ? "Searching..." : "Search"}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleSkipTitleSearch} disabled={titleSearching}>
+            <Text style={styles.link}>Skip - enter manually instead</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleDiscard} disabled={submitting || titleSearching}>
+            <Text style={styles.link}>This was a stray scan - discard it</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <>
       {isCollection && <Text style={styles.hint}>Looks like a collection - check every title actually in this set.</Text>}
 
       {upcProduct?.imageUrl && (
@@ -743,6 +822,8 @@ export default function ConfirmScreen({
       <TouchableOpacity onPress={handleDiscard} disabled={submitting || checkingExisting}>
         <Text style={styles.link}>This was a stray scan - discard it</Text>
       </TouchableOpacity>
+        </>
+      )}
       </ScrollView>
     </KeyboardAvoidingView>
   );

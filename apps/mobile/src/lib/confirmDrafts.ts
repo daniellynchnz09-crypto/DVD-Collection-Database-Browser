@@ -8,6 +8,14 @@
  * discarded, or attached to an existing entry) - a scan the user is still filling in
  * keeps its draft, but there's no reason to remember one that's actually done.
  */
+export interface ConfirmDraftCandidate {
+  Title: string;
+  Year: string;
+  imdbID: string;
+  Type: string;
+  Poster: string;
+}
+
 export interface ConfirmDraft {
   showAllCandidates: boolean;
   selected: string[];
@@ -24,6 +32,9 @@ export interface ConfirmDraft {
   specialFeatures: boolean;
   specialFeaturesDiscCount: string;
   specialFeaturesDiscFormat: string;
+  candidates?: ConfirmDraftCandidate[];
+  titleSearchQuery?: string;
+  hasSearchedOrSkipped?: boolean;
 }
 
 const drafts = new Map<string, ConfirmDraft>();

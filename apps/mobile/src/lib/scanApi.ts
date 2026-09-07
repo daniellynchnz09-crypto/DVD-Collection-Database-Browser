@@ -72,6 +72,21 @@ export function previewTmdbFields(imdbId: string) {
   return post<TmdbPreview>("/api/scan/tmdb-preview", { imdbId });
 }
 
+export interface OmdbSearchCandidate {
+  Title: string;
+  Year: string;
+  imdbID: string;
+  Type: string;
+  Poster: string;
+}
+
+/** Manual title-search fallback: when the barcode lookup came back with no usable UPC/product
+ * data at all, ConfirmScreen asks the user to type the title and runs it through the same OMDB
+ * search the automatic resolver uses, producing the same kind of candidate list. */
+export function searchTitleOnOmdb(title: string) {
+  return post<{ candidates: OmdbSearchCandidate[] }>("/api/scan/title-search", { title });
+}
+
 interface LinkExistingResult {
   success: boolean;
   linkedTitle: string;
