@@ -48,12 +48,6 @@ interface PosterMatch {
 type ShelfLocation = { before: string | null; after: string | null } | null;
 type MatchCheck = Extract<FindExistingResult, { status: "auto" | "ambiguous" }>;
 
-// A generous static reserve below the last field/button, roughly matching a typical
-// on-screen keyboard's height - guarantees there's always room to scroll the Confirm
-// button clear of the keyboard by hand, regardless of how well (or not) the platform's
-// own keyboard-avoidance behaves for a given field.
-const KEYBOARD_SAFETY_PADDING = 300;
-
 /**
  * Review/manual-fill form for one pending scan. Per Claude/TECH STACK AND
  * ARCHITECTURE.md: OMDB/UPC can suggest a match but never knows packaging details
@@ -508,19 +502,22 @@ export default function ConfirmScreen({
     // the react-native-keyboard-aware-scroll-view library) each proved inconsistent on
     // Android in real testing - one left a blank gap above the keyboard, the other
     // sometimes still let the keyboard cover a field and other times over-corrected,
-    // pushing the Confirm button half out of the safe area. Settled on the simplest thing
-    // that can't go wrong: iOS gets real padding-based avoidance (it has no native
-    // equivalent to Android's adjustResize, so it actually needs this); Android relies
-    // entirely on its own native window resize (app.json's softwareKeyboardLayoutMode) and
-    // just gets a generous static bottom padding, so the user can always manually scroll
-    // the last field/button clear of the keyboard - no dynamic keyboard-height tracking
-    // or third-party heuristics left to go stale or double-adjust.
+    // pushing the Confirm button half out of the safe area. A static extra bottom padding
+    // (an earlier attempt at a fix) made it worse in a different way - it doesn't go away
+    // when the keyboard closes, leaving permanent dead space or cutting content off,
+    // exactly like KeyboardAvoidingView's own "height" bug. Settled on the simplest thing
+    // that stays correct in both keyboard states: iOS gets KeyboardAvoidingView's real
+    // padding-based avoidance (it dynamically adds/removes padding matching the actual
+    // keyboard, cleanly reverting on hide - no static leftover); Android has no such
+    // behavior applied at all and relies entirely on its own native window resize
+    // (app.json's softwareKeyboardLayoutMode), which already shrinks the available height
+    // (and therefore the scrollable range) correctly on its own.
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingTop: 48 + insets.top, paddingBottom: 24 + insets.bottom + KEYBOARD_SAFETY_PADDING },
+          { paddingTop: 48 + insets.top, paddingBottom: 24 + insets.bottom },
         ]}
         keyboardShouldPersistTaps="handled"
       >
