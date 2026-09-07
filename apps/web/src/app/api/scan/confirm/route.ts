@@ -10,11 +10,12 @@ import {
   cleanFreeText,
   inferDepictedEraStart,
   normalizeFormat,
+  normalizeRating,
   omdbGetById,
   parseOmdbReleaseDate,
   parseOmdbRuntimeMins,
 } from "@danflix/shared";
-import { lookupRottenTomatoesPage } from "@danflix/backend";
+import { lookupRottenTomatoesPage, lookupTmdbFields } from "@danflix/backend";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 function asString(value: unknown): string | undefined {
@@ -131,6 +132,14 @@ export async function POST(request: Request) {
 
     let omdbFields: Record<string, unknown> = {};
     let synopsis: string | null = null;
+    // Genuinely per-film data (an NZ/Oceania certification, the primary production
+    // company), so - unlike the manual Rating/Studio fields below - this runs for every
+    // entry regardless of isMultiTitleEntry; it's exactly what solves the collection-
+    // member case where there's no single physical case to read a rating off. See
+    // packages/backend/src/tmdb.ts for why this needed TMDb rather than IMDb itself.
+    const tmdbFields = entry.imdbId
+      ? await lookupTmdbFields(entry.imdbId)
+      : { tmdbId: null, rating: null, studio: null };
     if (entry.imdbId) {
       const detail = await omdbGetById(entry.imdbId);
       if (detail) {
@@ -161,20 +170,28 @@ export async function POST(request: Request) {
 
     // Normalizes scanner-entered free text so random capitalization/spacing never creates
     // a near-duplicate of a category the collection already uses. `format` has a small
-    // fixed set of legitimate spellings (normalizeFormat's FORMAT_ALIASES); Disk Region and
-    // Genre Location are genuinely open-ended, so canonicalizeValue resolves against
-    // whatever's already in `titles` instead. Title/Release Name only get whitespace
-    // tidied, never case-folded - they're proper nouns/verbatim text where casing matters.
-    const cleanDiskRegion = await canonicalizeValue(
-      supabase,
-      "disk_region",
-      cleanFreeText(asString(manual.disk_region))
-    );
+    // fixed set of legitimate spellings (normalizeFormat's FORMAT_ALIASES); Genre Location
+    // is genuinely open-ended, so canonicalizeValue resolves against whatever's already in
+    // `titles` instead. Title/Release Name only get whitespace tidied, never case-folded -
+    // they're proper nouns/verbatim text where casing matters. Disk Region needs none of
+    // this - ConfirmScreen's MultiSelectChips only ever sends a comma-joined string built
+    // from a small fixed set of codes, never free-typed text.
     const cleanGenreLocation = await canonicalizeValue(
       supabase,
       "genre_location",
       cleanFreeText(asString(manual.genre_location))
     );
+
+    // Priority: a manual entry (the physical case, or a single-title scan) always wins
+    // when given; otherwise TMDb's per-title lookup above; otherwise whatever OMDB itself
+    // had (rating only - OMDB's own Production field proved unreliable, confirmed live
+    // against a real title, so it's not chained in for studio at all). *_is_manual records
+    // which branch actually won, so refreshTmdbFields (packages/backend/src/tmdb.ts) knows
+    // never to touch a value that came from a human rather than TMDb.
+    const manualRating = isMultiTitleEntry ? undefined : normalizeRating(asString(manual.rating));
+    const manualStudio = isMultiTitleEntry ? undefined : cleanFreeText(asString(manual.studio));
+    const finalRating = manualRating ?? tmdbFields.rating ?? (omdbFields.rating as string | null) ?? null;
+    const finalStudio = manualStudio ?? tmdbFields.studio ?? null;
 
     const uniqueId = randomUUID();
     const title: Record<string, unknown> = {
@@ -190,7 +207,8 @@ export async function POST(request: Request) {
       director: manual.director ?? omdbFields.director ?? [],
       franchise: manual.franchise ?? null,
       sub_franchise: manual.sub_franchise ?? null,
-      rating: (isMultiTitleEntry ? undefined : manual.rating) ?? omdbFields.rating ?? null,
+      rating: finalRating,
+      rating_is_manual: manualRating != null,
       format: normalizeFormat(asString(manual.format)) ?? "DVD",
       disc_count: manual.disc_count ?? 1,
       steelbook: manual.steelbook ?? false,
@@ -205,8 +223,11 @@ export async function POST(request: Request) {
       number_of_titles_in_collection: manual.number_of_titles_in_collection ?? null,
       rotten_tomatoes_page: manual.rotten_tomatoes_page ?? omdbFields.rotten_tomatoes_page ?? null,
       imdb_page: manual.imdb_page ?? omdbFields.imdb_page ?? null,
-      studio: (isMultiTitleEntry ? undefined : manual.studio) ?? null,
-      disk_region: cleanDiskRegion,
+      studio: finalStudio,
+      studio_is_manual: manualStudio != null,
+      tmdb_id: tmdbFields.tmdbId,
+      tmdb_synced_at: tmdbFields.tmdbId != null ? new Date().toISOString() : null,
+      disk_region: cleanFreeText(asString(manual.disk_region)),
       barcode_id: entry.barcodeId ?? null,
       case_image_url: manual.case_image_url ?? null,
       genre_location: cleanGenreLocation,

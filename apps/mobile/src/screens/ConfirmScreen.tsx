@@ -25,6 +25,7 @@ import {
 import { loadFieldOptions, type FieldOptions } from "../lib/fieldOptions";
 import { clearConfirmDraft, getConfirmDraft, saveConfirmDraft } from "../lib/confirmDrafts";
 import AutocompleteInput from "../components/AutocompleteInput";
+import MultiSelectChips from "../components/MultiSelectChips";
 import type { PendingScan } from "./PendingScansScreen";
 
 interface OmdbCandidate {
@@ -104,7 +105,10 @@ export default function ConfirmScreen({
     return hint ?? "DVD";
   });
   const [discCount, setDiscCount] = useState(draft?.discCount ?? "1");
-  const [diskRegion, setDiskRegion] = useState(draft?.diskRegion ?? "");
+  // A fixed small set of codes (see getDiskRegionOptions), not free text - and some discs
+  // are coded for more than one region at once (e.g. "2, 4"), so this is a toggleable set
+  // rather than a single value (see MultiSelectChips).
+  const [diskRegions, setDiskRegions] = useState<Set<string>>(() => new Set(draft?.diskRegions ?? []));
   const [genreLocation, setGenreLocation] = useState(draft?.genreLocation ?? "");
   // Manual-only, deliberately never auto-filled from OMDB's "Rated" field - that's a US
   // MPAA-style value and often just "Not Rated" even for titles that do carry a real NZ/
@@ -144,8 +148,9 @@ export default function ConfirmScreen({
   // as the format looks like 4K, but only while the user hasn't already typed something
   // of their own in here (never stomp a deliberate manual entry).
   useEffect(() => {
-    if (diskRegion.trim() !== "") return;
-    if (getDiskRegionOptions(format)?.length === 1) setDiskRegion(getDiskRegionOptions(format)![0]);
+    if (diskRegions.size > 0) return;
+    const options = getDiskRegionOptions(format);
+    if (options?.length === 1) setDiskRegions(new Set(options));
   }, [format]);
 
   // Keeps the draft cache current on every change, so leaving this scan half-finished
@@ -160,7 +165,7 @@ export default function ConfirmScreen({
       releaseNameMatchesTitle,
       format,
       discCount,
-      diskRegion,
+      diskRegions: [...diskRegions],
       genreLocation,
       rating,
       studio,
@@ -178,7 +183,7 @@ export default function ConfirmScreen({
     releaseNameMatchesTitle,
     format,
     discCount,
-    diskRegion,
+    diskRegions,
     genreLocation,
     rating,
     studio,
@@ -236,7 +241,7 @@ export default function ConfirmScreen({
       const manualFields = {
         format,
         disc_count: parseInt(discCount, 10) || 1,
-        disk_region: diskRegion || null,
+        disk_region: diskRegions.size > 0 ? [...diskRegions].join(", ") : null,
         genre_location: genreLocation || null,
         rating: isMultiTitleCollection ? null : rating.trim() || null,
         studio: isMultiTitleCollection ? null : studio.trim() || null,
@@ -585,12 +590,7 @@ export default function ConfirmScreen({
       </View>
       <View style={styles.section}>
         <Text style={styles.label}>Disk Region</Text>
-        <AutocompleteInput
-          value={diskRegion}
-          onChangeText={setDiskRegion}
-          options={diskRegionOptions}
-          placeholder="e.g. 4, A, All"
-        />
+        <MultiSelectChips options={diskRegionOptions} selected={diskRegions} onChange={setDiskRegions} />
       </View>
       <View style={styles.section}>
         <Text style={styles.label}>Genre Location (shelf section)</Text>

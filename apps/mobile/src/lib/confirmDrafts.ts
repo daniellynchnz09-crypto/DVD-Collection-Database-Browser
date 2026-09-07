@@ -16,7 +16,7 @@ export interface ConfirmDraft {
   releaseNameMatchesTitle: boolean;
   format: string;
   discCount: string;
-  diskRegion: string;
+  diskRegions: string[];
   genreLocation: string;
   rating: string;
   studio: string;

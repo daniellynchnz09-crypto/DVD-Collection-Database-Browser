@@ -21,15 +21,26 @@
 const RESOLVE_INTERVAL_MS = 15_000;
 const RESOLVE_BATCH_LIMIT = 20;
 
+// TMDb-sourced fields (packages/backend/src/tmdb.ts) only need renewing every ~5 months
+// (a safety buffer under TMDb's own 6-month cache limit), so this checks far less often
+// than the pending_scans poller above - it'll almost always find nothing due, which is
+// expected and cheap. Runs once shortly after startup too, not just on the interval, so a
+// long-running dev/deployed server doesn't wait a full hour before its first check.
+const TMDB_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
+const TMDB_REFRESH_BATCH_LIMIT = 20;
+
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
   // next dev's Fast Refresh can re-run this module without restarting the process -
   // guard against stacking a second interval on top of an existing one.
-  const globalForResolver = globalThis as unknown as { __scanAutoResolveInterval?: NodeJS.Timeout };
+  const globalForResolver = globalThis as unknown as {
+    __scanAutoResolveInterval?: NodeJS.Timeout;
+    __tmdbRefreshInterval?: NodeJS.Timeout;
+  };
   if (globalForResolver.__scanAutoResolveInterval) return;
 
-  const { resolvePendingScansBatch } = await import("@danflix/backend");
+  const { resolvePendingScansBatch, refreshTmdbFields } = await import("@danflix/backend");
   const { getSupabaseServerClient } = await import("@/lib/supabaseServer");
 
   globalForResolver.__scanAutoResolveInterval = setInterval(async () => {
@@ -46,4 +57,19 @@ export async function register() {
   }, RESOLVE_INTERVAL_MS);
 
   console.log(`[auto-resolve] Watching pending_scans every ${RESOLVE_INTERVAL_MS / 1000}s.`);
+
+  async function runTmdbRefresh() {
+    try {
+      const result = await refreshTmdbFields(getSupabaseServerClient(), TMDB_REFRESH_BATCH_LIMIT);
+      if (result.processed > 0) {
+        console.log(`[tmdb-refresh] Processed ${result.processed}: ${result.updated} updated.`);
+      }
+    } catch (err) {
+      console.error("[tmdb-refresh] Failed:", err);
+    }
+  }
+
+  void runTmdbRefresh();
+  globalForResolver.__tmdbRefreshInterval = setInterval(runTmdbRefresh, TMDB_REFRESH_INTERVAL_MS);
+  console.log(`[tmdb-refresh] Watching overdue TMDb-sourced titles every ${TMDB_REFRESH_INTERVAL_MS / 1000}s.`);
 }

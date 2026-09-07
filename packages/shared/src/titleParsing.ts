@@ -169,6 +169,35 @@ export function cleanFreeText(value: string | undefined): string | null {
   return cleaned.replace(/\s+/g, " ");
 }
 
+// NZ/Oceania classifications (the user's authoritative source - read off the physical
+// case, see Claude/TECH STACK AND ARCHITECTURE.md) are a small fixed set, but the real
+// Sheet had accumulated casing drift ("pg", "m") and a couple of stray typos ("R`16",
+// "Rr16") - same underlying risk Format had. `rating` stays free text in the DB (OMDB's
+// own US-style Rated value, e.g. "PG-13"/"Not Rated", also flows through this column and
+// isn't meant to be forced into this table), so an unrecognized value still passes
+// through as-is.
+const RATING_ALIASES: Record<string, string> = {
+  g: "G",
+  pg: "PG",
+  m: "M",
+  r12: "R12",
+  r13: "R13",
+  r15: "R15",
+  r16: "R16",
+  rr16: "R16",
+  r18: "R18",
+};
+
+function normalizeRatingKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+export function normalizeRating(value: string | undefined): string | null {
+  const cleaned = cleanCell(value);
+  if (cleaned == null) return null;
+  return RATING_ALIASES[normalizeRatingKey(cleaned)] ?? cleaned;
+}
+
 /** Converts a 0-indexed column number to its Sheets column letter(s) (0 -> A, 26 -> AA, ...). */
 export function columnLetter(index: number): string {
   let letter = "";
@@ -250,7 +279,7 @@ export function parseSheetRowToTitle(
     director: toList(row[columnIndexes["director"]]),
     franchise: cleanCell(row[columnIndexes["franchise"]]),
     sub_franchise: cleanCell(row[columnIndexes["sub_franchise"]]),
-    rating: cleanCell(row[columnIndexes["rating"]]),
+    rating: normalizeRating(row[columnIndexes["rating"]]),
     format: normalizeFormat(row[columnIndexes["format"]]) ?? "DVD",
     disc_count: toInt(row[columnIndexes["disc_count"]]) ?? 1,
     special_features: toBoolean(row[columnIndexes["special_features"]]),
