@@ -13,9 +13,12 @@
     "@jimp/js-jpeg": "^1.6.1",
     "@jimp/js-png": "^1.6.1",
     "@jimp/plugin-hash": "^1.6.1",
-    "@supabase/supabase-js": "^2.45.0"
+    "@supabase/supabase-js": "^2.45.0",
+    "dictionary-en": "^4.0.0",
+    "nspell": "^2.1.5"
   },
   "devDependencies": {
+    "@types/nspell": "^2.1.6",
     "typescript": "^5.5.0"
   }
 }

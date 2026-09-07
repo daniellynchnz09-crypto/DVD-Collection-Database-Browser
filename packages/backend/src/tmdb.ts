@@ -82,6 +82,114 @@ export async function fetchTmdbFieldsById(
   return { rating, studio };
 }
 
+const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w342";
+
+interface TmdbSearchResponse {
+  results?: {
+    id: number;
+    title?: string;
+    release_date?: string;
+    poster_path?: string | null;
+  }[];
+}
+
+interface TmdbMovieDetailFull {
+  imdb_id?: string | null;
+  title?: string;
+  release_date?: string;
+  poster_path?: string | null;
+}
+
+export interface TmdbSearchCandidate {
+  Title: string;
+  Year: string;
+  imdbID: string;
+  Type: "movie";
+  Poster: string;
+}
+
+/** Fetches full `/movie/{id}` details and shapes them into the same candidate form OMDB
+ * search results already come in (Title/Year/imdbID/Type/Poster) - shared by
+ * searchTmdbMovies below and by resolveTmdbCandidatesByIds (the fuzzy title-index fallback,
+ * which only has a bare tmdb_id + title to start from and needs this same detail fetch to
+ * get a poster/year/imdb_id out of it). */
+async function resolveTmdbCandidateById(tmdbId: number): Promise<TmdbSearchCandidate | null> {
+  const detail = await tmdbFetch<TmdbMovieDetailFull>(`/movie/${tmdbId}`);
+  if (!detail?.imdb_id || !detail.title) return null;
+  return {
+    Title: detail.title,
+    Year: detail.release_date ? detail.release_date.slice(0, 4) : "",
+    imdbID: detail.imdb_id,
+    Type: "movie",
+    Poster: detail.poster_path ? `${TMDB_IMAGE_BASE}${detail.poster_path}` : "N/A",
+  };
+}
+
+/**
+ * A second, parallel pass alongside the manual title-search route's existing literal OMDB
+ * search (apps/web/src/app/api/scan/title-search/route.ts). Verified live that TMDb's
+ * search is NOT meaningfully more typo-tolerant than OMDB's for a realistic misspelling
+ * (both returned zero results for "Jurrasic Park", "Lord of the Rngs") - this still runs
+ * because it's a genuinely different index than OMDB's (catches titles/editions one
+ * provider has that the other doesn't) and because it's re-run with the spellchecked query
+ * too (see the title-search route), where TMDb sometimes has an entry OMDB lacks.
+ *
+ * Limited to the top 5 hits since each one needs a follow-up `/movie/{id}` call to resolve
+ * its IMDb id (TMDb's own numeric id space is different from IMDb's, and this collection is
+ * keyed on IMDb id everywhere else in the pipeline - posters, TMDb-preview, confirm).
+ * Movies only (TMDb's `/search/movie`), matching the fact that this collection is
+ * overwhelmingly films - series/episode candidates still come from the existing OMDB search.
+ */
+export async function searchTmdbMovies(query: string): Promise<TmdbSearchCandidate[]> {
+  const data = await tmdbFetch<TmdbSearchResponse>(`/search/movie?query=${encodeURIComponent(query)}`);
+  const hits = (data?.results ?? []).slice(0, 5);
+  const candidates = await Promise.all(hits.map((hit) => resolveTmdbCandidateById(hit.id)));
+  return candidates.filter((c): c is TmdbSearchCandidate => c !== null);
+}
+
+/** Resolves a batch of bare TMDb ids (e.g. from the fuzzy title-index fallback below,
+ * which only has an id + title to start from) into full candidates. */
+export async function resolveTmdbCandidatesByIds(tmdbIds: number[]): Promise<TmdbSearchCandidate[]> {
+  const candidates = await Promise.all(tmdbIds.map((id) => resolveTmdbCandidateById(id)));
+  return candidates.filter((c): c is TmdbSearchCandidate => c !== null);
+}
+
+export interface FuzzyTitleMatch {
+  tmdbId: number;
+  title: string;
+  popularity: number;
+  similarity: number;
+}
+
+/**
+ * Fuzzy-matches `query` against every real TMDb movie title via the tmdb_title_index
+ * table's trigram index (supabase/migrations/0006_tmdb_title_index.sql) - the fallback for
+ * a typo neither OMDB's nor TMDb's own search catches, and that the generic English
+ * spellchecker (spellcheck.ts) can't fix either because the misspelled word isn't an
+ * ordinary English word at all (an invented/proper name like "Shawshank"). Matches against
+ * actual title strings rather than dictionary words, so it catches exactly the cases the
+ * other two passes miss. Returns an empty array (never throws) on any failure - e.g. the
+ * table hasn't been populated yet via `npm run refresh:tmdb-title-index` - so a missing
+ * local index never blocks the rest of the search.
+ */
+export async function fuzzySearchTitleIndex(
+  supabase: SupabaseClient,
+  query: string,
+  limit = 5
+): Promise<FuzzyTitleMatch[]> {
+  const { data, error } = await supabase.rpc("fuzzy_search_tmdb_titles", {
+    search_query: query,
+    match_limit: limit,
+  });
+  if (error || !data) return [];
+  return (data as { tmdb_id: number; title: string; popularity: number; sim: number }[]).map((row) => ({
+    tmdbId: row.tmdb_id,
+    title: row.title,
+    popularity: row.popularity,
+    similarity: row.sim,
+  }));
+}
+
 export interface TmdbFields {
   tmdbId: number | null;
   rating: string | null;

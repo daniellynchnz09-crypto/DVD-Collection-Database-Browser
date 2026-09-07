@@ -12,7 +12,13 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { cleanProductTitleForSearch, extractFormatHint, getDiskRegionOptions } from "@danflix/shared";
+import {
+  cleanProductTitleForSearch,
+  extractFormatHint,
+  getDiskRegionOptions,
+  isRegionFreeFormat,
+  NOT_LISTED_REGION,
+} from "@danflix/shared";
 import {
   confirmScan,
   discardScan,
@@ -107,9 +113,16 @@ export default function ConfirmScreen({
   // manually instead. (Or, if a draft exists - the user was already partway through this
   // scan and left - restores exactly what they'd chosen instead of these defaults.)
   const [showAllCandidates, setShowAllCandidates] = useState(draft?.showAllCandidates ?? !autoMatchedCandidate);
-  const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(draft?.selected ?? (autoMatchedCandidate ? [autoMatchedCandidate.imdbID] : []))
-  );
+  // A single candidate (whether the resolver only ever found one, or a manual title search
+  // below only turned up one) is auto-selected rather than making the user tap it - nothing
+  // to disambiguate when there's only one option. Still fully reversible: tapping it again
+  // deselects it like any other candidate.
+  const [selected, setSelected] = useState<Set<string>>(() => {
+    if (draft?.selected) return new Set(draft.selected);
+    if (autoMatchedCandidate) return new Set([autoMatchedCandidate.imdbID]);
+    if (candidates.length === 1) return new Set([candidates[0].imdbID]);
+    return new Set();
+  });
   // Best-effort starting guesses from the UPC listing text - always editable, never
   // presented as confirmed fact. Packaging/marketing words ("Special Edition") are already
   // stripped by cleanProductTitleForSearch since those never belong in a title per how this
@@ -175,8 +188,7 @@ export default function ConfirmScreen({
   // of their own in here (never stomp a deliberate manual entry).
   useEffect(() => {
     if (diskRegions.size > 0) return;
-    const options = getDiskRegionOptions(format);
-    if (options?.length === 1) setDiskRegions(new Set(options));
+    if (isRegionFreeFormat(format)) setDiskRegions(new Set(["All"]));
   }, [format]);
 
   // Keeps the draft cache current on every change, so leaving this scan half-finished
@@ -237,6 +249,7 @@ export default function ConfirmScreen({
       const result = await searchTitleOnOmdb(query);
       setCandidates(result.candidates);
       setHasSearchedOrSkipped(true);
+      if (result.candidates.length === 1) setSelected(new Set([result.candidates[0].imdbID]));
       if (!manualTitle) setManualTitle(query);
     } catch (err) {
       setError((err as Error).message);
@@ -724,7 +737,12 @@ export default function ConfirmScreen({
       </View>
       <View style={styles.section}>
         <Text style={styles.label}>Disk Region</Text>
-        <MultiSelectChips options={diskRegionOptions} selected={diskRegions} onChange={setDiskRegions} />
+        <MultiSelectChips
+          options={diskRegionOptions}
+          selected={diskRegions}
+          onChange={setDiskRegions}
+          exclusiveOptions={["All", NOT_LISTED_REGION]}
+        />
       </View>
       <View style={styles.section}>
         <Text style={styles.label}>Genre Location (shelf section)</Text>

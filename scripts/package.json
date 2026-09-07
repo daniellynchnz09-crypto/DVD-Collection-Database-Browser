@@ -7,7 +7,8 @@
     "resolve-scans": "tsx src/resolve-pending-scans.ts",
     "sanitize-public-repo": "tsx src/sanitize-public-repo.ts",
     "keep-alive": "tsx src/keep-alive.ts",
-    "refresh-tmdb": "tsx src/refresh-tmdb.ts"
+    "refresh-tmdb": "tsx src/refresh-tmdb.ts",
+    "refresh-tmdb-title-index": "tsx src/refresh-tmdb-title-index.ts"
   },
   "dependencies": {
     "@danflix/backend": "*",

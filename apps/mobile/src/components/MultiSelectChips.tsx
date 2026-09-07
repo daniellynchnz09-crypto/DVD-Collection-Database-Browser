@@ -2,27 +2,32 @@ import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 /**
  * A row of toggle chips for a field with a small, genuinely fixed set of options (Disk
- * Region - 1/2/3/4/5/6/All for DVD, A/B/C/All for Blu-ray - never a free-typed value like
- * Format/Genre Location), where more than one can apply at once (some discs are coded for
- * multiple regions). Selecting "All" clears every other selection and vice versa, since
- * "region-free" is contradictory to being coded for specific individual regions.
+ * Region - 1/2/3/4/5/6/All/Not Listed for DVD, A/B/C/All/Not Listed for Blu-ray - never a
+ * free-typed value like Format/Genre Location), where more than one can apply at once (some
+ * discs are coded for multiple regions). `exclusiveOptions` (default just "All") lists
+ * options that clear every other selection when picked and are themselves cleared by
+ * picking anything else - "All" (region-free) and "Not Listed" (packaging simply doesn't
+ * print a region) are both contradictory to being coded for specific individual regions,
+ * and to each other.
  */
 export default function MultiSelectChips({
   options,
   selected,
   onChange,
+  exclusiveOptions = ["All"],
 }: {
   options: string[];
   selected: Set<string>;
   onChange: (next: Set<string>) => void;
+  exclusiveOptions?: string[];
 }) {
   function toggle(option: string) {
-    if (option === "All") {
-      onChange(selected.has("All") ? new Set() : new Set(["All"]));
+    if (exclusiveOptions.includes(option)) {
+      onChange(selected.has(option) ? new Set() : new Set([option]));
       return;
     }
     const next = new Set(selected);
-    next.delete("All");
+    for (const exclusive of exclusiveOptions) next.delete(exclusive);
     if (next.has(option)) next.delete(option);
     else next.add(option);
     onChange(next);

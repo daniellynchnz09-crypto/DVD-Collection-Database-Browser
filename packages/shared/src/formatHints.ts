@@ -64,14 +64,31 @@ const DVD_REGIONS = ["1", "2", "3", "4", "5", "6", "All"];
 const BLURAY_REGIONS = ["A", "B", "C", "All"];
 const UHD_REGIONS = ["All"];
 
+// Distinct from "All" - "All" means the packaging affirmatively states the disc is
+// region-free (or the format's own scheme has no regions at all, like UHD); "Not Listed"
+// means the packaging simply doesn't print any region information anywhere, so the region
+// is genuinely unknown rather than assumed to be region-free. Appended to every recognized
+// format's option list (per the user's own request after finding a disc with no region
+// info printed at all) - mutually exclusive with every other option, "All" included, the
+// same way "All" itself already is (see MultiSelectChips's exclusiveOptions).
+export const NOT_LISTED_REGION = "Not Listed";
+
 /** Which disc-region options make sense for a given format string, or null when the
  * format isn't a recognized disc type (VHS, CD, ...) and no narrower list applies. Checks
  * 4K/UHD before Blu-ray for the same reason extractFormatHint does - a "4K UHD Blu-ray"
  * combo format is UHD's region-free scheme, not Blu-ray's A/B/C one. */
 export function getDiskRegionOptions(format: string): string[] | null {
   const normalized = format.toLowerCase();
-  if (/4k|ultra ?hd|uhd/.test(normalized)) return UHD_REGIONS;
-  if (/blu-?ray/.test(normalized)) return BLURAY_REGIONS;
-  if (/dvd/.test(normalized)) return DVD_REGIONS;
+  if (/4k|ultra ?hd|uhd/.test(normalized)) return [...UHD_REGIONS, NOT_LISTED_REGION];
+  if (/blu-?ray/.test(normalized)) return [...BLURAY_REGIONS, NOT_LISTED_REGION];
+  if (/dvd/.test(normalized)) return [...DVD_REGIONS, NOT_LISTED_REGION];
   return null;
+}
+
+/** True for a format whose own region-coding scheme has no regions at all (Ultra HD
+ * Blu-ray) - used to auto-default Disk Region to "All" the moment the format looks like 4K,
+ * distinct from getDiskRegionOptions's returned list length (which no longer reliably
+ * signals this now that "Not Listed" is appended to every format's options). */
+export function isRegionFreeFormat(format: string): boolean {
+  return /4k|ultra ?hd|uhd/.test(format.toLowerCase());
 }
