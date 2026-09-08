@@ -18,6 +18,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   cleanProductTitleForSearch,
+  DISC_CONDITION_VALUES,
   extractFormatHint,
   getDiskRegionOptions,
   isRegionFreeFormat,
@@ -28,7 +29,6 @@ import {
   discardScan,
   dismissScan,
   findExistingTitle,
-  linkExistingTitle,
   previewTmdbFields,
   searchTitleOnOmdb,
   type ConfirmEntry,
@@ -127,6 +127,10 @@ export default function ConfirmScreen({
   const releaseNameInputRef = useRef<TextInput>(null);
   const discCountInputRef = useRef<TextInput>(null);
   const specialFeaturesDiscCountInputRef = useRef<TextInput>(null);
+  const releaseVariantNoteInputRef = useRef<TextInput>(null);
+  const caseNotesInputRef = useRef<TextInput>(null);
+  const depictedEraLabelInputRef = useRef<TextInput>(null);
+  const tmdbIdOverrideInputRef = useRef<TextInput>(null);
 
   const isCollection = Boolean(scan.resolved_candidates?.isCollection);
   const upcProduct = scan.resolved_candidates?.upcProduct;
@@ -206,6 +210,19 @@ export default function ConfirmScreen({
   // other titles during testing - see Claude/TECH STACK AND ARCHITECTURE.md).
   const [franchise, setFranchise] = useState(draft?.franchise ?? "");
   const [animationOrLiveAction, setAnimationOrLiveAction] = useState(draft?.animationOrLiveAction ?? "");
+  // Fields added ahead of the full-collection backfill rescan (Claude/TECH STACK AND
+  // ARCHITECTURE.md's "Backfill Rescan" section) - captured now because they're only
+  // observable from the physical disc/case itself, unlike the metadata-driven fields
+  // above, which can be backfilled later via a script keyed on tmdb_id/imdb_id.
+  const [releaseVariantNote, setReleaseVariantNote] = useState(draft?.releaseVariantNote ?? "");
+  const [discCondition, setDiscCondition] = useState(draft?.discCondition ?? "None");
+  const [caseNotes, setCaseNotes] = useState(draft?.caseNotes ?? "");
+  const [watched, setWatched] = useState(draft?.watched ?? false);
+  const [depictedEraLabel, setDepictedEraLabel] = useState(draft?.depictedEraLabel ?? "");
+  // Manual fallback for when TMDb's own /find-by-imdb-id lookup comes up empty - see
+  // showTmdbOverrideField below. Only ever needed for a genuine TMDb miss, not shown by
+  // default.
+  const [tmdbIdOverride, setTmdbIdOverride] = useState(draft?.tmdbIdOverride ?? "");
   // Manual-only, deliberately never auto-filled from OMDB's "Rated" field - that's a US
   // MPAA-style value and often just "Not Rated" even for titles that do carry a real NZ/
   // Oceania classification on the physical case, which is the authoritative source here.
@@ -280,6 +297,12 @@ export default function ConfirmScreen({
       isCustomDisc,
       franchise,
       animationOrLiveAction,
+      releaseVariantNote,
+      discCondition,
+      caseNotes,
+      watched,
+      depictedEraLabel,
+      tmdbIdOverride,
     });
   }, [
     scan.id,
@@ -304,6 +327,12 @@ export default function ConfirmScreen({
     isCustomDisc,
     franchise,
     animationOrLiveAction,
+    releaseVariantNote,
+    discCondition,
+    caseNotes,
+    watched,
+    depictedEraLabel,
+    tmdbIdOverride,
   ]);
 
   /** Runs the typed title through the same OMDB search the automatic resolver uses,
@@ -374,7 +403,7 @@ export default function ConfirmScreen({
         // A failed preview fetch is "unknown", not "confirmed Live Action" - must not
         // collapse to isAnimated: false, which would hide the field and force the wrong
         // value below.
-        if (!cancelled) setTmdbPreview({ rating: null, studio: null, isAnimated: null, franchise: null });
+        if (!cancelled) setTmdbPreview({ tmdbId: null, rating: null, studio: null, isAnimated: null, franchise: null });
       })
       .finally(() => {
         if (!cancelled) setTmdbPreviewLoading(false);
@@ -408,6 +437,18 @@ export default function ConfirmScreen({
     singleSelectedImdbId && tmdbPreview?.isAnimated === true
       ? (fieldOptions?.animationOrLiveAction ?? []).filter((option) => option !== "Live Action")
       : fieldOptions?.animationOrLiveAction ?? [];
+  // Same regex computeShelfLocation itself uses server-side (apps/web/src/app/api/scan/
+  // confirm/route.ts) - only worth asking for a worded era label when this scan is
+  // actually headed for that shelf section.
+  const isHistoryDocumentary = /history document/i.test(genreLocation);
+  // Hard requirement (Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan" section):
+  // a candidate-backed entry (a real film was identified) must end up with a real TMDb id,
+  // so every metadata-driven feature can be backfilled later without re-touching the
+  // physical disc. TMDb's own /find lookup sometimes has nothing - this shows a manual
+  // override field in that case and blocks Confirm until it's filled in.
+  const showTmdbOverrideField = Boolean(
+    singleSelectedImdbId && !tmdbPreviewLoading && tmdbPreview?.tmdbId == null
+  );
 
   function handleNotThisItem() {
     setShowAllCandidates(true);
@@ -439,7 +480,10 @@ export default function ConfirmScreen({
     }
   }
 
-  async function performCreate() {
+  /** `overwriteUniqueId`, when given, replaces that already-catalogued title's every field
+   * with this scan's data instead of creating a new row - the "Overwrite" choice on the
+   * similar-entry check below. */
+  async function performCreate(overwriteUniqueId?: string) {
     setSubmitting(true);
     setError(null);
     try {
@@ -471,6 +515,12 @@ export default function ConfirmScreen({
           ? specialFeaturesDiscFormat || null
           : null,
         case_image_url: scan.resolved_candidates?.upcProduct?.imageUrl ?? null,
+        release_variant_note: releaseVariantNote.trim() || null,
+        disc_condition: discCondition,
+        case_notes: caseNotes.trim() || null,
+        watched,
+        depicted_era_label: isHistoryDocumentary ? depictedEraLabel.trim() || null : null,
+        tmdb_id_override: showTmdbOverrideField ? tmdbIdOverride.trim() || null : null,
         ...(selected.size === 0 ? { title: manualTitle || scan.barcode || "Untitled" } : {}),
       };
       const entries: ConfirmEntry[] =
@@ -482,7 +532,7 @@ export default function ConfirmScreen({
             }))
           : [{ barcodeId: scan.barcode ?? undefined, manualFields }];
 
-      const result = await confirmScan(scan.id, entries);
+      const result = await confirmScan(scan.id, entries, overwriteUniqueId);
       clearConfirmDraft(scan.id);
       onConfirmed({ shelfLocation: result.shelfLocation });
     } catch (err) {
@@ -497,6 +547,10 @@ export default function ConfirmScreen({
    * genuinely nothing to match against. */
   async function handleConfirmPressed() {
     setError(null);
+    if (showTmdbOverrideField && !tmdbIdOverride.trim()) {
+      setError("TMDb has no match for this title - enter a TMDb link/id above to continue.");
+      return;
+    }
     if (isCollection && selected.size > 1) {
       await performCreate();
       return;
@@ -517,7 +571,7 @@ export default function ConfirmScreen({
     setCheckingExisting(true);
     try {
       const upcText = `${scan.resolved_candidates?.upcProduct?.title ?? ""} ${scan.resolved_candidates?.upcProduct?.description ?? ""}`.trim();
-      const result = await findExistingTitle(titleForMatch, upcText);
+      const result = await findExistingTitle(titleForMatch, upcText, singleSelectedImdbId ?? undefined);
       if (result.status === "none") {
         await performCreate();
       } else {
@@ -531,28 +585,11 @@ export default function ConfirmScreen({
     }
   }
 
-  async function handleAttachExisting() {
-    // Only ever called from the "Attach to this entry" button, which is itself only
-    // rendered when scan.barcode is present - see the existingCheck render block.
-    if (!chosenExistingId || !scan.barcode) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      const imdbId = selected.size === 1 ? [...selected][0] : undefined;
-      const result = await linkExistingTitle({
-        pendingScanId: scan.id,
-        existingUniqueId: chosenExistingId,
-        barcode: scan.barcode,
-        imdbId,
-        caseImageUrl: scan.resolved_candidates?.upcProduct?.imageUrl,
-      });
-      clearConfirmDraft(scan.id);
-      onConfirmed({ shelfLocation: null, linkedTitle: result.linkedTitle });
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setSubmitting(false);
-    }
+  /** "Overwrite" on the similar-entry check: replaces every field of the chosen existing
+   * title with this scan's data instead of creating a new row. */
+  async function handleOverwriteExisting() {
+    if (!chosenExistingId) return;
+    await performCreate(chosenExistingId);
   }
 
   async function handleTreatAsNew() {
@@ -611,6 +648,10 @@ export default function ConfirmScreen({
   }
 
   if (existingCheck) {
+    const existingCandidates: ExistingTitleCandidate[] =
+      existingCheck.status === "auto" ? [existingCheck.match] : existingCheck.candidates;
+    const chosen = existingCandidates.find((c) => c.unique_id === chosenExistingId) ?? null;
+
     return (
       <ScrollView
         style={styles.container}
@@ -622,19 +663,15 @@ export default function ConfirmScreen({
         <Text style={styles.title}>Matches your collection</Text>
         {existingCheck.status === "auto" ? (
           <Text style={styles.body}>
-            This looks like your existing entry for &quot;{existingCheck.match.title}&quot; (
-            {existingCheck.match.format}, {existingCheck.match.disc_count} disc
-            {existingCheck.match.disc_count === 1 ? "" : "s"}).
-            {scan.barcode
-              ? " Attach this barcode and its image to that entry instead of creating a new one?"
-              : " You already have this - nothing to attach without a barcode, so just discard this entry."}
+            This looks like your existing entry for &quot;{existingCheck.match.title}&quot;. Compare it
+            against what you just scanned, then choose what to do.
           </Text>
         ) : (
           <>
             <Text style={styles.body}>
               A few entries in your collection share this title. Which one is this disc?
             </Text>
-            {existingCheck.candidates.map((c: ExistingTitleCandidate) => (
+            {existingCandidates.map((c) => (
               <TouchableOpacity
                 key={c.unique_id}
                 style={[
@@ -646,28 +683,53 @@ export default function ConfirmScreen({
                 <Text style={styles.candidateText}>
                   {chosenExistingId === c.unique_id ? "(o) " : "( ) "}
                   {c.title} - {c.format}, {c.disc_count} disc{c.disc_count === 1 ? "" : "s"}
+                  {c.barcode_id ? "" : " (no barcode yet)"}
                 </Text>
               </TouchableOpacity>
             ))}
           </>
         )}
 
+        {chosen && (
+          <View style={styles.section}>
+            {chosen.posterUrl ? (
+              <Image source={{ uri: chosen.posterUrl }} style={styles.scannedImage} resizeMode="contain" />
+            ) : null}
+            <Text style={styles.label}>Existing entry</Text>
+            <Text style={styles.body}>
+              {chosen.format}, {chosen.disc_count} disc{chosen.disc_count === 1 ? "" : "s"}
+              {chosen.disk_region ? ` - Region ${chosen.disk_region}` : ""}
+              {chosen.release_date ? ` - ${chosen.release_date.slice(0, 4)}` : ""}
+            </Text>
+            <Text style={styles.body}>
+              {chosen.genre_location ? `Shelf: ${chosen.genre_location}. ` : ""}
+              {chosen.franchise ? `Franchise: ${chosen.franchise}. ` : ""}
+              {chosen.animation_or_live_action}
+              {chosen.rating ? ` - Rated ${chosen.rating}` : ""}
+              {chosen.studio ? ` - ${chosen.studio}` : ""}
+            </Text>
+            <Text style={styles.body}>
+              {chosen.special_features ? "Has special features. " : ""}
+              {chosen.steelbook ? "Steelbook. " : ""}
+              {chosen.barcode_id ? `Barcode already on file: ${chosen.barcode_id}.` : "No barcode on file yet."}
+            </Text>
+          </View>
+        )}
+
         {error && <Text style={styles.error}>{error}</Text>}
 
-        {scan.barcode && (
-          <TouchableOpacity
-            style={styles.button}
-            onPress={handleAttachExisting}
-            disabled={submitting || !chosenExistingId}
-          >
-            <Text style={styles.buttonText}>{submitting ? "Saving..." : "Attach to this entry"}</Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity
+          style={styles.button}
+          onPress={handleOverwriteExisting}
+          disabled={submitting || !chosenExistingId}
+        >
+          <Text style={styles.buttonText}>{submitting ? "Saving..." : "Overwrite - replace it with this scan"}</Text>
+        </TouchableOpacity>
         <TouchableOpacity onPress={handleTreatAsNew} disabled={submitting}>
-          <Text style={styles.link}>No, this is a different item - add as new</Text>
+          <Text style={styles.link}>Is a new entry - I genuinely own a separate copy</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={handleDiscard} disabled={submitting}>
-          <Text style={styles.link}>Neither - this was a stray scan, discard it</Text>
+          <Text style={styles.link}>Reject - this scan shouldn&apos;t be added at all</Text>
         </TouchableOpacity>
       </ScrollView>
     );
@@ -870,6 +932,18 @@ export default function ConfirmScreen({
           placeholderTextColor="#71717a"
         />
       </View>
+      <View style={styles.section}>
+        <Text style={styles.label}>Release Variant Note (optional)</Text>
+        <TextInput
+          ref={releaseVariantNoteInputRef}
+          style={styles.input}
+          value={releaseVariantNote}
+          onChangeText={setReleaseVariantNote}
+          onFocus={() => scrollInputRefIntoView(releaseVariantNoteInputRef)}
+          placeholder="e.g. numbered slipcover, first pressing"
+          placeholderTextColor="#71717a"
+        />
+      </View>
 
       <View style={styles.section}>
         <Text style={styles.label}>Format</Text>
@@ -910,6 +984,20 @@ export default function ConfirmScreen({
           onFocusScroll={scrollFieldIntoView}
         />
       </View>
+      {isHistoryDocumentary && (
+        <View style={styles.section}>
+          <Text style={styles.label}>Depicted Era (worded, e.g. &quot;Spanish Civil War&quot;)</Text>
+          <TextInput
+            ref={depictedEraLabelInputRef}
+            style={styles.input}
+            value={depictedEraLabel}
+            onChangeText={setDepictedEraLabel}
+            onFocus={() => scrollInputRefIntoView(depictedEraLabelInputRef)}
+            placeholder="e.g. Spanish Civil War, 1980s"
+            placeholderTextColor="#71717a"
+          />
+        </View>
+      )}
       <View style={styles.section}>
         <Text style={styles.label}>
           Franchise{singleSelectedImdbId && !franchise ? " (no series match on Wikidata)" : ""}
@@ -941,6 +1029,26 @@ export default function ConfirmScreen({
             placeholder="e.g. 2D Animation, 3D Animation, Claymation"
             onFocusScroll={scrollFieldIntoView}
           />
+        </View>
+      )}
+      {showTmdbOverrideField && (
+        <View style={styles.section}>
+          <Text style={styles.label}>TMDb Link or ID (required - TMDb had no automatic match)</Text>
+          <TextInput
+            ref={tmdbIdOverrideInputRef}
+            style={styles.input}
+            value={tmdbIdOverride}
+            onChangeText={setTmdbIdOverride}
+            onFocus={() => scrollInputRefIntoView(tmdbIdOverrideInputRef)}
+            placeholder="e.g. https://www.themoviedb.org/movie/12345"
+            placeholderTextColor="#71717a"
+            autoCapitalize="none"
+          />
+          <Text style={styles.hint}>
+            Every scanned title needs a real TMDb match so ratings, cast, posters and everything
+            else can be filled in automatically later - search themoviedb.org for this title and
+            paste its link here.
+          </Text>
         </View>
       )}
       {isMultiTitleCollection ? (
@@ -1018,6 +1126,33 @@ export default function ConfirmScreen({
           </View>
         </>
       )}
+      <TouchableOpacity style={styles.checkboxRow} onPress={() => setWatched((prev) => !prev)}>
+        <View style={[styles.checkbox, watched && styles.checkboxChecked]}>
+          {watched && <Text style={styles.checkboxMark}>✓</Text>}
+        </View>
+        <Text style={styles.checkboxLabel}>Watched</Text>
+      </TouchableOpacity>
+      <View style={styles.section}>
+        <Text style={styles.label}>Disc Condition</Text>
+        <AutocompleteInput
+          value={discCondition}
+          onChangeText={setDiscCondition}
+          options={[...DISC_CONDITION_VALUES]}
+          onFocusScroll={scrollFieldIntoView}
+        />
+      </View>
+      <View style={styles.section}>
+        <Text style={styles.label}>Case Notes (optional)</Text>
+        <TextInput
+          ref={caseNotesInputRef}
+          style={styles.input}
+          value={caseNotes}
+          onChangeText={setCaseNotes}
+          onFocus={() => scrollInputRefIntoView(caseNotesInputRef)}
+          placeholder="e.g. blank case, wrong disc inside"
+          placeholderTextColor="#71717a"
+        />
+      </View>
 
       {showTvFields && <Text style={styles.hint}>TV-specific fields (season/episode) can be refined later via Direct Database Access.</Text>}
 
@@ -1026,7 +1161,7 @@ export default function ConfirmScreen({
       <TouchableOpacity
         style={styles.button}
         onPress={handleConfirmPressed}
-        disabled={submitting || checkingExisting}
+        disabled={submitting || checkingExisting || (showTmdbOverrideField && !tmdbIdOverride.trim())}
       >
         <Text style={styles.buttonText}>
           {checkingExisting ? "Checking your collection..." : submitting ? "Saving..." : "Confirm"}

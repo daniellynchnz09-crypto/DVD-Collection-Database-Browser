@@ -20,6 +20,13 @@ import { lookupFranchiseFromWikidata, lookupTmdbFields } from "@danflix/backend"
  * user leaves in the (now-always-visible) manual fields at confirm time is what's stored,
  * matching how Genre Location already works, rather than the hidden-field/authoritative-
  * re-lookup pattern Rating/Studio use.
+ *
+ * Also returns `tmdbId` (`null` when TMDb has no match for this IMDb id at all) - the
+ * confirm route now requires every candidate-backed entry to end up with a real TMDb id
+ * (Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan" section, so every other
+ * metadata-driven feature can be backfilled later without re-touching the physical disc),
+ * and ConfirmScreen uses this to show a manual TMDb link/id override field before that
+ * happens, rather than the user only finding out once the confirm request already failed.
  */
 export async function POST(request: Request) {
   const authError = requireScanSecret(request);
@@ -31,9 +38,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "imdbId is required" }, { status: 400 });
   }
 
-  const [{ rating, studio, isAnimated }, franchise] = await Promise.all([
+  const [{ tmdbId, rating, studio, isAnimated }, franchise] = await Promise.all([
     lookupTmdbFields(imdbId),
     lookupFranchiseFromWikidata(imdbId),
   ]);
-  return NextResponse.json({ rating, studio, isAnimated, franchise });
+  return NextResponse.json({ tmdbId, rating, studio, isAnimated, franchise });
 }

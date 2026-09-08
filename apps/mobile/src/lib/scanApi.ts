@@ -44,8 +44,11 @@ interface ConfirmResult {
   shelfLocation: { before: string | null; after: string | null } | null;
 }
 
-export function confirmScan(pendingScanId: string, entries: ConfirmEntry[]) {
-  return post<ConfirmResult>("/api/scan/confirm", { pendingScanId, entries });
+/** `overwriteUniqueId` (single-entry submissions only) fully replaces every field of an
+ * already-catalogued title instead of creating a new row - the "Overwrite" choice on the
+ * pre-submit similar-entry check (see findExistingTitle below). */
+export function confirmScan(pendingScanId: string, entries: ConfirmEntry[], overwriteUniqueId?: string) {
+  return post<ConfirmResult>("/api/scan/confirm", { pendingScanId, entries, overwriteUniqueId });
 }
 
 /** For the re-scan case: the resolver already found an existingMatch, nothing new to write. */
@@ -59,11 +62,27 @@ export function discardScan(pendingScanId: string) {
   return post<ConfirmResult>("/api/scan/confirm", { pendingScanId, discard: true });
 }
 
+/** Enough detail for a real side-by-side comparison against the fresh scan, not just a
+ * title/format/disc-count summary - see apps/web/src/app/api/scan/find-existing/route.ts. */
 export interface ExistingTitleCandidate {
   unique_id: string;
   title: string;
   format: string;
   disc_count: number;
+  disk_region: string | null;
+  genre_location: string | null;
+  franchise: string | null;
+  rating: string | null;
+  studio: string | null;
+  animation_or_live_action: string;
+  special_features: boolean;
+  steelbook: boolean;
+  barcode_id: string | null;
+  case_image_url: string | null;
+  imdb_id: string | null;
+  release_date: string | null;
+  /** case_image_url when set, else an OMDB poster fetched server-side via imdb_id, else null. */
+  posterUrl: string | null;
 }
 
 export type FindExistingResult =
@@ -71,12 +90,16 @@ export type FindExistingResult =
   | { status: "auto"; match: ExistingTitleCandidate }
   | { status: "ambiguous"; candidates: ExistingTitleCandidate[] };
 
-/** Backfill matching: is this scanned disc actually a title already in the collection? */
-export function findExistingTitle(title: string, upcText: string) {
-  return post<FindExistingResult>("/api/scan/find-existing", { title, upcText });
+/** Similar/matching-entry check, run right before confirmScan actually writes anything -
+ * matches by title text OR (when imdbId is known - a real OMDB/TMDb candidate was picked)
+ * a shared imdb_id, across every row (not just unbarcoded legacy ones), so both the
+ * original backfill scenario and a genuine re-scan/duplicate-copy surface here. */
+export function findExistingTitle(title: string, upcText: string, imdbId?: string) {
+  return post<FindExistingResult>("/api/scan/find-existing", { title, upcText, imdbId });
 }
 
 export interface TmdbPreview {
+  tmdbId: number | null;
   rating: string | null;
   studio: string | null;
   isAnimated: boolean | null;
@@ -113,21 +136,4 @@ export interface OmdbSearchCandidate {
  * the user flag this before searching instead of applying spellcheck by default. */
 export function searchTitleOnOmdb(title: string, skipCorrections?: boolean) {
   return post<{ candidates: OmdbSearchCandidate[] }>("/api/scan/title-search", { title, skipCorrections });
-}
-
-interface LinkExistingResult {
-  success: boolean;
-  linkedTitle: string;
-}
-
-/** Attaches the barcode (+ image + a conservative metadata refresh) to an existing entry
- * instead of creating a duplicate row. */
-export function linkExistingTitle(params: {
-  pendingScanId: string;
-  existingUniqueId: string;
-  barcode: string;
-  imdbId?: string;
-  caseImageUrl?: string;
-}) {
-  return post<LinkExistingResult>("/api/scan/link-existing", params);
 }

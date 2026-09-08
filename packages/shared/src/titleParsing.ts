@@ -49,6 +49,15 @@ export const HEADER_ALIASES: Record<string, string> = {
   "genre location": "genre_location",
   "steelbook": "steelbook",
   "release name": "release_name",
+  // Added ahead of the full-collection backfill rescan (0011_backfill_rescan_fields.sql) -
+  // see Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan" section.
+  "imdb id": "imdb_id",
+  "tmdb page": "tmdb_page",
+  "release variant note": "release_variant_note",
+  "disc condition": "disc_condition",
+  "case notes": "case_notes",
+  "watched": "watched",
+  "depicted era label": "depicted_era_label",
 };
 
 // Columns the sync script/webhook will add to the Sheet itself if missing, per
@@ -59,6 +68,13 @@ export const AUTO_CREATE_COLUMNS: { field: string; headerText: string }[] = [
   { field: "genre_location", headerText: "Genre Location" },
   { field: "steelbook", headerText: "Steelbook" },
   { field: "release_name", headerText: "Release Name" },
+  { field: "imdb_id", headerText: "IMDb ID" },
+  { field: "tmdb_page", headerText: "TMDb Page" },
+  { field: "release_variant_note", headerText: "Release Variant Note" },
+  { field: "disc_condition", headerText: "Disc Condition" },
+  { field: "case_notes", headerText: "Case Notes" },
+  { field: "watched", headerText: "Watched" },
+  { field: "depicted_era_label", headerText: "Depicted Era Label" },
 ];
 
 // Cuts/versions the user names inline within a box set (e.g. "Blade Runner Final Cut")
@@ -235,6 +251,46 @@ export function normalizeAnimationOrLiveAction(value: string | undefined): strin
   return ANIMATION_ALIASES[normalizeAnimationKey(cleaned)] ?? cleaned;
 }
 
+// Disc condition/playback-damage severity - a closed set the user defined explicitly
+// (Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan" section), distinct from
+// case_notes (free text, for the rarer "blank/mismatched case" scenario). "Visual
+// Unchecked" covers a disc that looks scratched but has never actually been played, so its
+// real playback impact isn't known yet - deliberately different from "None" (checked, or
+// obviously fine) and from "Visual" (checked, plays fine despite visible scratches).
+export const DISC_CONDITION_VALUES = [
+  "None",
+  "Visual",
+  "Visual Unchecked",
+  "Minor Issues",
+  "Unplayable Scenes",
+  "Significant",
+  "Unwatchable",
+] as const;
+
+const DISC_CONDITION_ALIASES: Record<string, string> = {
+  none: "None",
+  noscratches: "None",
+  visual: "Visual",
+  visualscratches: "Visual",
+  visualunchecked: "Visual Unchecked",
+  minorissues: "Minor Issues",
+  unplayablescenes: "Unplayable Scenes",
+  significant: "Significant",
+  unwatchable: "Unwatchable",
+};
+
+function normalizeDiscConditionKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Unlike the other normalizers here, this always returns a real value rather than null -
+ * a blank cell genuinely means "no known condition issue", i.e. the column's own default. */
+export function normalizeDiscCondition(value: string | undefined): string {
+  const cleaned = cleanCell(value);
+  if (cleaned == null) return "None";
+  return DISC_CONDITION_ALIASES[normalizeDiscConditionKey(cleaned)] ?? cleaned;
+}
+
 /** Converts a 0-indexed column number to its Sheets column letter(s) (0 -> A, 26 -> AA, ...). */
 export function columnLetter(index: number): string {
   let letter = "";
@@ -337,6 +393,13 @@ export function parseSheetRowToTitle(
     genre_location: cleanCell(row[columnIndexes["genre_location"]]),
     steelbook: toBoolean(row[columnIndexes["steelbook"]]),
     release_name: cleanCell(row[columnIndexes["release_name"]]),
+    imdb_id: cleanCell(row[columnIndexes["imdb_id"]]),
+    tmdb_page: cleanCell(row[columnIndexes["tmdb_page"]]),
+    release_variant_note: cleanCell(row[columnIndexes["release_variant_note"]]),
+    disc_condition: normalizeDiscCondition(row[columnIndexes["disc_condition"]]),
+    case_notes: cleanCell(row[columnIndexes["case_notes"]]),
+    watched: toBoolean(row[columnIndexes["watched"]]),
+    depicted_era_label: cleanCell(row[columnIndexes["depicted_era_label"]]),
   };
 }
 
@@ -400,6 +463,9 @@ const SHEET_FIELD_FORMATTERS: Partial<Record<string, (v: unknown) => string>> = 
   running_time_mins: formatRunningTimeForSheet,
   special_features: formatYesNoForSheet,
   steelbook: formatYesNoForSheet,
+  // A fresh column with no legacy data - follows Special Features/Steelbook's "Yes"/"No"
+  // convention rather than "y"/"n" for consistency (see the comment above formatYesNoForSheet).
+  watched: formatYesNoForSheet,
 };
 
 /** Formats one field's value the same way buildSheetRowFromTitle would, for callers that

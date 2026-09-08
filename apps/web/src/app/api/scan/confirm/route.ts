@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { requireScanSecret } from "@/lib/scanAuth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
-import { appendRowToSheet, getSheetHeaderAndColumns } from "@/lib/googleSheets";
+import { appendRowToSheet, getSheetHeaderAndColumns, updateSheetFieldsByUniqueId } from "@/lib/googleSheets";
 import { canonicalizeValue } from "@/lib/canonicalizeValue";
 import {
   buildColumnIndexes,
@@ -10,17 +10,30 @@ import {
   cleanFreeText,
   inferDepictedEraStart,
   normalizeAnimationOrLiveAction,
+  normalizeDiscCondition,
   normalizeFormat,
   normalizeRating,
   omdbGetById,
   parseOmdbReleaseDate,
   parseOmdbRuntimeMins,
 } from "@danflix/shared";
-import { lookupRottenTomatoesPage, lookupTmdbFields } from "@danflix/backend";
+import { fetchTmdbFieldsById, lookupRottenTomatoesPage, lookupTmdbFields, type TmdbFields } from "@danflix/backend";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+/** Accepts either a bare TMDb numeric id or a pasted themoviedb.org movie URL, for the
+ * manual-override field ConfirmScreen shows when the automatic /find lookup comes up
+ * empty (see the hard-requirement check below). */
+function parseTmdbIdOverride(value: string | undefined): number | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/(\d+)/);
+  if (!match) return null;
+  const id = parseInt(match[1], 10);
+  return Number.isNaN(id) ? null : id;
 }
 
 interface ConfirmEntry {
@@ -87,6 +100,15 @@ async function computeShelfLocation(
  * `{ pendingScanId, discard: true }` deletes the pending scan outright - for a stray/junk
  * read (e.g. a barcode briefly glimpsed on a neighbouring disc while lining up a shot)
  * that was never meant to be catalogued at all.
+ *
+ * `overwriteUniqueId` (single-entry submissions only): instead of inserting a new row,
+ * fully replaces every field of the already-catalogued title at that unique_id with this
+ * scan's data (Supabase update + a full Sheet row rewrite via updateSheetFieldsByUniqueId,
+ * not appendRowToSheet). This is the "Overwrite" option ConfirmScreen's pre-submit
+ * similar-entry check offers (Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan"
+ * section) - functionally equivalent to deleting the old entry and re-adding it as
+ * described, but implemented as an update-in-place so the row's unique_id (and anything
+ * that already references it, e.g. a confirmed pending_scans row) never has to change.
  */
 export async function POST(request: Request) {
   const authError = requireScanSecret(request);
@@ -114,6 +136,10 @@ export async function POST(request: Request) {
   if (entries.length === 0) {
     return NextResponse.json({ error: "entries is required unless dismiss is true" }, { status: 400 });
   }
+  const overwriteUniqueId = typeof body?.overwriteUniqueId === "string" ? body.overwriteUniqueId : null;
+  if (overwriteUniqueId && entries.length !== 1) {
+    return NextResponse.json({ error: "overwriteUniqueId only supports a single entry." }, { status: 400 });
+  }
   const { header } = await getSheetHeaderAndColumns();
   const columnIndexes = buildColumnIndexes(header);
 
@@ -124,23 +150,62 @@ export async function POST(request: Request) {
   // of a multi-title collection.
   const isMultiTitleEntry = entries.length > 1;
 
+  // Resolved fully before any writes happen, not inline in the write loop below - the
+  // hard-requirement check right after this must never leave an earlier entry in a
+  // multi-title collection already written to Supabase/the Sheet while a later one fails.
+  // Genuinely per-film data (an NZ/Oceania certification, the primary production company,
+  // now also the canonical TMDb id itself), so - unlike the manual Rating/Studio fields
+  // below - this runs for every entry regardless of isMultiTitleEntry; it's exactly what
+  // solves the collection-member case where there's no single physical case to read a
+  // rating off. See packages/backend/src/tmdb.ts for why this needed TMDb rather than IMDb.
+  const resolvedTmdb: TmdbFields[] = [];
+  for (const entry of entries) {
+    const manual = entry.manualFields ?? {};
+    let fields: TmdbFields = entry.imdbId
+      ? await lookupTmdbFields(entry.imdbId)
+      : { tmdbId: null, rating: null, studio: null, isAnimated: null };
+
+    // TMDb's own /find-by-imdb-id lookup sometimes has nothing (a genuinely obscure title,
+    // or an IMDb id TMDb hasn't indexed yet) - the manual override field ConfirmScreen
+    // shows in that case lets the user paste a TMDb link/id themselves rather than being
+    // stuck. Still worth a real detail fetch so rating/studio/isAnimated get populated too,
+    // not just the bare id.
+    const override = parseTmdbIdOverride(asString(manual.tmdb_id_override));
+    if (fields.tmdbId == null && override != null) {
+      const overrideDetails = await fetchTmdbFieldsById(override);
+      fields = { tmdbId: override, ...overrideDetails };
+    }
+
+    // Hard requirement (Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan" section):
+    // any entry backed by a real OMDB/TMDb candidate (entry.imdbId set) must end up with a
+    // real TMDb id, so every other metadata-driven feature (scores, cast/crew, synopsis,
+    // third-party review-tracking integrations, ...) can be backfilled later for the whole
+    // collection at once, without ever re-touching the physical disc. A fully manual entry
+    // (no candidate at all - the user's own custom-burned discs) has nothing to look up and
+    // is exempt.
+    if (entry.imdbId && fields.tmdbId == null) {
+      return NextResponse.json(
+        {
+          error:
+            "TMDb has no match for this title, and no manual TMDb link/id was given - " +
+            "enter one in the TMDb field on the confirm screen to continue.",
+        },
+        { status: 400 }
+      );
+    }
+    resolvedTmdb.push(fields);
+  }
+
   const createdIds: string[] = [];
   let primaryShelfLocation: { before: string | null; after: string | null } | null = null;
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
     const manual = entry.manualFields ?? {};
+    const tmdbFields = resolvedTmdb[i];
 
     let omdbFields: Record<string, unknown> = {};
     let synopsis: string | null = null;
-    // Genuinely per-film data (an NZ/Oceania certification, the primary production
-    // company), so - unlike the manual Rating/Studio fields below - this runs for every
-    // entry regardless of isMultiTitleEntry; it's exactly what solves the collection-
-    // member case where there's no single physical case to read a rating off. See
-    // packages/backend/src/tmdb.ts for why this needed TMDb rather than IMDb itself.
-    const tmdbFields = entry.imdbId
-      ? await lookupTmdbFields(entry.imdbId)
-      : { tmdbId: null, rating: null, studio: null };
     if (entry.imdbId) {
       const detail = await omdbGetById(entry.imdbId);
       if (detail) {
@@ -202,7 +267,7 @@ export async function POST(request: Request) {
     const finalRating = manualRating ?? tmdbFields.rating ?? (omdbFields.rating as string | null) ?? null;
     const finalStudio = manualStudio ?? tmdbFields.studio ?? null;
 
-    const uniqueId = randomUUID();
+    const uniqueId = overwriteUniqueId ?? randomUUID();
     const title: Record<string, unknown> = {
       unique_id: uniqueId,
       title: cleanFreeText(asString(manual.title)) ?? omdbFields.title ?? "Unknown Title",
@@ -237,6 +302,12 @@ export async function POST(request: Request) {
       studio_is_manual: manualStudio != null,
       tmdb_id: tmdbFields.tmdbId,
       tmdb_synced_at: tmdbFields.tmdbId != null ? new Date().toISOString() : null,
+      // Clean lookup keys, added ahead of the backfill rescan so every future metadata
+      // feature can be keyed off them without re-touching the physical disc - see the
+      // hard-requirement check above. entry.imdbId is already the clean id OMDB/TMDb
+      // search itself returned, not the imdb_page URL built from it above.
+      imdb_id: entry.imdbId ?? null,
+      tmdb_page: tmdbFields.tmdbId != null ? `https://www.themoviedb.org/movie/${tmdbFields.tmdbId}` : null,
       disk_region: cleanFreeText(asString(manual.disk_region)),
       barcode_id: entry.barcodeId ?? null,
       case_image_url: manual.case_image_url ?? null,
@@ -245,15 +316,27 @@ export async function POST(request: Request) {
       depicted_era_start:
         manual.depicted_era_start ??
         inferDepictedEraStart(String(manual.title ?? omdbFields.title ?? ""), synopsis),
+      depicted_era_label: cleanFreeText(asString(manual.depicted_era_label)),
+      disc_condition: normalizeDiscCondition(asString(manual.disc_condition)),
+      case_notes: cleanFreeText(asString(manual.case_notes)),
+      release_variant_note: cleanFreeText(asString(manual.release_variant_note)),
+      watched: manual.watched === true,
     };
 
-    const { error: insertError } = await supabase.from("titles").insert(title);
-    if (insertError) {
-      return NextResponse.json({ error: insertError.message }, { status: 500 });
+    if (overwriteUniqueId) {
+      const { error: updateError } = await supabase.from("titles").update(title).eq("unique_id", overwriteUniqueId);
+      if (updateError) {
+        return NextResponse.json({ error: updateError.message }, { status: 500 });
+      }
+      await updateSheetFieldsByUniqueId(overwriteUniqueId, title, header, columnIndexes);
+    } else {
+      const { error: insertError } = await supabase.from("titles").insert(title);
+      if (insertError) {
+        return NextResponse.json({ error: insertError.message }, { status: 500 });
+      }
+      const row = buildSheetRowFromTitle(title, columnIndexes, header.length);
+      await appendRowToSheet(row);
     }
-
-    const row = buildSheetRowFromTitle(title, columnIndexes, header.length);
-    await appendRowToSheet(row);
     createdIds.push(uniqueId);
 
     if (i === 0) {

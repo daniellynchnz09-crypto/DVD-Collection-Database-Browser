@@ -54,6 +54,25 @@ export interface Title {
   barcode_id: string | null;
   case_image_url: string | null;
   genre_location: string | null;
+  steelbook: boolean;
+  release_name: string | null;
+  tmdb_id: number | null;
+  tmdb_synced_at: string | null;
+  rating_is_manual: boolean;
+  studio_is_manual: boolean;
+  depicted_era_start: number | null;
+
+  // Added ahead of the full-collection backfill rescan (0011_backfill_rescan_fields.sql) -
+  // see Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan" section.
+  imdb_id: string | null;
+  tmdb_page: string | null;
+  date_added: string | null;
+  disc_condition: string;
+  case_notes: string | null;
+  release_variant_note: string | null;
+  watched: boolean;
+  depicted_era_label: string | null;
+
   last_updated: string;
 }
 

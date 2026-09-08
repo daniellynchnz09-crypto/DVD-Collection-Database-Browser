@@ -38,6 +38,12 @@ export interface ConfirmDraft {
   isCustomDisc?: boolean;
   franchise?: string;
   animationOrLiveAction?: string;
+  releaseVariantNote?: string;
+  discCondition?: string;
+  caseNotes?: string;
+  watched?: boolean;
+  depictedEraLabel?: string;
+  tmdbIdOverride?: string;
 }
 
 const drafts = new Map<string, ConfirmDraft>();
