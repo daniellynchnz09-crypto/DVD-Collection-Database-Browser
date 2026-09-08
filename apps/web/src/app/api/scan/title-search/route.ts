@@ -49,6 +49,14 @@ function mergeByImdbId(lists: OmdbSearchCandidate[][]): OmdbSearchCandidate[] {
  * final list always includes "results from what the user actually typed" alongside
  * anything the corrected/fuzzy passes additionally found - per the user's own explicit
  * design, a spelling correction never replaces or hides the literal search.
+ *
+ * `skipCorrections: true` (set by ConfirmScreen's "custom/homemade disc" toggle) skips
+ * passes 2 and 3 entirely - only the literal search runs. Added after the user pointed out
+ * that a meaningful chunk of the collection is "DVD (Custom Burn)" discs of non-English or
+ * obscure franchises with genuinely made-up-sounding names, plus some of the user's own
+ * creations that were never going to be on OMDB/TMDb at all - for those, "correcting" the
+ * typed name toward the nearest real English word or the nearest real TMDb title is more
+ * likely to produce a wrong, confusing suggestion than to catch an actual typo.
  */
 export async function POST(request: Request) {
   const authError = requireScanSecret(request);
@@ -56,11 +64,12 @@ export async function POST(request: Request) {
 
   const body = await request.json().catch(() => null);
   const title = typeof body?.title === "string" ? body.title.trim() : "";
+  const skipCorrections = body?.skipCorrections === true;
   if (!title) {
     return NextResponse.json({ error: "title is required" }, { status: 400 });
   }
 
-  const correctedTitle = await correctSpelling(title).catch(() => null);
+  const correctedTitle = skipCorrections ? null : await correctSpelling(title).catch(() => null);
   const queries = correctedTitle ? [title, correctedTitle] : [title];
 
   const passResults = await Promise.all(
@@ -68,7 +77,7 @@ export async function POST(request: Request) {
   );
   let merged = mergeByImdbId(passResults);
 
-  if (merged.length === 0) {
+  if (merged.length === 0 && !skipCorrections) {
     const supabase = getSupabaseServerClient();
     const fuzzyMatches = await fuzzySearchTitleIndex(supabase, title).catch(() => []);
     const fuzzyCandidates = await resolveTmdbCandidatesByIds(fuzzyMatches.map((m) => m.tmdbId));

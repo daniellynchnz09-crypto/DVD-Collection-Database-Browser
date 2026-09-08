@@ -35,6 +35,7 @@ export interface ConfirmDraft {
   candidates?: ConfirmDraftCandidate[];
   titleSearchQuery?: string;
   hasSearchedOrSkipped?: boolean;
+  isCustomDisc?: boolean;
 }
 
 const drafts = new Map<string, ConfirmDraft>();

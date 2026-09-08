@@ -16,6 +16,22 @@ export function queueScan(barcode: string) {
   return post<{ pendingScanId: string }>("/api/scan/queue", { barcode });
 }
 
+export interface ManualPendingScan {
+  id: string;
+  barcode: null;
+  status: "needs_manual";
+  resolved_candidates: Record<string, never>;
+  scanned_at: string;
+}
+
+/** Creates a pending scan with no barcode at all, for the "+" button in PendingScansScreen -
+ * some of the collection's custom-burned DVDs (the user's own creations) have no barcode to
+ * scan in the first place. Lands straight on the manual title-search step in ConfirmScreen,
+ * same as a barcode that scanned but returned nothing. */
+export function createManualPendingScan() {
+  return post<{ scan: ManualPendingScan }>("/api/scan/manual-entry", {});
+}
+
 export interface ConfirmEntry {
   imdbId?: string;
   barcodeId?: string;
@@ -82,9 +98,14 @@ export interface OmdbSearchCandidate {
 
 /** Manual title-search fallback: when the barcode lookup came back with no usable UPC/product
  * data at all, ConfirmScreen asks the user to type the title and runs it through the same OMDB
- * search the automatic resolver uses, producing the same kind of candidate list. */
-export function searchTitleOnOmdb(title: string) {
-  return post<{ candidates: OmdbSearchCandidate[] }>("/api/scan/title-search", { title });
+ * search the automatic resolver uses, producing the same kind of candidate list.
+ *
+ * `skipCorrections` disables the spelling-correction passes (dictionary + fuzzy TMDb match) -
+ * for a custom-burned disc of a non-English/obscure franchise, "correcting" an invented or
+ * foreign name is more likely to produce a wrong candidate than a typo, so ConfirmScreen lets
+ * the user flag this before searching instead of applying spellcheck by default. */
+export function searchTitleOnOmdb(title: string, skipCorrections?: boolean) {
+  return post<{ candidates: OmdbSearchCandidate[] }>("/api/scan/title-search", { title, skipCorrections });
 }
 
 interface LinkExistingResult {

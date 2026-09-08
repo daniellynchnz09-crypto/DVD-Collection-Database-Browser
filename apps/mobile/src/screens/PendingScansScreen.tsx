@@ -10,11 +10,13 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { supabase } from "../lib/supabase";
-import { discardScan } from "../lib/scanApi";
+import { createManualPendingScan, discardScan } from "../lib/scanApi";
 
 export interface PendingScan {
   id: string;
-  barcode: string;
+  // null for a manual entry created via the "+" button - some of the collection's
+  // custom-burned discs (the user's own creations) have no barcode to scan at all.
+  barcode: string | null;
   status: "resolved" | "needs_manual";
   resolved_candidates: {
     existingMatch?: { title: string };
@@ -31,7 +33,8 @@ function scanDisplayTitle(scan: PendingScan): string {
     scan.resolved_candidates?.existingMatch?.title ??
     scan.resolved_candidates?.omdbCandidates?.[0]?.Title ??
     scan.resolved_candidates?.upcProduct?.title ??
-    scan.barcode
+    scan.barcode ??
+    "New entry"
   );
 }
 
@@ -92,6 +95,7 @@ export default function PendingScansScreen({
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -145,7 +149,10 @@ export default function PendingScansScreen({
   async function doDelete() {
     setDeleting(true);
     const idsToDelete = [...selectedIds];
-    const barcodes = scans.filter((s) => selectedIds.has(s.id)).map((s) => s.barcode);
+    const barcodes = scans
+      .filter((s) => selectedIds.has(s.id))
+      .map((s) => s.barcode)
+      .filter((b): b is string => b !== null);
     try {
       await Promise.all(idsToDelete.map((id) => discardScan(id)));
       onDeleted?.(barcodes);
@@ -153,6 +160,21 @@ export default function PendingScansScreen({
       setDeleting(false);
       cancelSelecting();
       load();
+    }
+  }
+
+  /** "+" button: some of the collection's custom-burned discs have no barcode to scan at
+   * all (the user's own creations, some not even listed on IMDb) - this creates a pending
+   * scan directly and jumps straight into ConfirmScreen's manual title-search step. */
+  async function createManualEntry() {
+    setCreating(true);
+    try {
+      const { scan } = await createManualPendingScan();
+      onSelect(scan as PendingScan);
+    } catch (err) {
+      Alert.alert("Couldn't create entry", (err as Error).message);
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -179,11 +201,22 @@ export default function PendingScansScreen({
                 {deleting ? "Deleting..." : `Delete (${selectedIds.size})`}
               </Text>
             </TouchableOpacity>
-          ) : scans.length > 0 ? (
-            <TouchableOpacity onPress={() => setSelectionMode(true)}>
-              <Text style={styles.link}>Select</Text>
-            </TouchableOpacity>
-          ) : null}
+          ) : (
+            <View style={styles.headerActions}>
+              <TouchableOpacity
+                onPress={createManualEntry}
+                disabled={creating}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              >
+                <Text style={[styles.link, styles.addLink]}>{creating ? "..." : "+ New"}</Text>
+              </TouchableOpacity>
+              {scans.length > 0 && (
+                <TouchableOpacity onPress={() => setSelectionMode(true)}>
+                  <Text style={styles.link}>Select</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
         </View>
         <Text style={styles.title}>
           {selectionMode ? `${selectedIds.size} selected` : `Pending Scans (${scans.length})`}
@@ -240,6 +273,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 18 },
+  addLink: { fontWeight: "700" },
   link: { color: "#38bdf8" },
   backButton: {
     backgroundColor: "#0284c7",

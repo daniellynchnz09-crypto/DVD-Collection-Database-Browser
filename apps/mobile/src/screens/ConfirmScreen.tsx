@@ -107,6 +107,11 @@ export default function ConfirmScreen({
   const [titleSearching, setTitleSearching] = useState(false);
   const [hasSearchedOrSkipped, setHasSearchedOrSkipped] = useState(draft?.hasSearchedOrSkipped ?? false);
   const needsTitleSearch = candidates.length === 0 && !upcProduct && !hasSearchedOrSkipped;
+  // "DVD (Custom Burn)" discs often carry non-English/obscure franchise names that a
+  // generic English spellchecker or a fuzzy match against real TMDb titles would "correct"
+  // into something wrong - the user flags this before searching rather than the app
+  // guessing from the format field, which isn't chosen yet at this point in the flow.
+  const [isCustomDisc, setIsCustomDisc] = useState(draft?.isCustomDisc ?? false);
 
   // Starts collapsed to just the auto-matched candidate when the listing's own photo
   // confidently matched one poster - "Not this item" reveals the full list to pick from
@@ -214,6 +219,7 @@ export default function ConfirmScreen({
       candidates,
       titleSearchQuery,
       hasSearchedOrSkipped,
+      isCustomDisc,
     });
   }, [
     scan.id,
@@ -235,6 +241,7 @@ export default function ConfirmScreen({
     candidates,
     titleSearchQuery,
     hasSearchedOrSkipped,
+    isCustomDisc,
   ]);
 
   /** Runs the typed title through the same OMDB search the automatic resolver uses,
@@ -246,7 +253,7 @@ export default function ConfirmScreen({
     setTitleSearching(true);
     setError(null);
     try {
-      const result = await searchTitleOnOmdb(query);
+      const result = await searchTitleOnOmdb(query, isCustomDisc);
       setCandidates(result.candidates);
       setHasSearchedOrSkipped(true);
       if (result.candidates.length === 1) setSelected(new Set([result.candidates[0].imdbID]));
@@ -363,16 +370,16 @@ export default function ConfirmScreen({
           ? specialFeaturesDiscFormat || null
           : null,
         case_image_url: scan.resolved_candidates?.upcProduct?.imageUrl ?? null,
-        ...(selected.size === 0 ? { title: manualTitle || scan.barcode } : {}),
+        ...(selected.size === 0 ? { title: manualTitle || scan.barcode || "Untitled" } : {}),
       };
       const entries: ConfirmEntry[] =
         chosen.length > 0
           ? chosen.map((c, i) => ({
               imdbId: c.imdbID,
-              barcodeId: i === 0 ? scan.barcode : undefined,
+              barcodeId: i === 0 ? (scan.barcode ?? undefined) : undefined,
               manualFields,
             }))
-          : [{ barcodeId: scan.barcode, manualFields }];
+          : [{ barcodeId: scan.barcode ?? undefined, manualFields }];
 
       const result = await confirmScan(scan.id, entries);
       clearConfirmDraft(scan.id);
@@ -424,7 +431,9 @@ export default function ConfirmScreen({
   }
 
   async function handleAttachExisting() {
-    if (!chosenExistingId) return;
+    // Only ever called from the "Attach to this entry" button, which is itself only
+    // rendered when scan.barcode is present - see the existingCheck render block.
+    if (!chosenExistingId || !scan.barcode) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -459,7 +468,7 @@ export default function ConfirmScreen({
     try {
       await discardScan(scan.id);
       clearConfirmDraft(scan.id);
-      onDiscarded?.(scan.barcode);
+      if (scan.barcode) onDiscarded?.(scan.barcode);
       onBack();
     } catch (err) {
       setError((err as Error).message);
@@ -514,8 +523,10 @@ export default function ConfirmScreen({
           <Text style={styles.body}>
             This looks like your existing entry for &quot;{existingCheck.match.title}&quot; (
             {existingCheck.match.format}, {existingCheck.match.disc_count} disc
-            {existingCheck.match.disc_count === 1 ? "" : "s"}). Attach this barcode and its image to
-            that entry instead of creating a new one?
+            {existingCheck.match.disc_count === 1 ? "" : "s"}).
+            {scan.barcode
+              ? " Attach this barcode and its image to that entry instead of creating a new one?"
+              : " You already have this - nothing to attach without a barcode, so just discard this entry."}
           </Text>
         ) : (
           <>
@@ -542,13 +553,15 @@ export default function ConfirmScreen({
 
         {error && <Text style={styles.error}>{error}</Text>}
 
-        <TouchableOpacity
-          style={styles.button}
-          onPress={handleAttachExisting}
-          disabled={submitting || !chosenExistingId}
-        >
-          <Text style={styles.buttonText}>{submitting ? "Saving..." : "Attach to this entry"}</Text>
-        </TouchableOpacity>
+        {scan.barcode && (
+          <TouchableOpacity
+            style={styles.button}
+            onPress={handleAttachExisting}
+            disabled={submitting || !chosenExistingId}
+          >
+            <Text style={styles.buttonText}>{submitting ? "Saving..." : "Attach to this entry"}</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity onPress={handleTreatAsNew} disabled={submitting}>
           <Text style={styles.link}>No, this is a different item - add as new</Text>
         </TouchableOpacity>
@@ -586,12 +599,14 @@ export default function ConfirmScreen({
       <TouchableOpacity onPress={onBack}>
         <Text style={styles.link}>{"< Pending Scans"}</Text>
       </TouchableOpacity>
-      <Text style={styles.title}>Barcode {scan.barcode}</Text>
+      <Text style={styles.title}>{scan.barcode ? `Barcode ${scan.barcode}` : "New Entry"}</Text>
 
       {needsTitleSearch ? (
         <View style={styles.section}>
           <Text style={styles.hint}>
-            This barcode didn&apos;t come back with any product data at all. What&apos;s the title?
+            {scan.barcode
+              ? "This barcode didn't come back with any product data at all. What's the title?"
+              : "What's the title?"}
           </Text>
           <TextInput
             style={styles.input}
@@ -601,6 +616,17 @@ export default function ConfirmScreen({
             placeholderTextColor="#71717a"
             autoFocus
           />
+          <TouchableOpacity
+            style={styles.checkboxRow}
+            onPress={() => setIsCustomDisc((prev) => !prev)}
+          >
+            <View style={[styles.checkbox, isCustomDisc && styles.checkboxChecked]}>
+              {isCustomDisc && <Text style={styles.checkboxMark}>✓</Text>}
+            </View>
+            <Text style={styles.checkboxLabel}>
+              Custom/homemade disc - don&apos;t autocorrect spelling
+            </Text>
+          </TouchableOpacity>
           {error && <Text style={styles.error}>{error}</Text>}
           <TouchableOpacity
             style={styles.button}
@@ -613,7 +639,9 @@ export default function ConfirmScreen({
             <Text style={styles.link}>Skip - enter manually instead</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={handleDiscard} disabled={submitting || titleSearching}>
-            <Text style={styles.link}>This was a stray scan - discard it</Text>
+            <Text style={styles.link}>
+              {scan.barcode ? "This was a stray scan - discard it" : "Discard this entry"}
+            </Text>
           </TouchableOpacity>
         </View>
       ) : (
