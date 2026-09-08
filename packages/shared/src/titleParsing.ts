@@ -58,6 +58,7 @@ export const HEADER_ALIASES: Record<string, string> = {
   "case notes": "case_notes",
   "watched": "watched",
   "depicted era label": "depicted_era_label",
+  "last watched date": "last_watched_date",
 };
 
 // Columns the sync script/webhook will add to the Sheet itself if missing, per
@@ -75,6 +76,7 @@ export const AUTO_CREATE_COLUMNS: { field: string; headerText: string }[] = [
   { field: "case_notes", headerText: "Case Notes" },
   { field: "watched", headerText: "Watched" },
   { field: "depicted_era_label", headerText: "Depicted Era Label" },
+  { field: "last_watched_date", headerText: "Last Watched Date" },
 ];
 
 // Cuts/versions the user names inline within a box set (e.g. "Blade Runner Final Cut")
@@ -400,6 +402,7 @@ export function parseSheetRowToTitle(
     case_notes: cleanCell(row[columnIndexes["case_notes"]]),
     watched: toBoolean(row[columnIndexes["watched"]]),
     depicted_era_label: cleanCell(row[columnIndexes["depicted_era_label"]]),
+    last_watched_date: toDate(row[columnIndexes["last_watched_date"]]),
   };
 }
 
@@ -460,6 +463,7 @@ function formatYesNoForSheet(value: unknown): string {
 // arrays not listed here already stringify sensibly via formatValueForSheet).
 const SHEET_FIELD_FORMATTERS: Partial<Record<string, (v: unknown) => string>> = {
   release_date: formatDateForSheet,
+  last_watched_date: formatDateForSheet,
   running_time_mins: formatRunningTimeForSheet,
   special_features: formatYesNoForSheet,
   steelbook: formatYesNoForSheet,

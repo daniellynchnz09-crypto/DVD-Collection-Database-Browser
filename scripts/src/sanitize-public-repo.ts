@@ -41,6 +41,11 @@ const EXCLUDE_DIRS = new Set([
   // duplicating the workflow into the public repo would just be a second, secret-less
   // schedule doing nothing every 3 days, which is confusing without being useful.
   ".github",
+  // The user's personal Letterboxd account export (diary/watched/reviews/lists) - a
+  // one-time local import source, never committed to either repo. Already gitignored,
+  // but this raw filesystem copy doesn't consult .gitignore, so it needs its own
+  // exclusion here too - same reasoning as .env below.
+  "Letterboxd",
 ]);
 // Excludes real env files (.env, .env.local, .env.production, ...) but keeps
 // .env.example templates - those are safe, documented placeholders, not secrets.

@@ -40,3 +40,7 @@ yarn-error.log*
 
 # screenshots (per Claude.md: keep these out of the main directory / repo)
 **/screenshots/
+
+# Personal Letterboxd data export (diary/watched/reviews/lists) - never committed to
+# either repo, private or public. Used only as a local one-time import source.
+/Letterboxd/

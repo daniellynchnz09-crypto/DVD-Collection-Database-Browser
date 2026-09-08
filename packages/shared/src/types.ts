@@ -71,6 +71,7 @@ export interface Title {
   case_notes: string | null;
   release_variant_note: string | null;
   watched: boolean;
+  last_watched_date: string | null;
   depicted_era_label: string | null;
 
   last_updated: string;
