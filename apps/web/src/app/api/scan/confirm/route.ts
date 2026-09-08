@@ -9,6 +9,7 @@ import {
   buildSheetRowFromTitle,
   cleanFreeText,
   inferDepictedEraStart,
+  normalizeAnimationOrLiveAction,
   normalizeFormat,
   normalizeRating,
   omdbGetById,
@@ -181,6 +182,14 @@ export async function POST(request: Request) {
       "genre_location",
       cleanFreeText(asString(manual.genre_location))
     );
+    // Franchise is exactly as open-ended as Genre Location (an ever-growing list the user
+    // builds up themselves, not a small fixed set like Format/Rating) - same dedup
+    // treatment, so "casper" vs "Casper" never creates a near-duplicate franchise entry.
+    const cleanFranchise = await canonicalizeValue(
+      supabase,
+      "franchise",
+      cleanFreeText(asString(manual.franchise))
+    );
 
     // Priority: a manual entry (the physical case, or a single-title scan) always wins
     // when given; otherwise TMDb's per-title lookup above; otherwise whatever OMDB itself
@@ -205,7 +214,7 @@ export async function POST(request: Request) {
       running_time_mins: manual.running_time_mins ?? omdbFields.running_time_mins ?? null,
       genre: manual.genre ?? omdbFields.genre ?? [],
       director: manual.director ?? omdbFields.director ?? [],
-      franchise: manual.franchise ?? null,
+      franchise: cleanFranchise,
       sub_franchise: manual.sub_franchise ?? null,
       rating: finalRating,
       rating_is_manual: manualRating != null,
@@ -215,7 +224,8 @@ export async function POST(request: Request) {
       special_features: manual.special_features ?? false,
       special_features_disc_count: manual.special_features_disc_count ?? null,
       special_features_disc_format: normalizeFormat(asString(manual.special_features_disc_format)),
-      animation_or_live_action: manual.animation_or_live_action ?? "Live Action",
+      animation_or_live_action:
+        normalizeAnimationOrLiveAction(asString(manual.animation_or_live_action)) ?? "Live Action",
       documentary: manual.documentary ?? "n",
       is_collection: manual.is_collection ?? false,
       name_of_collection: manual.name_of_collection ?? null,

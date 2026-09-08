@@ -6,6 +6,8 @@ export interface FieldOptions {
   genreLocation: string[];
   rating: string[];
   studio: string[];
+  franchise: string[];
+  animationOrLiveAction: string[];
 }
 
 let cached: FieldOptions | null = null;
@@ -20,7 +22,7 @@ function distinctSorted(values: (string | null)[]): string[] {
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
-const COLUMNS = "format, disk_region, genre_location, rating, studio";
+const COLUMNS = "format, disk_region, genre_location, rating, studio, franchise, animation_or_live_action";
 const PAGE_SIZE = 1000;
 
 /**
@@ -58,6 +60,8 @@ export async function loadFieldOptions(forceRefresh = false): Promise<FieldOptio
       genreLocation: distinctSorted(rows.map((r) => r.genre_location)),
       rating: distinctSorted(rows.map((r) => r.rating)),
       studio: distinctSorted(rows.map((r) => r.studio)),
+      franchise: distinctSorted(rows.map((r) => r.franchise)),
+      animationOrLiveAction: distinctSorted(rows.map((r) => r.animation_or_live_action)),
     };
     cached = options;
     inflight = null;

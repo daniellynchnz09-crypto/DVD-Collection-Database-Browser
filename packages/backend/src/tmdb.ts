@@ -43,6 +43,7 @@ interface TmdbFindResponse {
 
 interface TmdbMovieDetail {
   production_companies?: { name: string }[];
+  genres?: { name: string }[];
 }
 
 interface TmdbReleaseDatesResponse {
@@ -64,22 +65,30 @@ async function findTmdbIdByImdbId(imdbId: string): Promise<number | null> {
  * "size" metric, but the first-listed company is empirically the lead/primary one for
  * most titles (matches the same judgment call made manually for Paper Planes, where the
  * first-listed of two credited companies was the real studio and the second was a
- * single-film shell entity). */
+ * single-film shell entity).
+ *
+ * Also returns `isAnimated` (TMDb's own genre list includes "Animation") - verified live
+ * against Casper's Haunted Christmas after the user found it had been wrongly logged as
+ * Live Action, since the mobile scan form never actually asked for this field at all (see
+ * Claude/TECH STACK AND ARCHITECTURE.md). Only distinguishes animated-vs-not; TMDb has no
+ * field for the *specific* animation style (2D/3D/stop-motion/...), which this collection's
+ * own data already tracks - that part stays a manual choice, this is just the prefill. */
 export async function fetchTmdbFieldsById(
   tmdbId: number
-): Promise<{ rating: string | null; studio: string | null }> {
+): Promise<{ rating: string | null; studio: string | null; isAnimated: boolean }> {
   const [details, releaseDates] = await Promise.all([
     tmdbFetch<TmdbMovieDetail>(`/movie/${tmdbId}`),
     tmdbFetch<TmdbReleaseDatesResponse>(`/movie/${tmdbId}/release_dates`),
   ]);
 
   const studio = details?.production_companies?.[0]?.name ?? null;
+  const isAnimated = details?.genres?.some((g) => g.name === "Animation") ?? false;
 
   const nzEntry = releaseDates?.results?.find((r) => r.iso_3166_1 === "NZ");
   const certification = nzEntry?.release_dates?.find((rd) => rd.certification)?.certification;
   const rating = certification && certification.trim() ? certification : null;
 
-  return { rating, studio };
+  return { rating, studio, isAnimated };
 }
 
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w342";
@@ -194,6 +203,7 @@ export interface TmdbFields {
   tmdbId: number | null;
   rating: string | null;
   studio: string | null;
+  isAnimated: boolean;
 }
 
 /** Looks a title up on TMDb for the first time, via its IMDb id - returns everything
@@ -202,9 +212,9 @@ export interface TmdbFields {
  * blocks the rest of the confirm flow. */
 export async function lookupTmdbFields(imdbId: string): Promise<TmdbFields> {
   const tmdbId = await findTmdbIdByImdbId(imdbId);
-  if (tmdbId == null) return { tmdbId: null, rating: null, studio: null };
-  const { rating, studio } = await fetchTmdbFieldsById(tmdbId);
-  return { tmdbId, rating, studio };
+  if (tmdbId == null) return { tmdbId: null, rating: null, studio: null, isAnimated: false };
+  const { rating, studio, isAnimated } = await fetchTmdbFieldsById(tmdbId);
+  return { tmdbId, rating, studio, isAnimated };
 }
 
 export interface TmdbRefreshResult {

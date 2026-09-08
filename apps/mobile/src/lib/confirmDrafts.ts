@@ -36,6 +36,8 @@ export interface ConfirmDraft {
   titleSearchQuery?: string;
   hasSearchedOrSkipped?: boolean;
   isCustomDisc?: boolean;
+  franchise?: string;
+  animationOrLiveAction?: string;
 }
 
 const drafts = new Map<string, ConfirmDraft>();

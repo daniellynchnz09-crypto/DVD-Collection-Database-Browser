@@ -195,6 +195,17 @@ export default function ConfirmScreen({
   // rather than a single value (see MultiSelectChips).
   const [diskRegions, setDiskRegions] = useState<Set<string>>(() => new Set(draft?.diskRegions ?? []));
   const [genreLocation, setGenreLocation] = useState(draft?.genreLocation ?? "");
+  // Both exposed here for the first time, per the user's own request after finding
+  // Casper's Haunted Christmas silently logged with no Franchise and the wrong Animation/
+  // Live Action value - neither field had ever actually been asked for anywhere in the scan
+  // form, so every barcode-scanned title got Franchise blank and (see confirm route)
+  // Animation/Live Action hardcoded to "Live Action" regardless of truth. Prefilled from
+  // TMDb (isAnimated)/Wikidata (franchise) below once a candidate is picked, but always a
+  // plain editable field, never hidden - unlike Rating/Studio, neither source is reliable
+  // enough to trust blindly (Wikidata's franchise guess in particular was proven wrong on
+  // other titles during testing - see Claude/TECH STACK AND ARCHITECTURE.md).
+  const [franchise, setFranchise] = useState(draft?.franchise ?? "");
+  const [animationOrLiveAction, setAnimationOrLiveAction] = useState(draft?.animationOrLiveAction ?? "");
   // Manual-only, deliberately never auto-filled from OMDB's "Rated" field - that's a US
   // MPAA-style value and often just "Not Rated" even for titles that do carry a real NZ/
   // Oceania classification on the physical case, which is the authoritative source here.
@@ -267,6 +278,8 @@ export default function ConfirmScreen({
       titleSearchQuery,
       hasSearchedOrSkipped,
       isCustomDisc,
+      franchise,
+      animationOrLiveAction,
     });
   }, [
     scan.id,
@@ -289,6 +302,8 @@ export default function ConfirmScreen({
     titleSearchQuery,
     hasSearchedOrSkipped,
     isCustomDisc,
+    franchise,
+    animationOrLiveAction,
   ]);
 
   /** Runs the typed title through the same OMDB search the automatic resolver uses,
@@ -342,10 +357,15 @@ export default function ConfirmScreen({
     setTmdbPreviewLoading(true);
     previewTmdbFields(singleSelectedImdbId)
       .then((result) => {
-        if (!cancelled) setTmdbPreview(result);
+        if (cancelled) return;
+        setTmdbPreview(result);
+        // Never overwrites something already typed - same non-destructive prefill pattern
+        // as the 4K-region default and the UPC-listing format guess above.
+        setFranchise((prev) => (prev ? prev : result.franchise ?? prev));
+        setAnimationOrLiveAction((prev) => (prev ? prev : result.isAnimated ? "Animation" : prev));
       })
       .catch(() => {
-        if (!cancelled) setTmdbPreview({ rating: null, studio: null });
+        if (!cancelled) setTmdbPreview({ rating: null, studio: null, isAnimated: false, franchise: null });
       })
       .finally(() => {
         if (!cancelled) setTmdbPreviewLoading(false);
@@ -405,6 +425,8 @@ export default function ConfirmScreen({
         disc_count: parseInt(discCount, 10) || 1,
         disk_region: diskRegions.size > 0 ? [...diskRegions].join(", ") : null,
         genre_location: genreLocation || null,
+        franchise: franchise.trim() || null,
+        animation_or_live_action: animationOrLiveAction.trim() || null,
         rating: isMultiTitleCollection ? null : rating.trim() || null,
         studio: isMultiTitleCollection ? null : studio.trim() || null,
         steelbook,
@@ -853,6 +875,28 @@ export default function ConfirmScreen({
           onChangeText={setGenreLocation}
           options={fieldOptions?.genreLocation ?? []}
           placeholder="e.g. Action, History Documentary"
+          onFocusScroll={scrollFieldIntoView}
+        />
+      </View>
+      <View style={styles.section}>
+        <Text style={styles.label}>
+          Franchise{singleSelectedImdbId && !franchise ? " (no series match on Wikidata)" : ""}
+        </Text>
+        <AutocompleteInput
+          value={franchise}
+          onChangeText={setFranchise}
+          options={fieldOptions?.franchise ?? []}
+          placeholder="e.g. Casper, Alien, X-Men"
+          onFocusScroll={scrollFieldIntoView}
+        />
+      </View>
+      <View style={styles.section}>
+        <Text style={styles.label}>Animation / Live Action</Text>
+        <AutocompleteInput
+          value={animationOrLiveAction}
+          onChangeText={setAnimationOrLiveAction}
+          options={fieldOptions?.animationOrLiveAction ?? []}
+          placeholder="e.g. Live Action, 2D Animation, Claymation"
           onFocusScroll={scrollFieldIntoView}
         />
       </View>

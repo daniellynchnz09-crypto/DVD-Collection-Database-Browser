@@ -198,6 +198,43 @@ export function normalizeRating(value: string | undefined): string | null {
   return RATING_ALIASES[normalizeRatingKey(cleaned)] ?? cleaned;
 }
 
+// Real Sheet data has 13+ distinct typo'd casings of "Live Action" alone ("Live Aciton",
+// "LIve Action", "Live Acrion", "Lice Action", ...) plus a couple of casing variants on
+// "2D Animation"/"Puppet"/"Stop Motion Animation" - the same underlying risk Format/Rating
+// already had. Deliberately does NOT touch the genuine hybrid descriptions ("Live Action/
+// Animation Hybrid", "2D Animation and 3D Animation", ...) - those are real combination
+// values, not typos, and stay free text (like Rating, this column isn't a small closed
+// enum - an unrecognized value still passes through as-is).
+const ANIMATION_ALIASES: Record<string, string> = {
+  liveaction: "Live Action",
+  // Genuine letter-level typos beyond casing (verified against the real Sheet, not
+  // assumed) - a generic case/whitespace-insensitive key can't catch these, since the
+  // misspelled key itself doesn't match "liveaction" even after normalizing case.
+  liveaciton: "Live Action",
+  liiveaction: "Live Action",
+  liveactoin: "Live Action",
+  liceaction: "Live Action",
+  liveacion: "Live Action",
+  liveacrion: "Live Action",
+  livieaction: "Live Action",
+  "2danimation": "2D Animation",
+  "3danimation": "3D Animation",
+  puppet: "Puppet",
+  puppets: "Puppet",
+  stopmotion: "Stop-Motion",
+  stopmotionanimation: "Stop-Motion",
+};
+
+function normalizeAnimationKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+export function normalizeAnimationOrLiveAction(value: string | undefined): string | null {
+  const cleaned = cleanCell(value);
+  if (cleaned == null) return null;
+  return ANIMATION_ALIASES[normalizeAnimationKey(cleaned)] ?? cleaned;
+}
+
 /** Converts a 0-indexed column number to its Sheets column letter(s) (0 -> A, 26 -> AA, ...). */
 export function columnLetter(index: number): string {
   let letter = "";
@@ -286,7 +323,7 @@ export function parseSheetRowToTitle(
     special_features_disc_count: toInt(row[columnIndexes["special_features_disc_count"]]),
     special_features_disc_format: cleanCell(row[columnIndexes["special_features_disc_format"]]),
     animation_or_live_action:
-      cleanCell(row[columnIndexes["animation_or_live_action"]]) ?? "Live Action",
+      normalizeAnimationOrLiveAction(row[columnIndexes["animation_or_live_action"]]) ?? "Live Action",
     documentary: cleanCell(row[columnIndexes["documentary"]]) ?? "n",
     is_collection: toBoolean(row[columnIndexes["is_collection"]]),
     name_of_collection: cleanCell(row[columnIndexes["name_of_collection"]]),
