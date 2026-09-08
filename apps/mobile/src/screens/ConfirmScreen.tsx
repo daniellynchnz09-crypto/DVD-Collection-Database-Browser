@@ -362,10 +362,19 @@ export default function ConfirmScreen({
         // Never overwrites something already typed - same non-destructive prefill pattern
         // as the 4K-region default and the UPC-listing format guess above.
         setFranchise((prev) => (prev ? prev : result.franchise ?? prev));
-        setAnimationOrLiveAction((prev) => (prev ? prev : result.isAnimated ? "Animation" : prev));
+        // isAnimated === false is a confirmed "no Animation genre on TMDb" - safe to lock
+        // the field to Live Action. isAnimated === true leaves this blank rather than
+        // guessing a specific style (2D/3D/Puppet/...), which TMDb doesn't tell us; the
+        // field stays visible as a real dropdown for the user to pick one. isAnimated ===
+        // null (no TMDb match at all) is left alone too - genuinely unknown, not "Live
+        // Action" by default.
+        setAnimationOrLiveAction((prev) => (prev ? prev : result.isAnimated === false ? "Live Action" : prev));
       })
       .catch(() => {
-        if (!cancelled) setTmdbPreview({ rating: null, studio: null, isAnimated: false, franchise: null });
+        // A failed preview fetch is "unknown", not "confirmed Live Action" - must not
+        // collapse to isAnimated: false, which would hide the field and force the wrong
+        // value below.
+        if (!cancelled) setTmdbPreview({ rating: null, studio: null, isAnimated: null, franchise: null });
       })
       .finally(() => {
         if (!cancelled) setTmdbPreviewLoading(false);
@@ -383,6 +392,22 @@ export default function ConfirmScreen({
   const showStudioField = singleSelectedImdbId
     ? !tmdbPreviewLoading && !tmdbPreview?.studio
     : true;
+  // TMDb doesn't actually have a "Live Action" genre - only an "Animation" tag that's
+  // present or absent - so isAnimated === false is a confirmed live-action answer, and the
+  // field can be hidden entirely (locked to "Live Action" via the effect above), same as
+  // Rating/Studio hiding once TMDb has answered. isAnimated === true keeps the field
+  // visible so the user can pick the specific style TMDb doesn't know. isAnimated === null
+  // (no TMDb match) also keeps it visible, since we have no confirmed answer either way.
+  const showAnimationField = singleSelectedImdbId
+    ? !tmdbPreviewLoading && tmdbPreview?.isAnimated !== false
+    : true;
+  // Once TMDb has confirmed this is animated, "Live Action" itself is never a valid choice
+  // for the style dropdown - filtered out only in that specific case, not for the
+  // unknown/no-match case where it may still be the right answer.
+  const animationOptions =
+    singleSelectedImdbId && tmdbPreview?.isAnimated === true
+      ? (fieldOptions?.animationOrLiveAction ?? []).filter((option) => option !== "Live Action")
+      : fieldOptions?.animationOrLiveAction ?? [];
 
   function handleNotThisItem() {
     setShowAllCandidates(true);
@@ -426,7 +451,14 @@ export default function ConfirmScreen({
         disk_region: diskRegions.size > 0 ? [...diskRegions].join(", ") : null,
         genre_location: genreLocation || null,
         franchise: franchise.trim() || null,
-        animation_or_live_action: animationOrLiveAction.trim() || null,
+        // The confirm route defaults a blank value to "Live Action" (the right call when
+        // there's no TMDb signal at all). But if TMDb *has* confirmed this is animated and
+        // the user leaves the style dropdown blank, falling through to that default would
+        // silently mislabel a known-animated title - so that one case sends "Animation"
+        // instead of null.
+        animation_or_live_action:
+          animationOrLiveAction.trim() ||
+          (singleSelectedImdbId && tmdbPreview?.isAnimated === true ? "Animation" : null),
         rating: isMultiTitleCollection ? null : rating.trim() || null,
         studio: isMultiTitleCollection ? null : studio.trim() || null,
         steelbook,
@@ -890,16 +922,27 @@ export default function ConfirmScreen({
           onFocusScroll={scrollFieldIntoView}
         />
       </View>
-      <View style={styles.section}>
-        <Text style={styles.label}>Animation / Live Action</Text>
-        <AutocompleteInput
-          value={animationOrLiveAction}
-          onChangeText={setAnimationOrLiveAction}
-          options={fieldOptions?.animationOrLiveAction ?? []}
-          placeholder="e.g. Live Action, 2D Animation, Claymation"
-          onFocusScroll={scrollFieldIntoView}
-        />
-      </View>
+      {singleSelectedImdbId && tmdbPreviewLoading && (
+        <Text style={styles.hint}>Checking TMDb for Animation/Live Action...</Text>
+      )}
+      {singleSelectedImdbId && !tmdbPreviewLoading && !showAnimationField && (
+        <Text style={styles.hint}>Confirmed Live Action on TMDb.</Text>
+      )}
+      {showAnimationField && (
+        <View style={styles.section}>
+          <Text style={styles.label}>
+            Animation / Live Action
+            {singleSelectedImdbId && tmdbPreview?.isAnimated === true ? " (TMDb: Animation - pick a style)" : ""}
+          </Text>
+          <AutocompleteInput
+            value={animationOrLiveAction}
+            onChangeText={setAnimationOrLiveAction}
+            options={animationOptions}
+            placeholder="e.g. 2D Animation, 3D Animation, Claymation"
+            onFocusScroll={scrollFieldIntoView}
+          />
+        </View>
+      )}
       {isMultiTitleCollection ? (
         <Text style={styles.hint}>
           Rating and Studio aren&apos;t set here for a multi-title collection - the box's

@@ -79,16 +79,18 @@ export function findExistingTitle(title: string, upcText: string) {
 export interface TmdbPreview {
   rating: string | null;
   studio: string | null;
-  isAnimated: boolean;
+  isAnimated: boolean | null;
   franchise: string | null;
 }
 
 /** Read-only "would TMDb find anything for this title" check - lets ConfirmScreen keep
  * the manual Rating/Studio fields hidden by default and only reveal one once TMDb has
  * genuinely come up empty for that specific field. Also carries `isAnimated` (TMDb's genre
- * list) and `franchise` (Wikidata's "part of the series" property) - these two only ever
- * prefill their (always-visible) manual fields, never hide them, since neither source is
- * authoritative enough to trust blindly. */
+ * list) and `franchise` (Wikidata's "part of the series" property). `isAnimated` is
+ * three-valued: `true`/`false` are a confirmed answer from TMDb (used to show/hide the
+ * Animation/Live Action field - TMDb has no "Live Action" genre of its own, only an
+ * "Animation" tag that's either present or absent), `null` means TMDb has no match at all
+ * for this title, which must not be treated as a confirmed "Live Action". */
 export function previewTmdbFields(imdbId: string) {
   return post<TmdbPreview>("/api/scan/tmdb-preview", { imdbId });
 }

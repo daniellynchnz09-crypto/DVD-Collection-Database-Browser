@@ -72,17 +72,22 @@ async function findTmdbIdByImdbId(imdbId: string): Promise<number | null> {
  * Live Action, since the mobile scan form never actually asked for this field at all (see
  * Claude/TECH STACK AND ARCHITECTURE.md). Only distinguishes animated-vs-not; TMDb has no
  * field for the *specific* animation style (2D/3D/stop-motion/...), which this collection's
- * own data already tracks - that part stays a manual choice, this is just the prefill. */
+ * own data already tracks - that part stays a manual choice, this is just the prefill.
+ * Three-valued (`true`/`false`/`null`) rather than a plain boolean: `null` means "the detail
+ * fetch itself failed", which is a genuinely different situation from TMDb successfully
+ * answering "no Animation genre tagged" - conflating the two would make the mobile form
+ * hide the manual field and silently force "Live Action" on a title TMDb was never actually
+ * asked about. */
 export async function fetchTmdbFieldsById(
   tmdbId: number
-): Promise<{ rating: string | null; studio: string | null; isAnimated: boolean }> {
+): Promise<{ rating: string | null; studio: string | null; isAnimated: boolean | null }> {
   const [details, releaseDates] = await Promise.all([
     tmdbFetch<TmdbMovieDetail>(`/movie/${tmdbId}`),
     tmdbFetch<TmdbReleaseDatesResponse>(`/movie/${tmdbId}/release_dates`),
   ]);
 
   const studio = details?.production_companies?.[0]?.name ?? null;
-  const isAnimated = details?.genres?.some((g) => g.name === "Animation") ?? false;
+  const isAnimated = details ? (details.genres?.some((g) => g.name === "Animation") ?? false) : null;
 
   const nzEntry = releaseDates?.results?.find((r) => r.iso_3166_1 === "NZ");
   const certification = nzEntry?.release_dates?.find((rd) => rd.certification)?.certification;
@@ -203,16 +208,17 @@ export interface TmdbFields {
   tmdbId: number | null;
   rating: string | null;
   studio: string | null;
-  isAnimated: boolean;
+  isAnimated: boolean | null;
 }
 
 /** Looks a title up on TMDb for the first time, via its IMDb id - returns everything
  * needed to populate tmdb_id/rating/studio on a freshly confirmed title. Returns nulls
  * throughout (never throws) when TMDb has no matching movie, so a lookup miss never
- * blocks the rest of the confirm flow. */
+ * blocks the rest of the confirm flow. `isAnimated: null` here means "no TMDb match at
+ * all", same "unknown, not a confirmed answer" reasoning as fetchTmdbFieldsById above. */
 export async function lookupTmdbFields(imdbId: string): Promise<TmdbFields> {
   const tmdbId = await findTmdbIdByImdbId(imdbId);
-  if (tmdbId == null) return { tmdbId: null, rating: null, studio: null, isAnimated: false };
+  if (tmdbId == null) return { tmdbId: null, rating: null, studio: null, isAnimated: null };
   const { rating, studio, isAnimated } = await fetchTmdbFieldsById(tmdbId);
   return { tmdbId, rating, studio, isAnimated };
 }
