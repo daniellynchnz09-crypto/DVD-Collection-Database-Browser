@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { useRef, useState } from "react";
+import { findNodeHandle, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 
 /**
  * A plain text input backed by a list of existing values (Format/Disk Region/Genre
@@ -15,26 +15,40 @@ export default function AutocompleteInput({
   onChangeText,
   options,
   placeholder,
+  onFocusScroll,
 }: {
   value: string;
   onChangeText: (text: string) => void;
   options: string[];
   placeholder?: string;
+  /** Called with this field's own node handle (covering the input plus its dropdown, once
+   * open) so the screen can scroll it above the keyboard - see lib/scrollIntoView.ts. Called
+   * twice: once immediately on focus (catches the input itself), once again shortly after
+   * (catches the dropdown, which only exists once `focused` has actually re-rendered). */
+  onFocusScroll?: (nodeHandle: number | null, delayMs?: number) => void;
 }) {
   const [focused, setFocused] = useState(false);
+  const containerRef = useRef<View>(null);
 
   const trimmed = value.trim().toLowerCase();
   const suggestions = trimmed
     ? options.filter((o) => o.toLowerCase().includes(trimmed) && o.toLowerCase() !== trimmed)
     : options;
 
+  function handleFocus() {
+    setFocused(true);
+    const nodeHandle = findNodeHandle(containerRef.current);
+    onFocusScroll?.(nodeHandle);
+    onFocusScroll?.(nodeHandle, 120);
+  }
+
   return (
-    <View>
+    <View ref={containerRef}>
       <TextInput
         style={styles.input}
         value={value}
         onChangeText={onChangeText}
-        onFocus={() => setFocused(true)}
+        onFocus={handleFocus}
         // Delay hiding suggestions so a tap on one registers before the list disappears.
         onBlur={() => setTimeout(() => setFocused(false), 150)}
         placeholder={placeholder}

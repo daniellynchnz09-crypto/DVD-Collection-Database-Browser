@@ -1,7 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  findNodeHandle,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Platform,
   ScrollView,
   StyleSheet,
@@ -34,6 +38,7 @@ import {
 } from "../lib/scanApi";
 import { loadFieldOptions, type FieldOptions } from "../lib/fieldOptions";
 import { clearConfirmDraft, getConfirmDraft, saveConfirmDraft } from "../lib/confirmDrafts";
+import { createScrollIntoViewHandler } from "../lib/scrollIntoView";
 import AutocompleteInput from "../components/AutocompleteInput";
 import MultiSelectChips from "../components/MultiSelectChips";
 import type { PendingScan } from "./PendingScansScreen";
@@ -81,6 +86,48 @@ export default function ConfirmScreen({
   onDiscarded?: (barcode: string) => void;
 }) {
   const insets = useSafeAreaInsets();
+
+  // Scroll-to-focused-field: KeyboardAvoidingView's padding (below) reserves room for the
+  // keyboard, but never moves the scroll position - a field far down this long form can
+  // still end up hidden behind the keyboard with nothing to bring it into view. Built
+  // directly on RN's own UIManager.measureInWindow rather than a third-party keyboard-
+  // aware scroll view, which was tried on this exact screen before and proved inconsistent
+  // in real testing (see Claude/TECH STACK AND ARCHITECTURE.md's keyboard-avoidance history).
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollYRef = useRef(0);
+  const keyboardHeightRef = useRef(0);
+  useEffect(() => {
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      keyboardHeightRef.current = e.endCoordinates.height;
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      keyboardHeightRef.current = 0;
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+  const scrollFieldIntoView = useRef(
+    createScrollIntoViewHandler(scrollRef, () => keyboardHeightRef.current, () => scrollYRef.current)
+  ).current;
+  /** Plain TextInputs scroll themselves into view via their own ref (not the focus event's
+   * target - findNodeHandle wants a component ref, and a component ref is all a single
+   * TextInput needs measuring anyway, unlike AutocompleteInput which also has a dropdown). */
+  function scrollInputRefIntoView(ref: React.RefObject<TextInput | null>) {
+    scrollFieldIntoView(findNodeHandle(ref.current));
+  }
+  function handleScroll(event: NativeSyntheticEvent<NativeScrollEvent>) {
+    scrollYRef.current = event.nativeEvent.contentOffset.y;
+  }
+  const titleSearchInputRef = useRef<TextInput>(null);
+  const manualTitleInputRef = useRef<TextInput>(null);
+  const releaseNameInputRef = useRef<TextInput>(null);
+  const discCountInputRef = useRef<TextInput>(null);
+  const specialFeaturesDiscCountInputRef = useRef<TextInput>(null);
+
   const isCollection = Boolean(scan.resolved_candidates?.isCollection);
   const upcProduct = scan.resolved_candidates?.upcProduct;
   const posterMatch = (scan.resolved_candidates as { posterMatch?: PosterMatch | null })
@@ -589,6 +636,9 @@ export default function ConfirmScreen({
     // (and therefore the scrollable range) correctly on its own.
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView
+        ref={scrollRef}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
         style={styles.scrollView}
         contentContainerStyle={[
           styles.scrollContent,
@@ -609,9 +659,11 @@ export default function ConfirmScreen({
               : "What's the title?"}
           </Text>
           <TextInput
+            ref={titleSearchInputRef}
             style={styles.input}
             value={titleSearchQuery}
             onChangeText={setTitleSearchQuery}
+            onFocus={() => scrollInputRefIntoView(titleSearchInputRef)}
             placeholder="Title"
             placeholderTextColor="#71717a"
             autoFocus
@@ -729,7 +781,15 @@ export default function ConfirmScreen({
       {selected.size === 0 && (
         <View style={styles.section}>
           <Text style={styles.label}>Title</Text>
-          <TextInput style={styles.input} value={manualTitle} onChangeText={setManualTitle} placeholder="Title" placeholderTextColor="#71717a" />
+          <TextInput
+            ref={manualTitleInputRef}
+            style={styles.input}
+            value={manualTitle}
+            onChangeText={setManualTitle}
+            onFocus={() => scrollInputRefIntoView(manualTitleInputRef)}
+            placeholder="Title"
+            placeholderTextColor="#71717a"
+          />
         </View>
       )}
       <View style={styles.section}>
@@ -746,9 +806,11 @@ export default function ConfirmScreen({
           </TouchableOpacity>
         </View>
         <TextInput
+          ref={releaseNameInputRef}
           style={styles.input}
           value={releaseName}
           onChangeText={setReleaseName}
+          onFocus={() => scrollInputRefIntoView(releaseNameInputRef)}
           editable={!releaseNameMatchesTitle}
           placeholder="e.g. Gladiator Special Edition"
           placeholderTextColor="#71717a"
@@ -757,11 +819,23 @@ export default function ConfirmScreen({
 
       <View style={styles.section}>
         <Text style={styles.label}>Format</Text>
-        <AutocompleteInput value={format} onChangeText={setFormat} options={fieldOptions?.format ?? []} />
+        <AutocompleteInput
+          value={format}
+          onChangeText={setFormat}
+          options={fieldOptions?.format ?? []}
+          onFocusScroll={scrollFieldIntoView}
+        />
       </View>
       <View style={styles.section}>
         <Text style={styles.label}>Disc Count</Text>
-        <TextInput style={styles.input} value={discCount} onChangeText={setDiscCount} keyboardType="number-pad" />
+        <TextInput
+          ref={discCountInputRef}
+          style={styles.input}
+          value={discCount}
+          onChangeText={setDiscCount}
+          onFocus={() => scrollInputRefIntoView(discCountInputRef)}
+          keyboardType="number-pad"
+        />
       </View>
       <View style={styles.section}>
         <Text style={styles.label}>Disk Region</Text>
@@ -779,6 +853,7 @@ export default function ConfirmScreen({
           onChangeText={setGenreLocation}
           options={fieldOptions?.genreLocation ?? []}
           placeholder="e.g. Action, History Documentary"
+          onFocusScroll={scrollFieldIntoView}
         />
       </View>
       {isMultiTitleCollection ? (
@@ -805,6 +880,7 @@ export default function ConfirmScreen({
                 onChangeText={setRating}
                 options={fieldOptions?.rating ?? []}
                 placeholder="e.g. G, PG, M, R13"
+                onFocusScroll={scrollFieldIntoView}
               />
             </View>
           )}
@@ -815,6 +891,7 @@ export default function ConfirmScreen({
                 value={studio}
                 onChangeText={setStudio}
                 options={fieldOptions?.studio ?? []}
+                onFocusScroll={scrollFieldIntoView}
               />
             </View>
           )}
@@ -833,9 +910,11 @@ export default function ConfirmScreen({
           <View style={styles.section}>
             <Text style={styles.label}>Number of Special Features Discs</Text>
             <TextInput
+              ref={specialFeaturesDiscCountInputRef}
               style={styles.input}
               value={specialFeaturesDiscCount}
               onChangeText={setSpecialFeaturesDiscCount}
+              onFocus={() => scrollInputRefIntoView(specialFeaturesDiscCountInputRef)}
               keyboardType="number-pad"
               placeholder="e.g. 1"
               placeholderTextColor="#71717a"
@@ -847,6 +926,7 @@ export default function ConfirmScreen({
               value={specialFeaturesDiscFormat}
               onChangeText={setSpecialFeaturesDiscFormat}
               options={fieldOptions?.format ?? []}
+              onFocusScroll={scrollFieldIntoView}
             />
           </View>
         </>
