@@ -203,18 +203,19 @@ export default function PendingScansScreen({
             </TouchableOpacity>
           ) : (
             <View style={styles.headerActions}>
-              <TouchableOpacity
-                onPress={createManualEntry}
-                disabled={creating}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-              >
-                <Text style={[styles.link, styles.addLink]}>{creating ? "..." : "+ New"}</Text>
-              </TouchableOpacity>
               {scans.length > 0 && (
                 <TouchableOpacity onPress={() => setSelectionMode(true)}>
                   <Text style={styles.link}>Select</Text>
                 </TouchableOpacity>
               )}
+              <TouchableOpacity
+                style={styles.addButton}
+                onPress={createManualEntry}
+                disabled={creating}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={styles.addButtonText}>{creating ? "..." : "+"}</Text>
+              </TouchableOpacity>
             </View>
           )}
         </View>
@@ -273,9 +274,17 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  headerActions: { flexDirection: "row", alignItems: "center", gap: 18 },
-  addLink: { fontWeight: "700" },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 14 },
   link: { color: "#38bdf8" },
+  addButton: {
+    backgroundColor: "#0284c7",
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  addButtonText: { color: "#fff", fontSize: 20, fontWeight: "700", lineHeight: 22 },
   backButton: {
     backgroundColor: "#0284c7",
     paddingVertical: 10,
