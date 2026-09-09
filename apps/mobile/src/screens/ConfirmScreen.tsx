@@ -217,7 +217,11 @@ export default function ConfirmScreen({
   const [releaseVariantNote, setReleaseVariantNote] = useState(draft?.releaseVariantNote ?? "");
   const [discCondition, setDiscCondition] = useState(draft?.discCondition ?? "None");
   const [caseNotes, setCaseNotes] = useState(draft?.caseNotes ?? "");
+  // `watched` means "seen this film at all, any format" (the broad claim); `watchedDisc`
+  // means "watched this specific disc" (the narrow claim) - see 0018_rename_watched_title_
+  // to_watched_disc.sql for why this isn't named `watchedTitle` any more.
   const [watched, setWatched] = useState(draft?.watched ?? false);
+  const [watchedDisc, setWatchedDisc] = useState(draft?.watchedDisc ?? false);
   const [depictedEraLabel, setDepictedEraLabel] = useState(draft?.depictedEraLabel ?? "");
   // Manual fallback for when TMDb's own /find-by-imdb-id lookup comes up empty - see
   // showTmdbOverrideField below. Only ever needed for a genuine TMDb miss, not shown by
@@ -301,6 +305,7 @@ export default function ConfirmScreen({
       discCondition,
       caseNotes,
       watched,
+      watchedDisc,
       depictedEraLabel,
       tmdbIdOverride,
     });
@@ -331,6 +336,7 @@ export default function ConfirmScreen({
     discCondition,
     caseNotes,
     watched,
+    watchedDisc,
     depictedEraLabel,
     tmdbIdOverride,
   ]);
@@ -519,6 +525,7 @@ export default function ConfirmScreen({
         disc_condition: discCondition,
         case_notes: caseNotes.trim() || null,
         watched,
+        watched_disc: watchedDisc,
         depicted_era_label: isHistoryDocumentary ? depictedEraLabel.trim() || null : null,
         tmdb_id_override: showTmdbOverrideField ? tmdbIdOverride.trim() || null : null,
         ...(selected.size === 0 ? { title: manualTitle || scan.barcode || "Untitled" } : {}),
@@ -1126,11 +1133,17 @@ export default function ConfirmScreen({
           </View>
         </>
       )}
+      <TouchableOpacity style={styles.checkboxRow} onPress={() => setWatchedDisc((prev) => !prev)}>
+        <View style={[styles.checkbox, watchedDisc && styles.checkboxChecked]}>
+          {watchedDisc && <Text style={styles.checkboxMark}>✓</Text>}
+        </View>
+        <Text style={styles.checkboxLabel}>Watched this disc</Text>
+      </TouchableOpacity>
       <TouchableOpacity style={styles.checkboxRow} onPress={() => setWatched((prev) => !prev)}>
         <View style={[styles.checkbox, watched && styles.checkboxChecked]}>
           {watched && <Text style={styles.checkboxMark}>✓</Text>}
         </View>
-        <Text style={styles.checkboxLabel}>Watched</Text>
+        <Text style={styles.checkboxLabel}>Watched this title (any format - e.g. seen it elsewhere before this scan)</Text>
       </TouchableOpacity>
       <View style={styles.section}>
         <Text style={styles.label}>Disc Condition</Text>

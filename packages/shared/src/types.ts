@@ -70,9 +70,16 @@ export interface Title {
   disc_condition: string;
   case_notes: string | null;
   release_variant_note: string | null;
+  // `watched` means "seen this film at some point, on any format" - the broad claim.
   watched: boolean;
   last_watched_date: string | null;
   depicted_era_label: string | null;
+
+  // Added for the one-time watch-history import (0013_add_watched_title.sql, renamed from
+  // `watched_title` in 0018_rename_watched_title_to_watched_disc.sql) - `watched_disc` means
+  // "watched this specific physical disc/title release", the narrow claim - distinct from
+  // `watched` above, per the user's own clarification of the two-metric design.
+  watched_disc: boolean;
 
   last_updated: string;
 }

@@ -320,7 +320,13 @@ export async function POST(request: Request) {
       disc_condition: normalizeDiscCondition(asString(manual.disc_condition)),
       case_notes: cleanFreeText(asString(manual.case_notes)),
       release_variant_note: cleanFreeText(asString(manual.release_variant_note)),
+      // Seen this film at all, on any format/copy - distinct from `watched_disc` below (this
+      // specific disc). Both default false and are otherwise only ever set by the one-time
+      // watch-history import or manually here, for prior viewings the user remembers but
+      // that import can't discover on its own (see 0013_add_watched_title.sql,
+      // 0018_rename_watched_title_to_watched_disc.sql).
       watched: manual.watched === true,
+      watched_disc: manual.watched_disc === true,
     };
 
     if (overwriteUniqueId) {

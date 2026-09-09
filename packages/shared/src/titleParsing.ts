@@ -59,6 +59,11 @@ export const HEADER_ALIASES: Record<string, string> = {
   "watched": "watched",
   "depicted era label": "depicted_era_label",
   "last watched date": "last_watched_date",
+  // Added for the one-time watch-history import (0013_add_watched_title.sql, renamed from
+  // "watched title"/`watched_title` in 0018_rename_watched_title_to_watched_disc.sql) - see
+  // Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan" section for the `watched`
+  // (this film, any format) vs `watched_disc` (this specific disc) distinction.
+  "watched disc": "watched_disc",
 };
 
 // Columns the sync script/webhook will add to the Sheet itself if missing, per
@@ -77,6 +82,7 @@ export const AUTO_CREATE_COLUMNS: { field: string; headerText: string }[] = [
   { field: "watched", headerText: "Watched" },
   { field: "depicted_era_label", headerText: "Depicted Era Label" },
   { field: "last_watched_date", headerText: "Last Watched Date" },
+  { field: "watched_disc", headerText: "Watched Disc" },
 ];
 
 // Cuts/versions the user names inline within a box set (e.g. "Blade Runner Final Cut")
@@ -403,6 +409,7 @@ export function parseSheetRowToTitle(
     watched: toBoolean(row[columnIndexes["watched"]]),
     depicted_era_label: cleanCell(row[columnIndexes["depicted_era_label"]]),
     last_watched_date: toDate(row[columnIndexes["last_watched_date"]]),
+    watched_disc: toBoolean(row[columnIndexes["watched_disc"]]),
   };
 }
 
@@ -470,6 +477,7 @@ const SHEET_FIELD_FORMATTERS: Partial<Record<string, (v: unknown) => string>> = 
   // A fresh column with no legacy data - follows Special Features/Steelbook's "Yes"/"No"
   // convention rather than "y"/"n" for consistency (see the comment above formatYesNoForSheet).
   watched: formatYesNoForSheet,
+  watched_disc: formatYesNoForSheet,
 };
 
 /** Formats one field's value the same way buildSheetRowFromTitle would, for callers that

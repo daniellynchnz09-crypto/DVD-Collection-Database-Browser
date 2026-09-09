@@ -42,6 +42,7 @@ export interface ConfirmDraft {
   discCondition?: string;
   caseNotes?: string;
   watched?: boolean;
+  watchedDisc?: boolean;
   depictedEraLabel?: string;
   tmdbIdOverride?: string;
 }

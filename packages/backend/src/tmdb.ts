@@ -223,6 +223,67 @@ export async function lookupTmdbFields(imdbId: string): Promise<TmdbFields> {
   return { tmdbId, rating, studio, isAnimated };
 }
 
+interface TmdbTvSearchResponse {
+  results?: { id: number; name?: string; first_air_date?: string }[];
+}
+
+/**
+ * Finds a TMDb TV show id by name, for the one-time watch-history import's TV
+ * season-completeness check (Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan"
+ * section) - e.g. resolving "Doctor Who" (stripped of a season-box-set suffix like "the
+ * Collection Season 7") to the classic 1963 series specifically, not one of its many
+ * spin-offs/behind-the-scenes shows that also happen to be named "Doctor Who". Prefers an
+ * exact (case-insensitive) name match with the earliest `first_air_date` - verified live
+ * that this correctly picks the long-running original series over same-named specials and
+ * spin-offs, which either have a different exact name or a much later air date. Falls back
+ * to TMDb's own top search result if nothing matches exactly.
+ */
+export async function findTmdbTvIdByName(name: string): Promise<number | null> {
+  const data = await tmdbFetch<TmdbTvSearchResponse>(`/search/tv?query=${encodeURIComponent(name)}`);
+  const results = data?.results ?? [];
+  if (results.length === 0) return null;
+
+  const exact = results.filter((r) => r.name?.toLowerCase() === name.toLowerCase() && r.first_air_date);
+  if (exact.length > 0) {
+    exact.sort((a, b) => (a.first_air_date! < b.first_air_date! ? -1 : 1));
+    return exact[0].id;
+  }
+  return results[0].id;
+}
+
+interface TmdbSeasonResponse {
+  episodes?: { name?: string }[];
+}
+
+// Classic-era episode names on TMDb are per-25-minute-segment, suffixed with their segment
+// number within the serial - e.g. "Spearhead from Space (1)".."Spearhead from Space (4)".
+// Stripping that suffix and deduping recovers the real serial list (verified live against
+// Doctor Who Season 7: 25 episodes -> exactly the 4 real serials - Spearhead from Space,
+// Doctor Who and the Silurians, The Ambassadors of Death, Inferno).
+const EPISODE_SEGMENT_SUFFIX = /\s*\(\d+\)\s*$/;
+
+/**
+ * Fetches the distinct serial/story names for one season of a TV show, for checking
+ * whether every serial in a Blu-ray "whole season" box set has been logged in the source
+ * watch-history export (which catalogues each classic serial as its own "film", not as
+ * individual episodes).
+ * Returns null (never throws) when TMDb has no data for this season, so a missing/incomplete
+ * TMDb entry falls through to manual review rather than a false "not watched".
+ */
+export async function fetchTmdbSeasonSerials(tvId: number, seasonNumber: number): Promise<string[] | null> {
+  const data = await tmdbFetch<TmdbSeasonResponse>(`/tv/${tvId}/season/${seasonNumber}`);
+  const episodes = data?.episodes;
+  if (!episodes || episodes.length === 0) return null;
+
+  const serials: string[] = [];
+  for (const ep of episodes) {
+    if (!ep.name) continue;
+    const serial = ep.name.replace(EPISODE_SEGMENT_SUFFIX, "").trim();
+    if (serial && !serials.includes(serial)) serials.push(serial);
+  }
+  return serials.length > 0 ? serials : null;
+}
+
 export interface TmdbRefreshResult {
   processed: number;
   updated: number;
