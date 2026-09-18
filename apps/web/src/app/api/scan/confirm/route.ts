@@ -587,6 +587,16 @@ export async function POST(request: Request) {
       headerBuilt.title.studio = commonStudio ?? manualDistributor ?? "n/a";
       headerBuilt.title.studio_is_manual = commonStudio == null && manualDistributor != null;
 
+      // Original Language: unanimous, not "most common" - per the user's own exact framing, a
+      // box set where every member is the same language (overwhelmingly the common case - most
+      // real collections are all-English) should show that language on the header too; "n/a"
+      // is reserved for the rare case where the set genuinely mixes languages, not used as a
+      // tie-break the way Director's "most common" is.
+      const memberLanguages = memberBuilts.map((b) => b.title.original_language as string | null);
+      const firstLanguage = memberLanguages[0];
+      const allSameLanguage = firstLanguage != null && memberLanguages.every((l) => l === firstLanguage);
+      headerBuilt.title.original_language = allSameLanguage ? firstLanguage : "n/a";
+
       // Special Features (#8): true the moment ANY member has its own special features disc
       // - the collection's own toggle (already resolved above, describing a bonus disc
       // belonging to the set as a whole) only ever adds to this, never overrides it back to
