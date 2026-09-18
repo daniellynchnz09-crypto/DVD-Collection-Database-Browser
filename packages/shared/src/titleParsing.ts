@@ -21,7 +21,10 @@ export const HEADER_ALIASES: Record<string, string> = {
   "genre": "genre",
   "director": "director",
   "franchise": "franchise",
-  "sub-franchise": "sub_franchise",
+  // "sub-franchise" was merged into "franchise" (0020_merge_franchise_columns.sql,
+  // franchise is now a comma-separated multi-value list like genre) - no alias for it here
+  // any more, same as imdb_id's removal above. A Sheet still carrying an old "Sub-franchise"
+  // column is simply no longer read from or written to.
   "rating": "rating",
   "format": "format",
   "disc count": "disc_count",
@@ -50,8 +53,11 @@ export const HEADER_ALIASES: Record<string, string> = {
   "steelbook": "steelbook",
   "release name": "release_name",
   // Added ahead of the full-collection backfill rescan (0011_backfill_rescan_fields.sql) -
-  // see Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan" section.
-  "imdb id": "imdb_id",
+  // see Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan" section. `imdb_id` itself
+  // was dropped in 0019_drop_imdb_id.sql - redundant with `imdb_page`, which already embeds
+  // it (see extractImdbIdFromPage below) - so there's no alias for it here any more. A
+  // Sheet still carrying an old "IMDb ID" column from before this change is simply no
+  // longer read from or written to; delete that column by hand if you want it gone too.
   "tmdb page": "tmdb_page",
   "release variant note": "release_variant_note",
   "disc condition": "disc_condition",
@@ -64,6 +70,14 @@ export const HEADER_ALIASES: Record<string, string> = {
   // Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan" section for the `watched`
   // (this film, any format) vs `watched_disc` (this specific disc) distinction.
   "watched disc": "watched_disc",
+  // Added 0021_add_rental_and_language_fields.sql - see database-design.md.
+  "personal rating": "personal_rating",
+  "is currently rented out": "is_currently_rented_out",
+  "currently rented out": "is_currently_rented_out",
+  "rented by who": "rented_by_who",
+  "rented by": "rented_by_who",
+  "date rented": "date_rented",
+  "original language": "original_language",
 };
 
 // Columns the sync script/webhook will add to the Sheet itself if missing, per
@@ -74,7 +88,6 @@ export const AUTO_CREATE_COLUMNS: { field: string; headerText: string }[] = [
   { field: "genre_location", headerText: "Genre Location" },
   { field: "steelbook", headerText: "Steelbook" },
   { field: "release_name", headerText: "Release Name" },
-  { field: "imdb_id", headerText: "IMDb ID" },
   { field: "tmdb_page", headerText: "TMDb Page" },
   { field: "release_variant_note", headerText: "Release Variant Note" },
   { field: "disc_condition", headerText: "Disc Condition" },
@@ -83,6 +96,12 @@ export const AUTO_CREATE_COLUMNS: { field: string; headerText: string }[] = [
   { field: "depicted_era_label", headerText: "Depicted Era Label" },
   { field: "last_watched_date", headerText: "Last Watched Date" },
   { field: "watched_disc", headerText: "Watched Disc" },
+  // Added 0021_add_rental_and_language_fields.sql - see database-design.md.
+  { field: "personal_rating", headerText: "Personal Rating" },
+  { field: "is_currently_rented_out", headerText: "Is Currently Rented Out" },
+  { field: "rented_by_who", headerText: "Rented By Who" },
+  { field: "date_rented", headerText: "Date Rented" },
+  { field: "original_language", headerText: "Original Language" },
 ];
 
 // Cuts/versions the user names inline within a box set (e.g. "Blade Runner Final Cut")
@@ -95,6 +114,78 @@ const CUT_SUFFIX_WORDS =
 
 export function isCutVariantTitle(title: string): boolean {
   return CUT_SUFFIX_WORDS.test(title);
+}
+
+/** Same word list as CUT_SUFFIX_WORDS above, but anchored to the END of the string (plus an
+ * optional leading "the", separator punctuation, and trailing period) - added 2026-09-17 for
+ * splitCutVariantTitle below. CUT_SUFFIX_WORDS itself stays unanchored/unchanged since
+ * normalizeTitleForMatch's callers (duplicate-title matching) only care whether the phrase
+ * appears anywhere, not where. A title's own cut/edition name is always trailing text in
+ * practice ("Blade Runner the Final Cut", "Kingdom of Heaven: Director's Cut") - anchoring to
+ * the end means this can never accidentally cut into the middle of an unrelated base title
+ * that happens to contain one of these words for some other reason. */
+const CUT_SUFFIX_AT_END =
+  /[\s:\-–—]+((?:the\s+)?(?:final cut|director'?s cut|extended cut|extended edition|theatrical cut|theatrical edition|ultimate cut|unrated cut|redux))\.?\s*$/i;
+
+export interface CutVariantSplit {
+  /** The film's own base title, with the cut/edition suffix removed - what an OMDB/TMDb
+   * search should actually use, since neither indexes a separate entry per re-release cut. */
+  baseTitle: string;
+  /** Verbatim cleaned title (base + cut suffix, original casing) when a suffix was found -
+   * kept for callers that just want the whole thing back together. `null` when no cut/edition
+   * suffix was present - the ordinary, by-far-most-common case, where `baseTitle` just equals
+   * the input unchanged and nothing needs to move anywhere. */
+  releaseTitle: string | null;
+  /** Just the matched cut/edition phrase itself, verbatim-cased exactly as it appeared in the
+   * source text (e.g. "the Final Cut", "Director's Cut", "Redux") - added 2026-09-18 per the
+   * user's explicit instruction: a specific CUT of a film belongs appended to the end of the
+   * catalogued `title` itself (e.g. "Blade Runner: The Final Cut"), never moved into
+   * `release_name` the way a packaging/marketing special edition ("Special Edition,"
+   * "Collector's Edition," ...) is - those are a different, unrelated category
+   * (PACKAGING_EDITION_WORDS in omdb.ts) and this function/word list has nothing to do with
+   * them. `null` alongside `releaseTitle: null` when no cut suffix was found. */
+  cutSuffix: string | null;
+}
+
+/**
+ * Splits a title like "Blade Runner the Final Cut" into a base film title ("Blade Runner") -
+ * the only thing OMDB/TMDb actually index, since a re-release cut is a different disc/edit of
+ * the same film record, never a separate entry - plus the verbatim cut suffix text on its own
+ * (`cutSuffix`), which the confirm flow appends back onto the real OMDB/TMDb title once a
+ * match is found (e.g. "Blade Runner" + "the Final Cut" -> stored as "Blade Runner: the Final
+ * Cut"). Added 2026-09-17 after a real barcode scan of "Blade Runner: The Final Cut" searched
+ * OMDB for that exact string and found nothing useful (OMDB only has "Blade Runner" (1982);
+ * "The Final Cut" (2007) is a re-release/re-edit of that same film, not its own entry), which
+ * in turn meant the confirm screen's whole candidate list - poster included - came from
+ * whatever unrelated title OMDB's fuzzy `s=` search happened to surface for that literal
+ * query, not a real Blade Runner match at all.
+ *
+ * A no-op (returns the input unchanged, `releaseTitle`/`cutSuffix: null`) for the vast
+ * majority of titles, which don't name a specific cut/edition at all - this only ever fires
+ * when CUT_SUFFIX_AT_END's word list actually matches at the very end of the string.
+ */
+export function splitCutVariantTitle(title: string): CutVariantSplit {
+  const match = title.match(CUT_SUFFIX_AT_END);
+  if (!match) return { baseTitle: title, releaseTitle: null, cutSuffix: null };
+
+  const baseTitle = title.slice(0, match.index).trim();
+  // A suffix match with nothing left in front of it (the barcode title genuinely IS just
+  // "Final Cut", with no film name at all) isn't a real split - searching OMDB for an empty
+  // string would just waste the call, so treat this the same as no match at all.
+  if (!baseTitle) return { baseTitle: title, releaseTitle: null, cutSuffix: null };
+
+  return { baseTitle, releaseTitle: title.trim(), cutSuffix: match[1].trim() };
+}
+
+/** Recovers the bare `tt<digits>` IMDb id from a stored `imdb_page` URL - the only place
+ * this app persists it (see 0019_drop_imdb_id.sql: the id was dropped as its own column
+ * since it's just this, parsed out again, and keeping both invited them to drift apart).
+ * Every `imdb_page` this app writes follows the fixed
+ * `https://www.imdb.com/title/<id>/` shape, so a plain regex match is reliable. */
+export function extractImdbIdFromPage(imdbPage: string | null | undefined): string | null {
+  if (!imdbPage) return null;
+  const match = imdbPage.match(/\/title\/(tt\d+)/);
+  return match ? match[1] : null;
 }
 
 /** Lowercases, strips a cut suffix and punctuation, collapses whitespace - for comparing
@@ -118,10 +209,23 @@ export function normalizeHeader(header: string): string {
 
 // The real sheet has ~40 distinct spellings of "Movie or TV" for what's really a handful
 // of categories - typos (Moive, Documentart), casing drift (Tv Series), and synonyms
-// (TV Show/TV Serial for TV Series). `movie_or_tv` is free text in the DB (not a fixed
-// enum - see 0001_init.sql), so this only cleans up known variants; anything unrecognized
-// passes through as-is rather than being rejected, since RESOURCES.md's own spec treats
-// this field as open-ended ("... etc.").
+// (TV Show for TV Series). `movie_or_tv` is free text in the DB (not a fixed enum - see
+// 0001_init.sql), so this only cleans up known variants; anything unrecognized passes
+// through as-is rather than being rejected, since RESOURCES.md's own spec treats this field
+// as open-ended ("... etc.").
+//
+// "tv serial"/"serial tv" used to fold into "TV Series" here - a real bug, found 2026-09-18:
+// the user HAD already typed "TV Serial" in the Sheet for a few classic theatrical serials
+// (Dick Tracy, Zorro Rides Again), and every sync was silently collapsing that distinction
+// away without them knowing. "Serial" is now its own real category - a classic chapter-play
+// (Republic/Columbia/Universal-style, 1930s-40s), distinct from an ordinary TV Series: always
+// season_no "1", an episode_count counted the same way TV Series counts it (episodes/chapters
+// on this specific disc), and - unlike TV Series - always keeps a real running_time_mins,
+// since online databases (OMDb included) present a serial in "movie" shape with no episode
+// breakdown of its own, and a serial's story definitively concludes rather than running open-
+// ended the way an ordinary show can. See barcode-review-screen-fields.md's TV Scanning
+// section for the full rule and the still-open "a serial nested inside a show" complexity
+// (Doctor Who-shaped, deliberately deferred by the user).
 export const MOVIE_OR_TV_ALIASES: Record<string, string> = {
   "movie": "Movie",
   "moive": "Movie",
@@ -135,7 +239,6 @@ export const MOVIE_OR_TV_ALIASES: Record<string, string> = {
   "tv series": "TV Series",
   "tv sereis": "TV Series",
   "tv show": "TV Series",
-  "tv serial": "TV Series",
   "tv series movie": "TV Series",
   "tv mini series": "TV Mini-Series",
   "tv mini-series": "TV Mini-Series",
@@ -145,12 +248,61 @@ export const MOVIE_OR_TV_ALIASES: Record<string, string> = {
   "tv special": "TV Special",
   "tv event": "TV Special",
   "tv episode": "TV Episode",
+  "serial": "Serial",
+  "serials": "Serial",
+  "tv serial": "Serial",
+  "serial tv": "Serial",
+  "tv-serial": "Serial",
 };
 
 export function normalizeMovieOrTv(value: string | undefined): string | null {
   const cleaned = cleanCell(value);
   if (cleaned == null) return null;
   return MOVIE_OR_TV_ALIASES[normalizeHeader(cleaned)] ?? cleaned;
+}
+
+// season_no is text (0001_init.sql), not an enum, and mostly holds plain numbers or real
+// comma-lists ("2,4") - RESOURCES.md's own spec. Beyond those, the live collection had grown
+// four more genuine, recurring conventions the original spec never named, resolved with the
+// user 2026-09-18 while designing TV scanning support:
+//   - "Assorted" - episodes from multiple seasons at random on one disc (e.g. a cartoon
+//     compilation). The Sheet had both "various" and "assorted" already in live use for this
+//     exact meaning - the user picked "Assorted" as the one going forward; "various" is a
+//     value to migrate away from, not a synonym to keep accepting indefinitely.
+//   - "All" - this disc/box-set contains every season the show has (a complete-series
+//     collection), as opposed to a genuinely random cross-season mix. Kept as its own literal
+//     value rather than spelled out as an explicit season list, since that would require
+//     looking up how many seasons the show actually has just to say "all of them."
+//   - "Specials" - unnumbered special episodes not tied to any numbered season at all (e.g.
+//     Super Sentai's clip-show specials) - distinct from "Assorted" (a random mix of regular,
+//     numbered-season episodes).
+// See Claude/TECH STACK AND ARCHITECTURE/barcode-review-screen-fields.md's TV Scanning section
+// for the full design discussion, including the "All"/"Assorted"/"Specials" real-data audit
+// this was based on.
+export const SEASON_NO_ALIASES: Record<string, string> = {
+  "various": "Assorted",
+  "assorted": "Assorted",
+  "all": "All",
+  "specials": "Specials",
+};
+
+// Matches a season list written with "and"/hyphen instead of commas (e.g. "1 and 2", "6-7") -
+// deliberately narrow (digits and connector words/punctuation only) so it never touches "All",
+// "Assorted", "Specials", or free text like "Unknown". "Multiple"/"multiple" is intentionally
+// NOT auto-converted here - unlike a mis-punctuated list, it doesn't say which seasons at all,
+// so fixing it requires reading the title for context (done as a one-time manual backfill,
+// not a blind rule - see backfill-season-no-normalization.ts).
+const SEASON_LIST_PATTERN = /^\d+(\s*(,|and|-)\s*\d+)+$/i;
+
+export function normalizeSeasonNo(value: string | undefined): string | null {
+  const cleaned = cleanCell(value);
+  if (cleaned == null) return null;
+  const aliased = SEASON_NO_ALIASES[normalizeHeader(cleaned)];
+  if (aliased) return aliased;
+  if (SEASON_LIST_PATTERN.test(cleaned)) {
+    return (cleaned.match(/\d+/g) ?? []).join(",");
+  }
+  return cleaned;
 }
 
 // The real sheet had ~19 distinct spellings for really 7 physical formats - casing drift
@@ -371,15 +523,14 @@ export function parseSheetRowToTitle(
     unique_id: uniqueId,
     title: cleanCell(row[columnIndexes["title"]]),
     movie_or_tv: normalizeMovieOrTv(row[columnIndexes["movie_or_tv"]]) ?? "Movie",
-    season_no: cleanCell(row[columnIndexes["season_no"]]),
+    season_no: normalizeSeasonNo(row[columnIndexes["season_no"]]),
     part_of_season_no: cleanCell(row[columnIndexes["part_of_season_no"]]),
     episode_count: toInt(row[columnIndexes["episode_count"]]),
     release_date: toDate(row[columnIndexes["release_date"]]),
     running_time_mins: toInt(row[columnIndexes["running_time_mins"]]),
     genre: toList(row[columnIndexes["genre"]]),
     director: toList(row[columnIndexes["director"]]),
-    franchise: cleanCell(row[columnIndexes["franchise"]]),
-    sub_franchise: cleanCell(row[columnIndexes["sub_franchise"]]),
+    franchise: toList(row[columnIndexes["franchise"]]),
     rating: normalizeRating(row[columnIndexes["rating"]]),
     format: normalizeFormat(row[columnIndexes["format"]]) ?? "DVD",
     disc_count: toInt(row[columnIndexes["disc_count"]]) ?? 1,
@@ -401,7 +552,6 @@ export function parseSheetRowToTitle(
     genre_location: cleanCell(row[columnIndexes["genre_location"]]),
     steelbook: toBoolean(row[columnIndexes["steelbook"]]),
     release_name: cleanCell(row[columnIndexes["release_name"]]),
-    imdb_id: cleanCell(row[columnIndexes["imdb_id"]]),
     tmdb_page: cleanCell(row[columnIndexes["tmdb_page"]]),
     release_variant_note: cleanCell(row[columnIndexes["release_variant_note"]]),
     disc_condition: normalizeDiscCondition(row[columnIndexes["disc_condition"]]),
@@ -410,8 +560,14 @@ export function parseSheetRowToTitle(
     depicted_era_label: cleanCell(row[columnIndexes["depicted_era_label"]]),
     last_watched_date: toDate(row[columnIndexes["last_watched_date"]]),
     watched_disc: toBoolean(row[columnIndexes["watched_disc"]]),
+    personal_rating: toInt(row[columnIndexes["personal_rating"]]),
+    is_currently_rented_out: toBoolean(row[columnIndexes["is_currently_rented_out"]]),
+    rented_by_who: cleanCell(row[columnIndexes["rented_by_who"]]),
+    date_rented: toDate(row[columnIndexes["date_rented"]]),
+    original_language: cleanCell(row[columnIndexes["original_language"]]),
   };
 }
+
 
 /**
  * Best-effort extraction of a "depicted era" (a year) from a documentary's title/synopsis,
@@ -478,6 +634,9 @@ const SHEET_FIELD_FORMATTERS: Partial<Record<string, (v: unknown) => string>> = 
   // convention rather than "y"/"n" for consistency (see the comment above formatYesNoForSheet).
   watched: formatYesNoForSheet,
   watched_disc: formatYesNoForSheet,
+  // Also a fresh column with no legacy data - same "Yes"/"No" convention.
+  is_currently_rented_out: formatYesNoForSheet,
+  date_rented: formatDateForSheet,
 };
 
 /** Formats one field's value the same way buildSheetRowFromTitle would, for callers that
@@ -490,8 +649,8 @@ export function formatFieldForSheet(field: string, value: unknown): string {
 /**
  * Inverse of parseSheetRowToTitle: turns a `titles`-shaped object back into a raw Sheet
  * row (string array, one cell per column, in header order) for appending a new row.
- * Fields with no Sheet column (case_image_url, last_updated, depicted_era_start, ...)
- * are simply not written - they're DB-only.
+ * Fields with no Sheet column (case_image_url, case_image_path, poster_image_path,
+ * last_updated, depicted_era_start, ...) are simply not written - they're DB-only.
  */
 export function buildSheetRowFromTitle(
   title: Record<string, unknown>,

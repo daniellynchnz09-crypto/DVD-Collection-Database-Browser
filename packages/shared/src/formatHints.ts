@@ -92,3 +92,56 @@ export function getDiskRegionOptions(format: string): string[] | null {
 export function isRegionFreeFormat(format: string): boolean {
   return /4k|ultra ?hd|uhd/.test(format.toLowerCase());
 }
+
+const REGION_FREE_WORDS = /\bregion[- ]?free\b|\ball regions?\b/i;
+
+/**
+ * Best-effort disc-region code(s) mentioned directly in a UPC listing's own text (e.g.
+ * "[regions 2,5]", "(Region A)", "Region Free") - added 2026-09-19 after a real listing
+ * ("Resident Evil: Extinction [regions 2,5] - Dvd...") showed this is often sitting right
+ * there in the raw UPC text, just never extracted into the Disk Region field, which the user
+ * had to fill in by hand every time even when the listing already said it. Returns a
+ * comma-joined string matching what ConfirmScreen's own MultiSelectChips submits (see
+ * disk_region there), or "All" for a region-free listing, or null when nothing usable is
+ * found - never a guess dressed up as a confirmed answer, same as every other hint in this
+ * file.
+ *
+ * Deliberately narrow rather than a single greedy capture, to avoid a real false-positive
+ * risk: an early draft captured every alnum token in a comma/space-separated run after
+ * "region(s)", which would wrongly pull a nearby year digit into the match (e.g. "region 4,
+ * 2015 edition" capturing "4" and "2" as if both were region codes). Instead, only looks for
+ * genuinely standalone single-character codes (`\b[1-6]\b` for DVD, `\b[A-C]\b` for Blu-ray -
+ * word-bounded on both sides, so "2" inside "2015" can never match) within a short window
+ * right after the word "region"/"regions", and only for the codes that are actually valid
+ * for the given `format` (DVD's 1-6, Blu-ray's A/B/C) - restricted to whichever scheme
+ * `getDiskRegionOptions` already says applies, so a stray unrelated character near the word
+ * "region" never becomes a wrong guess. Always still editable, same as every other auto-
+ * filled hint on this screen; returns null outright for UHD, which carries no per-title
+ * region coding of its own to extract (isRegionFreeFormat already handles that case).
+ */
+export function extractDiskRegionHint(text: string, format: string): string | null {
+  if (REGION_FREE_WORDS.test(text)) return "All";
+
+  const normalized = format.toLowerCase();
+  if (isRegionFreeFormat(normalized)) return null;
+
+  const regionMatch = text.match(/\bregions?\b\s*[:-]?\s*/i);
+  if (!regionMatch) return null;
+  const windowStart = (regionMatch.index ?? 0) + regionMatch[0].length;
+  const window = text.slice(windowStart, windowStart + 20);
+
+  const isBluRay = /blu-?ray/.test(normalized);
+  const tokenPattern = isBluRay ? /\b[A-Ca-c]\b/g : /\b[1-6]\b/g;
+
+  const codes: string[] = [];
+  const seen = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = tokenPattern.exec(window))) {
+    const code = match[0].toUpperCase();
+    if (!seen.has(code)) {
+      seen.add(code);
+      codes.push(code);
+    }
+  }
+  return codes.length > 0 ? codes.join(", ") : null;
+}

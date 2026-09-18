@@ -9,8 +9,9 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import type { Title } from "@danflix/shared";
 import { supabase } from "../lib/supabase";
-import { createManualPendingScan, discardScan } from "../lib/scanApi";
+import { createManualPendingScan, discardScan, fetchUpcQuotaStatus, type UpcQuotaStatus } from "../lib/scanApi";
 
 export interface PendingScan {
   id: string;
@@ -19,11 +20,18 @@ export interface PendingScan {
   barcode: string | null;
   status: "resolved" | "needs_manual";
   resolved_candidates: {
-    existingMatch?: { title: string };
+    // The full existing titles row when this barcode already belongs to a cataloged
+    // entry - a rescan of a disc already in the collection (see ConfirmScreen's
+    // "already logged" handling), not just a display title.
+    existingMatch?: Title;
     omdbCandidates?: { Title: string; Year: string }[];
-    upcProduct?: { title: string; description?: string; imageUrl?: string };
+    upcProduct?: { title: string; description?: string; imageUrl?: string; category?: string };
     upcLookupFailed?: boolean;
     isCollection?: boolean;
+    // Best-effort vision-model format guess (packages/backend/src/formatVision.ts) - only
+    // ever populated when the barcode listing's own text didn't already name the format, and
+    // only ever a pre-fill suggestion on ConfirmScreen, never presented as confirmed fact.
+    visionFormatGuess?: { format: string; steelbook: boolean; extraDiscs: "NONE" | "ONE_EXTRA" | "TWO_EXTRA" } | null;
   };
   scanned_at: string;
 }
@@ -82,12 +90,19 @@ export default function PendingScansScreen({
   onSelect,
   onBack,
   onDeleted,
+  onGoToOfflineQueue,
+  offlineQueueCount,
 }: {
   onSelect: (scan: PendingScan) => void;
   onBack: () => void;
   /** Called with the barcodes of every scan just deleted, so the scanner's re-scan
    * cooldown can forget them - the user explicitly said they want to rescan it. */
   onDeleted?: (barcodes: string[]) => void;
+  /** Offline-submission queue (offlineQueue.ts, added 2026-09-18) - not tied to the
+   * private-only pricing feature, so unlike Pending Value below this stays in the public
+   * repo too. */
+  onGoToOfflineQueue?: () => void;
+  offlineQueueCount?: number;
 }) {
   const insets = useSafeAreaInsets();
   const [scans, setScans] = useState<PendingScan[]>([]);
@@ -96,6 +111,7 @@ export default function PendingScansScreen({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [upcQuota, setUpcQuota] = useState<UpcQuotaStatus | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -106,6 +122,13 @@ export default function PendingScansScreen({
       .order("scanned_at", { ascending: true });
     setScans((data as PendingScan[] | null) ?? []);
     setLoading(false);
+    // Refreshed alongside the scan list (every mount, pull-to-refresh and post-delete reload),
+    // not on a timer - the server-side resolver (the one real spender of UPC quota) runs
+    // around the same time new scans get resolved, so this screen's own load points are
+    // already the moments the number could have moved.
+    fetchUpcQuotaStatus()
+      .then(({ quota }) => setUpcQuota(quota))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -208,6 +231,11 @@ export default function PendingScansScreen({
                   <Text style={styles.link}>Select</Text>
                 </TouchableOpacity>
               )}
+              {onGoToOfflineQueue && !!offlineQueueCount && (
+                <TouchableOpacity onPress={onGoToOfflineQueue}>
+                  <Text style={styles.link}>Offline Queue ({offlineQueueCount})</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
                 style={styles.addButton}
                 onPress={createManualEntry}
@@ -222,6 +250,22 @@ export default function PendingScansScreen({
         <Text style={styles.title}>
           {selectionMode ? `${selectedIds.size} selected` : `Pending Scans (${scans.length})`}
         </Text>
+        {upcQuota && !selectionMode && (
+          <View style={styles.quotaRow}>
+            <View style={styles.quotaBarTrack}>
+              <View
+                style={[
+                  styles.quotaBarFill,
+                  { width: `${Math.min(100, (upcQuota.used / upcQuota.limit) * 100)}%` },
+                  upcQuota.remaining === 0 && styles.quotaBarFillExhausted,
+                ]}
+              />
+            </View>
+            <Text style={styles.quotaCount}>
+              UPC lookups: {upcQuota.used}/{upcQuota.limit} today
+            </Text>
+          </View>
+        )}
       </View>
       <SectionList
         sections={sections}
@@ -295,6 +339,11 @@ const styles = StyleSheet.create({
   deleteLink: { color: "#f87171" },
   deleteLinkDisabled: { color: "#52171a" },
   title: { color: "#f4f4f5", fontSize: 18, fontWeight: "700" },
+  quotaRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 },
+  quotaBarTrack: { flex: 1, height: 6, borderRadius: 3, backgroundColor: "#27272a", overflow: "hidden" },
+  quotaBarFill: { height: "100%", backgroundColor: "#eab308", borderRadius: 3 },
+  quotaBarFillExhausted: { backgroundColor: "#f87171" },
+  quotaCount: { color: "#71717a", fontSize: 11 },
   sectionHeader: {
     color: "#a1a1aa",
     fontSize: 13,

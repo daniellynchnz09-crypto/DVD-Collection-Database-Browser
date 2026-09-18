@@ -3,7 +3,7 @@
 -- in the physical collection over several weeks and wants to do that exactly once, so this
 -- migration adds two kinds of column: (a) a clean canonical film id/link on every row, so
 -- every other metadata-driven feature in the planning docs (scores, cast/crew, synopsis,
--- Letterboxd, ...) can be backfilled later by a script keyed on that id, without ever
+-- watch-history import, ...) can be backfilled later by a script keyed on that id, without ever
 -- touching the shelf again, and (b) the handful of fields that genuinely can only be
 -- captured by looking at the physical disc/case itself (condition, alternate-edition
 -- notes, watched status) and so would require a second rescan if skipped now. Run against
@@ -46,12 +46,12 @@ alter table titles add column if not exists case_notes text;
 -- around it is designed.
 alter table titles add column if not exists release_variant_note text;
 
--- Simple self-reported watched flag, independent of any future Letterboxd integration -
--- the user's own collection may hold multiple physical copies of the same film (e.g. a
--- Blu-ray and a 4K UHD), and Letterboxd's diary has no way to say which specific copy was
--- watched, so this stays a manual, per-disc flag rather than something Letterboxd data can
--- safely overwrite later. Defaults to false/unwatched, same "don't slow the rescan down"
--- reasoning as disc_condition.
+-- Simple self-reported watched flag, independent of any future watch-history import - the
+-- user's own collection may hold multiple physical copies of the same film (e.g. a Blu-ray
+-- and a 4K UHD), and a diary-style watch-history source has no way to say which specific
+-- copy was watched, so this stays a manual, per-disc flag rather than something that
+-- imported data can safely overwrite later. Defaults to false/unwatched, same "don't slow
+-- the rescan down" reasoning as disc_condition.
 alter table titles add column if not exists watched boolean not null default false;
 
 -- Display-only worded era label for History Documentary titles (e.g. "Spanish Civil War",

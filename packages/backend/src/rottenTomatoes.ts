@@ -42,11 +42,17 @@ export async function lookupRottenTomatoesPage(
 
   const url = `https://www.rottentomatoes.com/m/${slug}`;
   let html: string;
+  let finalUrl: string;
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; DanflixCollectionBot/1.0)" },
     });
     if (!res.ok) return null;
+    // RT redirects a same-titled-film's bare slug to a disambiguated "<slug>_<year>" one
+    // (found live: the guessed "thor_ragnarok" 302s to "thor_ragnarok_2017") - fetch already
+    // follows that, so store the actual page it landed on rather than the guessed slug that
+    // just bounces through an extra redirect every time the link is opened.
+    finalUrl = res.url;
     html = await res.text();
   } catch {
     return null;
@@ -62,11 +68,18 @@ export async function lookupRottenTomatoesPage(
     return null;
   }
 
-  if (data.name?.trim().toLowerCase() !== title.trim().toLowerCase()) return null;
+  // RT's own schema.org `name` field is "<Title> (<Year>)", not the bare title - found live
+  // on Thor: Ragnarok's real page ("Thor: Ragnarok (2017)"), which meant this exact-match
+  // check was silently rejecting a genuinely correct guess (right slug, right film, right
+  // score) for seemingly no reason. Strip a trailing " (YYYY)" before comparing; a title
+  // that never gets one (as apparently happened to work by chance for the original Paper
+  // Planes verification) is unaffected, since the strip is then just a no-op.
+  const dataName = data.name?.replace(/\s*\(\d{4}\)\s*$/, "").trim().toLowerCase();
+  if (dataName !== title.trim().toLowerCase()) return null;
 
   const isTomatometer = data.aggregateRating?.name === "Tomatometer";
   const pageScore = isTomatometer ? Number(data.aggregateRating?.ratingValue) : NaN;
   if (Number.isNaN(pageScore) || pageScore !== criticsScorePercent) return null;
 
-  return url;
+  return finalUrl;
 }

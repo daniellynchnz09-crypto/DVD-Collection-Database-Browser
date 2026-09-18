@@ -44,3 +44,14 @@ yarn-error.log*
 # Personal Letterboxd data export (diary/watched/reviews/lists) - never committed to
 # either repo, private or public. Used only as a local one-time import source.
 /Letterboxd/
+
+# Claude Code's own agent-worktree isolation copies (a full nested checkout per worktree
+# session) - local runtime state, not app source. Previously kept out only via this machine's
+# local .git/info/exclude, which doesn't travel with the repo or protect the raw filesystem
+# copy sanitize-public-repo.ts makes when generating the public build.
+**/.claude/worktrees/
+supabase/.temp/
+
+# Playwright MCP's own scratch output (browser snapshots/console logs from live-verification
+# sessions, e.g. the eBay developer-console walkthrough) - tool scratch, not app code.
+.playwright-mcp/
