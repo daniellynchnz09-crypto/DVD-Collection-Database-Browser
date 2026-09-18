@@ -1545,7 +1545,17 @@ export default function ConfirmScreen({
     setError(null);
     try {
       const shared = buildSharedCollectionFields();
-      const nameOfCollection = manualTitle.trim();
+      // Colon-suffix disambiguation convention (barcode-scanning-pipeline.md's Collections
+      // section): `<Name of Collection>: <Title1>, <Title2>, ...` - applied automatically now
+      // rather than typed in by hand, since it's exactly the same real, comma-separated list
+      // of member titles every time, and the user's own real data already follows this exact
+      // format (e.g. "The Alfred Hitchcock Classics: Rear Window, Psycho, The Birds, Vertigo").
+      // Both `title` and `name_of_collection` use it - `name_of_collection` must match exactly
+      // across the header and every member (it's the join key find-existing/route.ts's fuzzy
+      // match and the Sheet aggregation both group by), so members get this same full name too.
+      const baseCollectionName = manualTitle.trim();
+      const memberTitleList = collectionMembers.map((m) => m.title).join(", ");
+      const nameOfCollection = memberTitleList ? `${baseCollectionName}: ${memberTitleList}` : baseCollectionName;
       const headerEntry: ConfirmEntry = {
         barcodeId: scan.barcode ?? undefined,
         overwriteUniqueId: overwriteDecisions["header"],
