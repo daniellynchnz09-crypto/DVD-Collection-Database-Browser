@@ -1,8 +1,9 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { queueScan } from "../lib/scanApi";
+import OfflineBanner from "../components/OfflineBanner";
 
 // How long a gap in sightings of the same barcode means "you moved away and came back"
 // rather than "still holding it in frame." Comfortably longer than the ~1s interval
@@ -55,6 +56,27 @@ export default function ScannerScreen({
     lastSeenAt: number;
     queued: boolean;
   } | null>(null);
+
+  // onBarcodeScanned only fires while a barcode is actually detected in frame - moving the
+  // camera away from it doesn't fire any "lost sight of it" event, it just stops firing
+  // entirely. Without this, pendingBarcodeRef/the on-screen countdown were only ever
+  // updated reactively from a sighting, so moving away mid-countdown left the "hold
+  // steady... N" text frozen on whatever number it last showed, forever (or until the next
+  // barcode sighting incidentally overwrote it). This polls independently of sightings so a
+  // stale hold actually gets noticed and cleared - reuses SIGHTING_GAP_MS as the same "you
+  // looked away" threshold already used the other direction (deciding whether a *new*
+  // sighting continues this hold), rather than a second, different cutoff that could
+  // disagree with it.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const pending = pendingBarcodeRef.current;
+      if (pending && !pending.queued && Date.now() - pending.lastSeenAt >= SIGHTING_GAP_MS) {
+        pendingBarcodeRef.current = null;
+        setCountdown(null);
+      }
+    }, 250);
+    return () => clearInterval(interval);
+  }, []);
 
   if (!permission) {
     return <View style={styles.container} />;
@@ -129,6 +151,9 @@ export default function ScannerScreen({
         barcodeScannerSettings={{ barcodeTypes: ["ean13", "upc_a", "upc_e"] }}
         onBarcodeScanned={handleBarcodeScanned}
       />
+      <View style={[styles.topOverlay, { top: insets.top }]}>
+        <OfflineBanner />
+      </View>
       <View style={[styles.overlay, { paddingBottom: 20 + insets.bottom }]}>
         <Text style={styles.hint}>Point the camera at the disc case's barcode</Text>
         {countdown ? (
@@ -157,6 +182,7 @@ const styles = StyleSheet.create({
     gap: 16,
   },
   camera: { flex: 1 },
+  topOverlay: { position: "absolute", left: 0, right: 0 },
   overlay: {
     position: "absolute",
     bottom: 0,

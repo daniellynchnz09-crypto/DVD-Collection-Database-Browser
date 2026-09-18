@@ -29,6 +29,7 @@ const RESOLVE_BATCH_LIMIT = 20;
 const TMDB_REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 const TMDB_REFRESH_BATCH_LIMIT = 20;
 
+
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
@@ -72,4 +73,5 @@ export async function register() {
   void runTmdbRefresh();
   globalForResolver.__tmdbRefreshInterval = setInterval(runTmdbRefresh, TMDB_REFRESH_INTERVAL_MS);
   console.log(`[tmdb-refresh] Watching overdue TMDb-sourced titles every ${TMDB_REFRESH_INTERVAL_MS / 1000}s.`);
+
 }

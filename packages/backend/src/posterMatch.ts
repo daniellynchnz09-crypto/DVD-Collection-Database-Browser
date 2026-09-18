@@ -17,6 +17,21 @@ import png from "@jimp/js-png";
 // decoders.
 const Jimp = createJimp({ plugins: [hashMethods], formats: [jpeg, png] });
 
+/** Fetches and perceptual-hashes a remote image - exported so other features needing the
+ * same pHash comparison (e.g. a retail-price-lookup feature comparing a product photo
+ * against a title's own poster) can reuse this exact Jimp setup rather than duplicating it.
+ * Returns null (never throws) on any fetch/decode failure. */
+export async function hashImage(url: string): Promise<string | null> {
+  try {
+    const image = await Jimp.read(url);
+    return image.pHash();
+  } catch {
+    return null;
+  }
+}
+
+export { compareHashes };
+
 /**
  * Auto-matches a UPC listing's own product photo against each OMDB candidate's poster,
  * using perceptual hashing (Jimp's built-in pHash/compareHashes - Hamming distance over a
@@ -29,8 +44,11 @@ const Jimp = createJimp({ plugins: [hashMethods], formats: [jpeg, png] });
  * pick manually (the review screen's existing horizontal poster list already covers that).
  */
 
-const CONFIDENT_MAX_DISTANCE = 0.2;
-const CONFIDENT_MIN_GAP = 0.05;
+// Exported so a retail-price-lookup feature's own confidence scorer can reuse this exact
+// DVD-tier threshold rather than redefining it, while still layering its own more lenient
+// Blu-ray/4K threshold on top.
+export const CONFIDENT_MAX_DISTANCE = 0.2;
+export const CONFIDENT_MIN_GAP = 0.05;
 
 export interface PosterMatchResult {
   bestImdbId: string | null;

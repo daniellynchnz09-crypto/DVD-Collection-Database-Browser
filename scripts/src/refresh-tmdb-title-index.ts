@@ -7,10 +7,16 @@
  * fallback for invented/proper names a generic English spellchecker can't fix (see
  * packages/backend/src/spellcheck.ts and Claude/TECH STACK AND ARCHITECTURE.md).
  *
- * ~1.2 million rows (adult titles excluded) - run by hand (`npm run refresh:tmdb-title-
- * index` from the repo root) until a Vercel Cron job can call this on a schedule once
- * deployed; the file itself is regenerated daily by TMDb, so a weekly re-run is plenty to
- * pick up newly-added titles.
+ * Filtered to `popularity >= MIN_POPULARITY` (adult titles also excluded) - the unfiltered
+ * export is ~1.2 million rows, which alone ate 246MB of Supabase's 500MB free-plan database
+ * cap for a table that only ever serves a rare typo-correction fallback (see
+ * Claude/TECH STACK AND ARCHITECTURE/database-design.md's TMDb Title Index Trim note). A
+ * title with near-zero TMDb popularity is exactly the kind of thing this fallback is least
+ * likely to ever need to correct-match against - trimming at `popularity >= 1` (2026-09-16)
+ * cut this to ~380K rows / 70MB while keeping anything with real engagement. Run by hand
+ * (`npm run refresh:tmdb-title-index` from the repo root) until a Vercel Cron job can call
+ * this on a schedule once deployed; the file itself is regenerated daily by TMDb, so a
+ * weekly re-run is plenty to pick up newly-added titles.
  *
  * Required env vars (see .env.example): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
  * Optional first CLI arg: a row limit, for a quick test import instead of the full file.
@@ -21,6 +27,9 @@ import { gunzipSync } from "node:zlib";
 import { createClient } from "@supabase/supabase-js";
 
 const BATCH_SIZE = 2000;
+// See the file header comment - keeps this table's storage footprint sane on Supabase's
+// free-plan database cap while barely affecting real-world typo-correction coverage.
+const MIN_POPULARITY = 1;
 
 interface TmdbExportRow {
   adult: boolean;
@@ -73,10 +82,10 @@ async function main() {
   console.log(`Downloaded ${exportRows.length} rows.`);
 
   let rows = exportRows
-    .filter((r) => !r.adult && r.original_title)
+    .filter((r) => !r.adult && r.original_title && (r.popularity ?? 0) >= MIN_POPULARITY)
     .map((r) => ({ tmdb_id: r.id, title: r.original_title, popularity: r.popularity ?? 0 }));
   if (rowLimit) rows = rows.slice(0, rowLimit);
-  console.log(`Importing ${rows.length} non-adult rows in batches of ${BATCH_SIZE}...`);
+  console.log(`Importing ${rows.length} rows (non-adult, popularity >= ${MIN_POPULARITY}) in batches of ${BATCH_SIZE}...`);
 
   let imported = 0;
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {

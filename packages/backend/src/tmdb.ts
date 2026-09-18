@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isoCodeToLanguageName } from "./iso639";
 
 /**
  * TMDb (themoviedb.org) integration - a real free public API (unlike IMDb, whose own
@@ -39,11 +40,18 @@ async function tmdbFetch<T>(path: string): Promise<T | null> {
 
 interface TmdbFindResponse {
   movie_results?: { id: number }[];
+  // A TV show's episode/season can also be looked up by imdb id (tv_episode_results/
+  // tv_season_results), but this project always confirms against the show's own overall
+  // imdb id (see Claude/TECH STACK AND ARCHITECTURE/barcode-review-screen-fields.md's TV
+  // Scanning section - "IMDb page for TV" - an episode-Type OMDb match is resolved back to
+  // its parent series' imdbID before it ever reaches here), so only tv_results is relevant.
+  tv_results?: { id: number }[];
 }
 
 interface TmdbMovieDetail {
   production_companies?: { name: string }[];
   genres?: { name: string }[];
+  original_language?: string;
 }
 
 interface TmdbReleaseDatesResponse {
@@ -53,11 +61,39 @@ interface TmdbReleaseDatesResponse {
   }[];
 }
 
-/** Finds the TMDb movie id for a given IMDb id, via TMDb's "find by external id" endpoint. */
-async function findTmdbIdByImdbId(imdbId: string): Promise<number | null> {
+// TV's certification endpoint is shaped differently from a movie's (a flat rating per
+// country, not a history of release-date-tagged certifications) - TMDb's own API, two
+// genuinely different endpoints, not a movie-only oversight.
+interface TmdbContentRatingsResponse {
+  results?: { iso_3166_1: string; rating?: string }[];
+}
+
+export type TmdbMediaType = "movie" | "tv";
+
+// This collection's own real NZ classification scheme (Claude/RESOURCES.md, packages/shared/
+// src/titleParsing.ts's RATING_ALIASES) - checked against below because TMDb's "NZ" release-
+// certification entry is itself crowdsourced and can carry a mistagged non-NZ code (found live
+// 2026-09-20: real Psycho/The Birds rows had "R"/"PG-13" - neither a real NZ rating - silently
+// written from TMDb's own NZ slot). An invalid code is treated the same as "TMDb has no NZ
+// certification at all" (returns null) rather than trusted at face value, so it falls through
+// to ConfirmScreen's manual Rating field instead of silently writing a wrong classification.
+const VALID_NZ_RATINGS = new Set(["G", "PG", "M", "R12", "R13", "R15", "R16", "R18"]);
+
+function validNzRatingOrNull(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed && VALID_NZ_RATINGS.has(trimmed) ? trimmed : null;
+}
+
+/** Finds the TMDb id for a given IMDb id, via TMDb's "find by external id" endpoint - checks
+ * movie_results first (this collection is overwhelmingly films), then tv_results, since the
+ * same endpoint returns both in one call regardless of which the id actually is. */
+async function findTmdbIdByImdbId(imdbId: string): Promise<{ tmdbId: number; mediaType: TmdbMediaType } | null> {
   const data = await tmdbFetch<TmdbFindResponse>(`/find/${imdbId}?external_source=imdb_id`);
-  const match = data?.movie_results?.[0];
-  return typeof match?.id === "number" ? match.id : null;
+  const movieMatch = data?.movie_results?.[0];
+  if (typeof movieMatch?.id === "number") return { tmdbId: movieMatch.id, mediaType: "movie" };
+  const tvMatch = data?.tv_results?.[0];
+  if (typeof tvMatch?.id === "number") return { tmdbId: tvMatch.id, mediaType: "tv" };
+  return null;
 }
 
 /** Fetches the NZ/Oceania certification + primary production company for a TMDb movie id.
@@ -77,10 +113,51 @@ async function findTmdbIdByImdbId(imdbId: string): Promise<number | null> {
  * fetch itself failed", which is a genuinely different situation from TMDb successfully
  * answering "no Animation genre tagged" - conflating the two would make the mobile form
  * hide the manual field and silently force "Live Action" on a title TMDb was never actually
- * asked about. */
+ * asked about.
+ *
+ * Also returns `originalLanguage` - TMDb's own `original_language` field on this same
+ * `/movie/{id}` detail response (genuinely free, no extra API call), mapped from its bare
+ * ISO 639-1 code (e.g. "en") to a human-readable name (e.g. "English") via iso639.ts, since
+ * that's this collection's own convention for the field (see
+ * Claude/TECH STACK AND ARCHITECTURE/barcode-review-screen-fields.md's Original Language
+ * note for the full history of why a bare code was rejected as an auto-fill value on its
+ * own). `null` covers both "no TMDb match at all" and "TMDb returned a code this table
+ * doesn't recognize" - either way, the confirm form falls back to the manual field rather
+ * than writing something wrong. */
 export async function fetchTmdbFieldsById(
-  tmdbId: number
-): Promise<{ rating: string | null; studio: string | null; isAnimated: boolean | null }> {
+  tmdbId: number,
+  mediaType: TmdbMediaType = "movie"
+): Promise<{
+  rating: string | null;
+  studio: string | null;
+  isAnimated: boolean | null;
+  originalLanguage: string | null;
+  // TMDb's own genre names, verbatim (e.g. "Science Fiction", "Sci-Fi & Fantasy" for a TV
+  // entry, "TV Movie" for a movie entry actually tagged that way) - added 2026-09-19 so the
+  // confirm route can merge these into the Genre column alongside OMDb's own (narrower)
+  // Genre field, per the user's own request after noticing OMDb's classic Doctor Who entry
+  // was missing "Sci-Fi" entirely. Same `/movie or /tv {id}` response `isAnimated` already
+  // reads - genuinely free, no extra call. Empty array (not null) when the detail fetch
+  // itself failed, same "absence of a signal" convention as isAnimated defaulting to false.
+  genres: string[];
+}> {
+  if (mediaType === "tv") {
+    const [details, contentRatings] = await Promise.all([
+      tmdbFetch<TmdbMovieDetail>(`/tv/${tmdbId}`),
+      tmdbFetch<TmdbContentRatingsResponse>(`/tv/${tmdbId}/content_ratings`),
+    ]);
+
+    const studio = details?.production_companies?.[0]?.name ?? null;
+    const isAnimated = details ? (details.genres?.some((g) => g.name === "Animation") ?? false) : null;
+    const originalLanguage = isoCodeToLanguageName(details?.original_language);
+    const genres = details?.genres?.map((g) => g.name) ?? [];
+
+    const nzEntry = contentRatings?.results?.find((r) => r.iso_3166_1 === "NZ");
+    const rating = validNzRatingOrNull(nzEntry?.rating);
+
+    return { rating, studio, isAnimated, originalLanguage, genres };
+  }
+
   const [details, releaseDates] = await Promise.all([
     tmdbFetch<TmdbMovieDetail>(`/movie/${tmdbId}`),
     tmdbFetch<TmdbReleaseDatesResponse>(`/movie/${tmdbId}/release_dates`),
@@ -88,12 +165,14 @@ export async function fetchTmdbFieldsById(
 
   const studio = details?.production_companies?.[0]?.name ?? null;
   const isAnimated = details ? (details.genres?.some((g) => g.name === "Animation") ?? false) : null;
+  const originalLanguage = isoCodeToLanguageName(details?.original_language);
+  const genres = details?.genres?.map((g) => g.name) ?? [];
 
   const nzEntry = releaseDates?.results?.find((r) => r.iso_3166_1 === "NZ");
   const certification = nzEntry?.release_dates?.find((rd) => rd.certification)?.certification;
-  const rating = certification && certification.trim() ? certification : null;
+  const rating = validNzRatingOrNull(certification);
 
-  return { rating, studio, isAnimated };
+  return { rating, studio, isAnimated, originalLanguage, genres };
 }
 
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w342";
@@ -114,20 +193,51 @@ interface TmdbMovieDetailFull {
   poster_path?: string | null;
 }
 
+// TV has no top-level imdb_id on `/tv/{id}` the way a movie does - append_to_response pulls
+// it in via the same call rather than a second round-trip to /tv/{id}/external_ids.
+interface TmdbTvDetailFull {
+  external_ids?: { imdb_id?: string | null };
+  name?: string;
+  first_air_date?: string;
+  poster_path?: string | null;
+}
+
 export interface TmdbSearchCandidate {
   Title: string;
   Year: string;
   imdbID: string;
-  Type: "movie";
+  Type: "movie" | "series";
   Poster: string;
 }
 
-/** Fetches full `/movie/{id}` details and shapes them into the same candidate form OMDB
- * search results already come in (Title/Year/imdbID/Type/Poster) - shared by
- * searchTmdbMovies below and by resolveTmdbCandidatesByIds (the fuzzy title-index fallback,
- * which only has a bare tmdb_id + title to start from and needs this same detail fetch to
- * get a poster/year/imdb_id out of it). */
-async function resolveTmdbCandidateById(tmdbId: number): Promise<TmdbSearchCandidate | null> {
+/** Fetches full `/movie/{id}` or `/tv/{id}` details and shapes them into the same candidate
+ * form OMDB search results already come in (Title/Year/imdbID/Type/Poster) - shared by
+ * searchTmdbMovies below and by resolveTmdbCandidatesByIds (the fuzzy title-index fallback
+ * and resolvePosterUrl, which only have a bare tmdb_id + media type to start from and need
+ * this same detail fetch to get a poster/year/imdb_id out of it). Defaults to "movie" since
+ * most callers (searchTmdbMovies, the fuzzy title-index, which is movie-only by construction)
+ * only ever deal in movie ids - resolvePosterUrl is the one caller that passes a title's own
+ * real tmdb_media_type, since calling `/movie/{id}` on what's actually a TV show's id can
+ * coincidentally resolve to a wholly unrelated movie that happens to share that number in
+ * the separate movie id space (found live: a TV title's poster resolved to a random
+ * unrelated film's poster this way). */
+async function resolveTmdbCandidateById(
+  tmdbId: number,
+  mediaType: TmdbMediaType = "movie"
+): Promise<TmdbSearchCandidate | null> {
+  if (mediaType === "tv") {
+    const detail = await tmdbFetch<TmdbTvDetailFull>(`/tv/${tmdbId}?append_to_response=external_ids`);
+    const imdbId = detail?.external_ids?.imdb_id;
+    if (!imdbId || !detail?.name) return null;
+    return {
+      Title: detail.name,
+      Year: detail.first_air_date ? detail.first_air_date.slice(0, 4) : "",
+      imdbID: imdbId,
+      Type: "series",
+      Poster: detail.poster_path ? `${TMDB_IMAGE_BASE}${detail.poster_path}` : "N/A",
+    };
+  }
+
   const detail = await tmdbFetch<TmdbMovieDetailFull>(`/movie/${tmdbId}`);
   if (!detail?.imdb_id || !detail.title) return null;
   return {
@@ -161,10 +271,16 @@ export async function searchTmdbMovies(query: string): Promise<TmdbSearchCandida
   return candidates.filter((c): c is TmdbSearchCandidate => c !== null);
 }
 
-/** Resolves a batch of bare TMDb ids (e.g. from the fuzzy title-index fallback below,
- * which only has an id + title to start from) into full candidates. */
-export async function resolveTmdbCandidatesByIds(tmdbIds: number[]): Promise<TmdbSearchCandidate[]> {
-  const candidates = await Promise.all(tmdbIds.map((id) => resolveTmdbCandidateById(id)));
+/** Resolves a batch of bare TMDb ids (e.g. from the fuzzy title-index fallback below, which
+ * only has an id + title to start from - always movie ids, since that index is movie-only -
+ * or from resolvePosterUrl, which passes a title's own real tmdb_media_type) into full
+ * candidates. `mediaType` applies to every id in the batch, same as resolveTmdbCandidateById's
+ * default. */
+export async function resolveTmdbCandidatesByIds(
+  tmdbIds: number[],
+  mediaType: TmdbMediaType = "movie"
+): Promise<TmdbSearchCandidate[]> {
+  const candidates = await Promise.all(tmdbIds.map((id) => resolveTmdbCandidateById(id, mediaType)));
   return candidates.filter((c): c is TmdbSearchCandidate => c !== null);
 }
 
@@ -206,21 +322,30 @@ export async function fuzzySearchTitleIndex(
 
 export interface TmdbFields {
   tmdbId: number | null;
+  tmdbMediaType: TmdbMediaType | null;
   rating: string | null;
   studio: string | null;
   isAnimated: boolean | null;
+  originalLanguage: string | null;
+  genres: string[];
 }
 
 /** Looks a title up on TMDb for the first time, via its IMDb id - returns everything
- * needed to populate tmdb_id/rating/studio on a freshly confirmed title. Returns nulls
- * throughout (never throws) when TMDb has no matching movie, so a lookup miss never
- * blocks the rest of the confirm flow. `isAnimated: null` here means "no TMDb match at
- * all", same "unknown, not a confirmed answer" reasoning as fetchTmdbFieldsById above. */
+ * needed to populate tmdb_id/tmdb_media_type/rating/studio/original_language on a freshly
+ * confirmed title. Checks movie_results first, then tv_results (see findTmdbIdByImdbId) -
+ * added for TV scanning support (2026-09-18): before this, a TV confirmation could never
+ * satisfy the confirm route's hard "must resolve to a real TMDb id" requirement at all,
+ * since this only ever checked movie_results. Returns nulls throughout (never throws) when
+ * TMDb has no matching title of either kind, so a lookup miss never blocks the rest of the
+ * confirm flow. `isAnimated: null` here means "no TMDb match at all", same "unknown, not a
+ * confirmed answer" reasoning as fetchTmdbFieldsById above. */
 export async function lookupTmdbFields(imdbId: string): Promise<TmdbFields> {
-  const tmdbId = await findTmdbIdByImdbId(imdbId);
-  if (tmdbId == null) return { tmdbId: null, rating: null, studio: null, isAnimated: null };
-  const { rating, studio, isAnimated } = await fetchTmdbFieldsById(tmdbId);
-  return { tmdbId, rating, studio, isAnimated };
+  const found = await findTmdbIdByImdbId(imdbId);
+  if (found == null) {
+    return { tmdbId: null, tmdbMediaType: null, rating: null, studio: null, isAnimated: null, originalLanguage: null, genres: [] };
+  }
+  const { rating, studio, isAnimated, originalLanguage, genres } = await fetchTmdbFieldsById(found.tmdbId, found.mediaType);
+  return { tmdbId: found.tmdbId, tmdbMediaType: found.mediaType, rating, studio, isAnimated, originalLanguage, genres };
 }
 
 interface TmdbTvSearchResponse {
@@ -293,9 +418,9 @@ export interface TmdbRefreshResult {
  * Re-fetches and renews TMDb-sourced fields for whatever's overdue (never synced, or
  * synced more than ~5 months ago) - required to stay within TMDb's 6-month cache limit,
  * and useful in its own right since ratings/studio names genuinely can change. Only ever
- * touches rating/studio on a row where the corresponding *_is_manual flag is false - a
- * value the user actually typed in (from the case, or the original Sheet) is never
- * overwritten by this job.
+ * touches rating/studio/original_language on a row where the corresponding *_is_manual flag
+ * is false - a value the user actually typed in (from the case, or the original Sheet) is
+ * never overwritten by this job.
  */
 export async function refreshTmdbFields(
   supabase: SupabaseClient,
@@ -304,25 +429,30 @@ export async function refreshTmdbFields(
   const cutoffIso = new Date(Date.now() - REFRESH_INTERVAL_MS).toISOString();
 
   // Postgrest's `.or()` doesn't cleanly combine with a second independent OR-condition, so
-  // the rating_is_manual/studio_is_manual check happens in JS after a broader fetch rather
-  // than in the query itself.
+  // the rating_is_manual/studio_is_manual/original_language_is_manual check happens in JS
+  // after a broader fetch rather than in the query itself.
   const { data: candidates } = await supabase
     .from("titles")
-    .select("unique_id, tmdb_id, rating_is_manual, studio_is_manual")
+    .select("unique_id, tmdb_id, tmdb_media_type, rating_is_manual, studio_is_manual, original_language_is_manual")
     .not("tmdb_id", "is", null)
     .or(`tmdb_synced_at.is.null,tmdb_synced_at.lt.${cutoffIso}`)
     .limit(limit * 2);
 
   const due = (candidates ?? [])
-    .filter((row) => !row.rating_is_manual || !row.studio_is_manual)
+    .filter((row) => !row.rating_is_manual || !row.studio_is_manual || !row.original_language_is_manual)
     .slice(0, limit);
 
   let updated = 0;
   for (const row of due) {
-    const { rating, studio } = await fetchTmdbFieldsById(row.tmdb_id as number);
+    // 0028_add_tmdb_media_type.sql backfilled every pre-existing row to "movie" (the only
+    // kind this project could confirm before TV scanning support existed), so this only
+    // ever falls back for a row that somehow predates that migration.
+    const mediaType = ((row as { tmdb_media_type?: TmdbMediaType | null }).tmdb_media_type ?? "movie") as TmdbMediaType;
+    const { rating, studio, originalLanguage } = await fetchTmdbFieldsById(row.tmdb_id as number, mediaType);
     const patch: Record<string, unknown> = { tmdb_synced_at: new Date().toISOString() };
     if (!row.rating_is_manual) patch.rating = rating;
     if (!row.studio_is_manual) patch.studio = studio;
+    if (!row.original_language_is_manual) patch.original_language = originalLanguage;
 
     const { error } = await supabase.from("titles").update(patch).eq("unique_id", row.unique_id);
     if (!error) updated++;

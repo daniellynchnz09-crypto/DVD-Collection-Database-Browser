@@ -9,7 +9,8 @@
     "keep-alive": "tsx src/keep-alive.ts",
     "refresh-tmdb": "tsx src/refresh-tmdb.ts",
     "refresh-tmdb-title-index": "tsx src/refresh-tmdb-title-index.ts",
-    "refresh-tmdb-tv-title-index": "tsx src/refresh-tmdb-tv-title-index.ts"
+    "refresh-tmdb-tv-title-index": "tsx src/refresh-tmdb-tv-title-index.ts",
+    "find-missing-rotten-tomatoes": "tsx src/find-missing-rotten-tomatoes.ts"
   },
   "dependencies": {
     "@danflix/backend": "*",

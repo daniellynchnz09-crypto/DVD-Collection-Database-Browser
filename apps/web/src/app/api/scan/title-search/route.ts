@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireScanSecret } from "@/lib/scanAuth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
-import { omdbSearch, type OmdbSearchCandidate } from "@danflix/shared";
+import { omdbSearch, splitCutVariantTitle, type OmdbSearchCandidate } from "@danflix/shared";
 import {
   correctSpelling,
   fuzzySearchTitleIndex,
@@ -63,11 +63,17 @@ export async function POST(request: Request) {
   if (authError) return authError;
 
   const body = await request.json().catch(() => null);
-  const title = typeof body?.title === "string" ? body.title.trim() : "";
+  const typedTitle = typeof body?.title === "string" ? body.title.trim() : "";
   const skipCorrections = body?.skipCorrections === true;
-  if (!title) {
+  if (!typedTitle) {
     return NextResponse.json({ error: "title is required" }, { status: 400 });
   }
+
+  // Same "search the base film title, not a specific cut/edition's own text" reasoning as
+  // scanResolver.ts's automatic path (see splitCutVariantTitle's own comment) - a manually
+  // typed "Blade Runner the Final Cut" would miss OMDB's real "Blade Runner" entry exactly
+  // the same way a barcode-derived one would.
+  const { baseTitle: title } = splitCutVariantTitle(typedTitle);
 
   const correctedTitle = skipCorrections ? null : await correctSpelling(title).catch(() => null);
   const queries = correctedTitle ? [title, correctedTitle] : [title];

@@ -5,10 +5,12 @@
  * real file; unlike the movie export, there is no "adult" field at all) into
  * tmdb_tv_title_index (supabase/migrations/0009_tmdb_tv_title_index.sql).
  *
- * ~230k rows, much smaller than the movie export - run by hand (`npm run refresh:tmdb-tv-
- * title-index` from the repo root) until a Vercel Cron job can call this on a schedule;
- * weekly is plenty since the file is regenerated daily and new titles are the only thing
- * that changes.
+ * Filtered to `popularity >= MIN_POPULARITY`, same reasoning and threshold as
+ * refresh-tmdb-title-index.ts's own trim (2026-09-16) - the unfiltered export is ~230k rows
+ * (58MB with its trigram index); trimmed to ~125K rows / 31MB. Run by hand (`npm run
+ * refresh:tmdb-tv-title-index` from the repo root) until a Vercel Cron job can call this on
+ * a schedule; weekly is plenty since the file is regenerated daily and new titles are the
+ * only thing that changes.
  *
  * Required env vars (see .env.example): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
  * Optional first CLI arg: a row limit, for a quick test import instead of the full file.
@@ -19,6 +21,9 @@ import { gunzipSync } from "node:zlib";
 import { createClient } from "@supabase/supabase-js";
 
 const BATCH_SIZE = 2000;
+// See the file header comment - keeps this table's storage footprint sane on Supabase's
+// free-plan database cap while barely affecting real-world typo-correction coverage.
+const MIN_POPULARITY = 1;
 
 interface TmdbTvExportRow {
   id: number;
@@ -67,10 +72,10 @@ async function main() {
   console.log(`Downloaded ${exportRows.length} rows.`);
 
   let rows = exportRows
-    .filter((r) => r.original_name)
+    .filter((r) => r.original_name && (r.popularity ?? 0) >= MIN_POPULARITY)
     .map((r) => ({ tmdb_id: r.id, title: r.original_name, popularity: r.popularity ?? 0 }));
   if (rowLimit) rows = rows.slice(0, rowLimit);
-  console.log(`Importing ${rows.length} rows in batches of ${BATCH_SIZE}...`);
+  console.log(`Importing ${rows.length} rows (popularity >= ${MIN_POPULARITY}) in batches of ${BATCH_SIZE}...`);
 
   let imported = 0;
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {

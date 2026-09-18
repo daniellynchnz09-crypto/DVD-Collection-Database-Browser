@@ -61,7 +61,9 @@ export function applyFilters(titles: Title[], filters: TitleFilters): Title[] {
     )
       return false;
     if (filters.genre && !t.genre.some((g) => filters.genre!.includes(g))) return false;
-    if (filters.franchise && (!t.franchise || !filters.franchise.includes(t.franchise)))
+    // franchise is a multi-value list too (0020_merge_franchise_columns.sql) - same
+    // any-overlap check as genre above, not a single-value lookup.
+    if (filters.franchise && !t.franchise.some((f) => filters.franchise!.includes(f)))
       return false;
     if (filters.rating && (!t.rating || !filters.rating.includes(t.rating))) return false;
     if (filters.studio && (!t.studio || !filters.studio.includes(t.studio))) return false;

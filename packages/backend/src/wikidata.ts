@@ -34,31 +34,36 @@ interface SparqlBinding {
   seriesLabel?: { value: string };
 }
 
-/** Looks up a best-guess franchise/series name for a film via Wikidata, keyed by its IMDb
- * id (Wikidata's P345). Returns null (never throws) whenever nothing is found or the
- * request fails - this is a prefill suggestion for a still-editable field, not an
- * authoritative source, so a miss should never block the rest of the confirm flow. */
-export async function lookupFranchiseFromWikidata(imdbId: string): Promise<string | null> {
-  if (!/^tt\d+$/.test(imdbId)) return null;
+/** Looks up every franchise/series a film is tagged as part of on Wikidata, keyed by its
+ * IMDb id (Wikidata's P345) - a film can genuinely have more than one P179 claim at once
+ * (e.g. Captain Marvel (2019) is part of both "Marvel Cinematic Universe" and the narrower
+ * "Captain Marvel" character franchise), so this returns all of them rather than just the
+ * first, matching `franchise`'s multi-value column (0020_merge_franchise_columns.sql).
+ * Returns [] (never throws) whenever nothing is found or the request fails - this is a
+ * prefill suggestion for a still-editable field, not an authoritative source, so a miss
+ * should never block the rest of the confirm flow. */
+export async function lookupFranchiseFromWikidata(imdbId: string): Promise<string[]> {
+  if (!/^tt\d+$/.test(imdbId)) return [];
 
   const query = `
-    SELECT ?seriesLabel WHERE {
+    SELECT DISTINCT ?seriesLabel WHERE {
       ?item wdt:P345 "${imdbId}".
       ?item wdt:P179 ?series.
       SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
     }
-    LIMIT 1
   `;
 
   try {
     const res = await fetch(`${WIKIDATA_SPARQL_URL}?query=${encodeURIComponent(query)}&format=json`, {
       headers: { Accept: "application/sparql-results+json", "User-Agent": USER_AGENT },
     });
-    if (!res.ok) return null;
+    if (!res.ok) return [];
 
     const data = (await res.json()) as { results?: { bindings?: SparqlBinding[] } };
-    return data.results?.bindings?.[0]?.seriesLabel?.value ?? null;
+    return (data.results?.bindings ?? [])
+      .map((b) => b.seriesLabel?.value)
+      .filter((v): v is string => Boolean(v));
   } catch {
-    return null;
+    return [];
   }
 }

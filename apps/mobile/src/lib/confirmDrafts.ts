@@ -14,6 +14,30 @@ export interface ConfirmDraftCandidate {
   imdbID: string;
   Type: string;
   Poster: string;
+  Runtime?: string;
+}
+
+/** One title added to a Collection scan's running member list - see ConfirmScreen.tsx's own
+ * `CollectionMember` interface (the live type used at runtime; this is just its serializable
+ * shape for the draft cache). Added 2026-09-20 for the Collection scanning flow. */
+export interface ConfirmDraftCollectionMember {
+  key: string;
+  imdbId?: string;
+  title: string;
+  poster?: string;
+  movieOrTv: string;
+  seasonNo?: string;
+  partOfSeasonNo?: string;
+  episodeCount?: string;
+  franchise?: string;
+  watched: boolean;
+  watchedDisc: boolean;
+  format: string;
+  discCount: string;
+  specialFeatures: boolean;
+  specialFeaturesDiscCount?: string;
+  specialFeaturesDiscFormat?: string;
+  releaseName?: string;
 }
 
 export interface ConfirmDraft {
@@ -45,6 +69,20 @@ export interface ConfirmDraft {
   watchedDisc?: boolean;
   depictedEraLabel?: string;
   tmdbIdOverride?: string;
+  genre?: string;
+  runningTimeMins?: string;
+  director?: string;
+  isCurrentlyRentedOut?: boolean;
+  rentedByWho?: string;
+  dateRented?: string | null;
+  originalLanguage?: string;
+  movieOrTv?: string;
+  seasonNo?: string;
+  partOfSeasonNo?: string;
+  episodeCount?: string;
+  // Collection scanning flow (added 2026-09-20) - see barcode-scanning-pipeline.md.
+  isCollectionOverride?: boolean;
+  collectionMembers?: ConfirmDraftCollectionMember[];
 }
 
 const drafts = new Map<string, ConfirmDraft>();

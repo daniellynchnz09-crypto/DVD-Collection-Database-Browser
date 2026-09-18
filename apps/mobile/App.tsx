@@ -1,10 +1,13 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import ScannerScreen from "./src/screens/ScannerScreen";
 import PendingScansScreen, { type PendingScan } from "./src/screens/PendingScansScreen";
 import ConfirmScreen from "./src/screens/ConfirmScreen";
 import SuccessScreen from "./src/screens/SuccessScreen";
+import OfflineQueueScreen from "./src/screens/OfflineQueueScreen";
+import { subscribeToReconnect } from "./src/lib/network";
+import { getQueuedSubmissions, trySyncOfflineQueue } from "./src/lib/offlineQueue";
 
 // How long ScannerScreen remembers a barcode after queuing it, to avoid re-queuing the
 // same disc if you point back at it a few seconds or minutes later. Lives here rather
@@ -20,6 +23,7 @@ type Screen =
   | { name: "scanner" }
   | { name: "pending" }
   | { name: "confirm"; scan: PendingScan }
+  | { name: "offlineQueue" }
   | {
       name: "success";
       shelfLocation: { before: string | null; after: string | null } | null;
@@ -29,6 +33,33 @@ type Screen =
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: "scanner" });
   const recentlyQueuedRef = useRef<Map<string, number>>(new Map());
+  const [offlineQueueCount, setOfflineQueueCount] = useState(0);
+
+  const refreshOfflineQueueCount = useCallback(async () => {
+    setOfflineQueueCount((await getQueuedSubmissions()).length);
+  }, []);
+
+  // Auto-resync (added 2026-09-18) - the moment the connection comes back after being down,
+  // automatically attempt every queued offline submission for real, per the user's own
+  // explicit spec ("when internet is back up and running the program will submit it to the
+  // database... automatically"). Runs for the lifetime of the app, not just while a
+  // particular screen is mounted, since reconnection can happen at any point.
+  useEffect(() => {
+    refreshOfflineQueueCount();
+    const unsubscribe = subscribeToReconnect(async () => {
+      await trySyncOfflineQueue();
+      await refreshOfflineQueueCount();
+    });
+    return unsubscribe;
+  }, [refreshOfflineQueueCount]);
+
+  // Also refreshed on every visit to Pending Scans (where the badge shows) - covers the case
+  // where an item was just queued (offline Confirm) or resolved (from the Offline Queue
+  // screen) without relying solely on the reconnect event, which only fires for an actual
+  // offline->online transition.
+  useEffect(() => {
+    if (screen.name === "pending") refreshOfflineQueueCount();
+  }, [screen, refreshOfflineQueueCount]);
 
   const wasRecentlyQueued = useCallback((barcode: string) => {
     const queuedAt = recentlyQueuedRef.current.get(barcode);
@@ -58,8 +89,11 @@ export default function App() {
           onSelect={(scan) => setScreen({ name: "confirm", scan })}
           onBack={() => setScreen({ name: "scanner" })}
           onDeleted={(barcodes) => barcodes.forEach(forgetQueued)}
+          onGoToOfflineQueue={() => setScreen({ name: "offlineQueue" })}
+          offlineQueueCount={offlineQueueCount}
         />
       )}
+      {screen.name === "offlineQueue" && <OfflineQueueScreen onBack={() => setScreen({ name: "pending" })} />}
       {screen.name === "confirm" && (
         <ConfirmScreen
           scan={screen.scan}
