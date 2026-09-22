@@ -78,6 +78,9 @@ export const HEADER_ALIASES: Record<string, string> = {
   "rented by": "rented_by_who",
   "date rented": "date_rented",
   "original language": "original_language",
+  // Added 0030_add_disc_number_in_set.sql - see database-design.md and
+  // barcode-scanning-pipeline.md's Collections section.
+  "disc number in set": "disc_number_in_set",
 };
 
 // Columns the sync script/webhook will add to the Sheet itself if missing, per
@@ -102,6 +105,7 @@ export const AUTO_CREATE_COLUMNS: { field: string; headerText: string }[] = [
   { field: "rented_by_who", headerText: "Rented By Who" },
   { field: "date_rented", headerText: "Date Rented" },
   { field: "original_language", headerText: "Original Language" },
+  { field: "disc_number_in_set", headerText: "Disc Number In Set" },
 ];
 
 // Cuts/versions the user names inline within a box set (e.g. "Blade Runner Final Cut")
@@ -362,7 +366,20 @@ const RATING_ALIASES: Record<string, string> = {
   r16: "R16",
   rr16: "R16",
   r18: "R18",
+  // OMDB's own `Rated` field is a pre-1968 MPAA-predecessor/US classification, not an NZ one -
+  // "Approved" (found live 2026-09-20 on 4 real 1940s Universal comedies) is the most common
+  // one this collection will ever see, real per the user's own instruction: treat it as G.
+  approved: "G",
 };
+
+/** This collection's real NZ classification scheme - the only values a `rating` should ever hold
+ * when it came from an external source (TMDb's NZ slot, OMDB's US-style `Rated`). One shared
+ * definition (2026-09-20) so the TMDb and OMDB paths can't drift apart. */
+const VALID_NZ_RATINGS = new Set(["G", "PG", "M", "R12", "R13", "R15", "R16", "R18"]);
+
+export function isValidNzRating(value: string | null | undefined): boolean {
+  return !!value && VALID_NZ_RATINGS.has(value.trim());
+}
 
 function normalizeRatingKey(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -372,6 +389,258 @@ export function normalizeRating(value: string | undefined): string | null {
   const cleaned = cleanCell(value);
   if (cleaned == null) return null;
   return RATING_ALIASES[normalizeRatingKey(cleaned)] ?? cleaned;
+}
+
+// Studio is free text (TMDb's own per-film production-company name, or a manual "Distributor"
+// fallback), open-ended by design - most single-occurrence values are genuinely distinct real
+// companies, not bugs. But an audit of the real ~3,065-row collection (2026-09-20) found 891
+// distinct values, a real chunk of which were casing drift ("universal"/"Universal"), a
+// recurring capital-I typo ("FIlm" for "Film" - collapses for free once lowercased for the key
+// below), and letter-level typos of well-known studios (e.g. "Metro Godwin Mayer",
+// "American Zeotype") - confirmed against real external sources where uncertain (Ashmont
+// Productions - the real Bewitched production company, named for Asher+Montgomery - was in the
+// data majority-misspelled "Ashmount"; Rafran Cinematografica and StudioCanal were also
+// confirmed against TMDb/Wikipedia). Per the user's own explicit choice, a same-studio
+// parent/sub-brand pair (Sony/Sony Pictures/Sony Pictures Entertainment,
+// Dreamworks/Dreamworks Pictures, Discovery/Discovery Channel, Twentieth Century
+// Fox/20th Century Studios, CBS/CBS Films/CBS Television Network, Toho/Toho Pictures/Toho
+// Studios, ITC/ITC Entertainment/ITC Films, TriStar Pictures/TriStar Productions) is merged
+// into its shorter name; Warner Bros. and Metro-Goldwyn-Mayer were the user's own explicit
+// canonical-spelling picks (the official modern/full form in both cases, not the data's own
+// majority spelling). A studio with only ONE real production arm distinct from another
+// (Universal Television vs Universal Pictures; Sony Animation vs Sony; MGM Television; Marvel
+// Animation vs Marvel Studios; BBC Film/BBC Radio/BBC Studios vs plain BBC) is deliberately
+// NOT folded in here - those are genuinely different real entities, not spelling variants.
+export const STUDIO_ALIASES: Record<string, string> = {
+  universal: "Universal",
+  "universal pictures": "Universal",
+  "universal picture": "Universal",
+  "unviersal pictures": "Universal",
+  paramount: "Paramount",
+  "paramount pictures": "Paramount",
+  "paramount film": "Paramount",
+  cbs: "CBS",
+  "cbs films": "CBS",
+  "cbs television network": "CBS",
+  "twentieth century fox": "20th Century Fox",
+  "20th century studios": "20th Century Fox",
+  "warner brothers": "Warner Bros.",
+  "wanner brothers": "Warner Bros.",
+  "warner bros": "Warner Bros.",
+  "metro goldwyn mayer": "Metro-Goldwyn-Mayer",
+  "metro godwin mayer": "Metro-Goldwyn-Mayer",
+  "metro goldwin mayer": "Metro-Goldwyn-Mayer",
+  "metro goldwyn mayor": "Metro-Goldwyn-Mayer",
+  disney: "Disney",
+  "sony pictures": "Sony",
+  "sony pictures entertainment": "Sony",
+  "dreamworks pictures": "Dreamworks",
+  "discovery channel": "Discovery",
+  "new line cinema": "New Line Cinema",
+  "screen gems": "Screen Gems",
+  "screen jems": "Screen Gems",
+  "hammer films": "Hammer Films",
+  "earling studios": "Ealing Studios",
+  "american zeotrope": "American Zoetrope",
+  "american zeotype": "American Zoetrope",
+  "amblin entertianment": "Amblin Entertainment",
+  "british lion film corporation": "British Lion Film Corporation",
+  "millenium films": "Millennium Films",
+  "two cities films": "Two Cities Films",
+  "euston films": "Euston Films",
+  "europa corp": "EuropaCorp",
+  "gaumont british pictures corpoation": "Gaumont British Picture Corporation",
+  "dimension films": "Dimension Films",
+  "revolution studio": "Revolution Studios",
+  "revolution studios": "Revolution Studios",
+  lego: "LEGO",
+  loews: "Loew's",
+  "united artists": "United Artists",
+  "unitied artists": "United Artists",
+  "studio canal": "StudioCanal",
+  "studio cannal": "StudioCanal",
+  "the aslum": "The Asylum",
+  "icon entertainement": "Icon Entertainment",
+  "constantin films": "Constantin Film",
+  "handmade films": "HandMade Films",
+  handmadefilms: "HandMade Films",
+  "tri star": "TriStar Pictures",
+  "tri star pictures": "TriStar Pictures",
+  "tri star productions": "TriStar Pictures",
+  "rko raido pictures": "RKO Radio Pictures",
+  "carnival film and television": "Carnival Film and Television",
+  madman: "Madman",
+  "toho pictures": "Toho",
+  "toho studios": "Toho",
+  "itc entertainment": "ITC",
+  "itc films": "ITC",
+  "concorde new horizons": "Concorde-New Horizons",
+  "hollywood motion picture consoritum": "Hollywood Motion Picture Consortium",
+  "producers releasing corproration": "Producers Releasing Corporation",
+  "incroporated television company": "Incorporated Television Company",
+  "micheal white productions": "Michael White Productions",
+  "minds eyes entertainment": "Minds Eye Entertainment",
+  "new regency production": "New Regency Productions",
+  "new regentcy productions": "New Regency Productions",
+  "samuel goldwin productions": "Samuel Goldwyn Productions",
+  "7 ponnies productions": "7 Ponies Productions",
+  "alcon entertainement": "Alcon Entertainment",
+  "rafan cinematografica": "Rafran Cinematografica",
+  "rafran cinemographica": "Rafran Cinematografica",
+  "collosus productions": "Colossus Productions",
+  "kenedy miller productions": "Kennedy Miller Productions",
+  "glen a larson productions": "Glen A. Larson Productions",
+  "king features syndacyte": "King Features Syndicate",
+  "ashmount productions": "Ashmont Productions",
+};
+
+function normalizeStudioKey(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[''".,]/g, "")
+    .replace(/&/g, "and")
+    .replace(/-/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Franchise is a free-text multi-value tag list. An audit of the real collection (2026-09-20: 733
+// distinct tags, 61 groups of look-alikes) found casing drift, punctuation drift and plain typos of
+// the same franchise ("Spiderman"/"Spider-Man"/"spiderman"/"Spiderrman", "Abbot and Costello",
+// "Pirates of the Carribean"/"Priates of the Caribbean", ...). Keyed by a punctuation- and
+// case-blind key, so one entry covers every casing/punctuation variant and typos need their own.
+// Choices confirmed with the user: Spider-Man (official spelling), a leading "The"/"A" is dropped
+// where both forms exist (Pink Panther, Terminator, Jungle Book, Wizard of Oz, ...) EXCEPT
+// "Ghostbusters" vs "The Ghostbusters" (genuinely different franchises - left separate), and
+// M*A*S*H. Look-alikes that are really different franchises (The Thing vs The Ring,
+// Transmorphers vs Transformers) are deliberately absent, so they pass through untouched. Exact-key
+// lookup only - no fuzzy matching - so an unknown tag is never rewritten.
+export const FRANCHISE_ALIASES: Record<string, string> = {
+  "2001aspaceodyssey": "2001: A Space Odyssey",
+  anightmareonelmstreet: "Nightmare on Elm Street",
+  nightmareonelmstreet: "Nightmare on Elm Street",
+  abbotandcostello: "Abbott and Costello",
+  abbottandcostello: "Abbott and Costello",
+  agathachristie: "Agatha Christie",
+  agathachrisie: "Agatha Christie",
+  alanquatermain: "Allan Quatermain",
+  alanquartermain: "Allan Quatermain",
+  allanquatermain: "Allan Quatermain",
+  aliceinwonderland: "Alice in Wonderland",
+  antman: "Ant-Man",
+  bambi: "Bambi",
+  batman: "Batman",
+  battlestargalactica: "Battlestar Galactica",
+  beautryandthebeast: "Beauty and the Beast",
+  beautyandthebeast: "Beauty and the Beast",
+  bewitched: "Bewitched",
+  bewtiched: "Bewitched",
+  blade: "Blade",
+  bladw: "Blade",
+  captainamerica: "Captain America",
+  captainamercia: "Captain America",
+  downtownabbey: "Downton Abbey",
+  downtonabbey: "Downton Abbey",
+  drjekyllandmrhyde: "Dr. Jekyll and Mr. Hyde",
+  drjekylandmrhyde: "Dr. Jekyll and Mr. Hyde",
+  drjekelandmrhyde: "Dr. Jekyll and Mr. Hyde",
+  flashgordon: "Flash Gordon",
+  flashgrodon: "Flash Gordon",
+  frankenstein: "Frankenstein",
+  frankenstien: "Frankenstein",
+  ghostbusters: "Ghostbusters",
+  greenhornet: "Green Hornet",
+  thegreenhornet: "Green Hornet",
+  gilligansisland: "Gilligan's Island",
+  giligansisland: "Gilligan's Island",
+  houseofwax: "House of Wax",
+  hosueofwax: "House of Wax",
+  howtotrainyourdragon: "How to Train Your Dragon",
+  indianajones: "Indiana Jones",
+  jasonbourne: "Jason Bourne",
+  journeytothecenteroftheearth: "Journey to the Center of the Earth",
+  journeytothecentreoftheearth: "Journey to the Center of the Earth",
+  junglebook: "Jungle Book",
+  thejunglebook: "Jungle Book",
+  lego: "LEGO",
+  loonytunes: "Looney Tunes",
+  looneytunes: "Looney Tunes",
+  lostinspace: "Lost in Space",
+  lostinspacce: "Lost in Space",
+  mash: "M*A*S*H",
+  macgyver: "MacGyver",
+  madagascar: "Madagascar",
+  madgascar: "Madagascar",
+  missionimpossible: "Mission Impossible",
+  miissionimpossible: "Mission Impossible",
+  monstersvsaliens: "Monsters Vs Aliens",
+  montypython: "Monty Python",
+  montyphython: "Monty Python",
+  montyphyton: "Monty Python",
+  nuttyprofessor: "Nutty Professor",
+  thenuttyprofessor: "Nutty Professor",
+  pinkpanther: "Pink Panther",
+  thepinkpanther: "Pink Panther",
+  piratesofthecaribbean: "Pirates of the Caribbean",
+  piratesofthecarribean: "Pirates of the Caribbean",
+  priatesofthecaribbean: "Pirates of the Caribbean",
+  pussinboots: "Puss in Boots",
+  rec: "REC",
+  scarymovie: "Scary Movie",
+  sherlockholmes: "Sherlock Holmes",
+  spiderman: "Spider-Man",
+  spiderrman: "Spider-Man",
+  spiderverse: "Spider-Verse",
+  supermariobros: "Super Mario Bros.",
+  sweenytodd: "Sweeney Todd",
+  sweeneytodd: "Sweeney Todd",
+  terminator: "Terminator",
+  theterminator: "Terminator",
+  theateam: "The A-Team",
+  thebible: "The Bible",
+  thebiible: "The Bible",
+  thefastthefurious: "The Fast and the Furious",
+  thefastandthefurious: "The Fast and the Furious",
+  theinvisibleman: "The Invisible Man",
+  theinvisbleman: "The Invisible Man",
+  thelionking: "The Lion King",
+  thetencommandments: "The Ten Commandments",
+  thetemcommandments: "The Ten Commandments",
+  thethreestooges: "The Three Stooges",
+  thethreestoogesst: "The Three Stooges",
+  titanic: "Titanic",
+  transformers: "Transformers",
+  transfromers: "Transformers",
+  twilight: "Twilight",
+  twilght: "Twilight",
+  wizardofoz: "Wizard of Oz",
+  thewizardofoz: "Wizard of Oz",
+  xmen: "X-Men",
+};
+
+function franchiseKey(value: string): string {
+  return value.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]/g, "");
+}
+
+export function normalizeFranchiseTag(value: string): string {
+  const trimmed = value.trim();
+  return FRANCHISE_ALIASES[franchiseKey(trimmed)] ?? trimmed;
+}
+
+/** Normalizes every tag and drops the duplicates that merging can create ("Spiderman, Spider-Man"). */
+export function normalizeFranchiseList(values: string[]): string[] {
+  const out: string[] = [];
+  for (const v of values) {
+    const n = normalizeFranchiseTag(v);
+    if (n && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
+export function normalizeStudio(value: string | undefined): string | null {
+  const cleaned = cleanCell(value);
+  if (cleaned == null) return null;
+  return STUDIO_ALIASES[normalizeStudioKey(cleaned)] ?? cleaned;
 }
 
 // Real Sheet data has 13+ distinct typo'd casings of "Live Action" alone ("Live Aciton",
@@ -394,12 +663,20 @@ const ANIMATION_ALIASES: Record<string, string> = {
   liveacrion: "Live Action",
   livieaction: "Live Action",
   "2danimation": "2D Animation",
+  "2d3dhybridanimation": "2D 3D Hybrid Animation",
   "3danimation": "3D Animation",
   puppet: "Puppet",
   puppets: "Puppet",
   stopmotion: "Stop-Motion",
   stopmotionanimation: "Stop-Motion",
 };
+
+/** "Animation" is a medium, not a genre (the user's own rule, 2026-09-20) - it belongs in the
+ * Animation or Live Action column, so it is stripped from every Genre list (OMDB and TMDb both
+ * tag animated films with it). */
+export function removeNonGenreTags(genres: string[]): string[] {
+  return genres.filter((g) => !/^animation$/i.test(g.trim()));
+}
 
 function normalizeAnimationKey(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -528,9 +805,9 @@ export function parseSheetRowToTitle(
     episode_count: toInt(row[columnIndexes["episode_count"]]),
     release_date: toDate(row[columnIndexes["release_date"]]),
     running_time_mins: toInt(row[columnIndexes["running_time_mins"]]),
-    genre: toList(row[columnIndexes["genre"]]),
+    genre: removeNonGenreTags(toList(row[columnIndexes["genre"]])),
     director: toList(row[columnIndexes["director"]]),
-    franchise: toList(row[columnIndexes["franchise"]]),
+    franchise: normalizeFranchiseList(toList(row[columnIndexes["franchise"]])),
     rating: normalizeRating(row[columnIndexes["rating"]]),
     format: normalizeFormat(row[columnIndexes["format"]]) ?? "DVD",
     disc_count: toInt(row[columnIndexes["disc_count"]]) ?? 1,
@@ -546,12 +823,13 @@ export function parseSheetRowToTitle(
     number_of_titles_in_collection: toInt(row[columnIndexes["number_of_titles_in_collection"]]),
     rotten_tomatoes_page: cleanCell(row[columnIndexes["rotten_tomatoes_page"]]),
     imdb_page: cleanCell(row[columnIndexes["imdb_page"]]),
-    studio: cleanCell(row[columnIndexes["studio"]]),
+    studio: normalizeStudio(row[columnIndexes["studio"]]),
     disk_region: cleanCell(row[columnIndexes["disk_region"]]),
     barcode_id: cleanCell(row[columnIndexes["barcode_id"]]),
     genre_location: cleanCell(row[columnIndexes["genre_location"]]),
     steelbook: toBoolean(row[columnIndexes["steelbook"]]),
     release_name: cleanCell(row[columnIndexes["release_name"]]),
+    disc_number_in_set: cleanCell(row[columnIndexes["disc_number_in_set"]]),
     tmdb_page: cleanCell(row[columnIndexes["tmdb_page"]]),
     release_variant_note: cleanCell(row[columnIndexes["release_variant_note"]]),
     disc_condition: normalizeDiscCondition(row[columnIndexes["disc_condition"]]),

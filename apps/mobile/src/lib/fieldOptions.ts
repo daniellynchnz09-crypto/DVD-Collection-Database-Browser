@@ -19,6 +19,9 @@ export interface FieldOptions {
   // Database Access) - it becomes selectable here the next time this cache refreshes, same
   // as everywhere else.
   movieOrTv: string[];
+  // franchiseCooccurrence[a][b] = number of titles tagged with both franchise a and franchise b -
+  // powers the Franchise slide's "often go with this selection" picks.
+  franchiseCooccurrence: Record<string, Record<string, number>>;
 }
 
 let cached: FieldOptions | null = null;
@@ -44,6 +47,21 @@ function distinctSortedFlat(values: (string[] | null)[]): string[] {
     }
   }
   return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+function buildCooccurrence(lists: (string[] | null)[]): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {};
+  for (const list of lists) {
+    const tags = [...new Set((list ?? []).map((t) => t?.trim()).filter(Boolean))] as string[];
+    for (const a of tags) {
+      for (const b of tags) {
+        if (a === b) continue;
+        out[a] ??= {};
+        out[a][b] = (out[a][b] ?? 0) + 1;
+      }
+    }
+  }
+  return out;
 }
 
 const COLUMNS =
@@ -103,6 +121,7 @@ export async function loadFieldOptions(forceRefresh = false): Promise<FieldOptio
       rentedByWho: distinctSorted(rows.map((r) => r.rented_by_who as string | null)),
       originalLanguage: distinctSorted(rows.map((r) => r.original_language as string | null)),
       movieOrTv: distinctSorted(rows.map((r) => r.movie_or_tv as string | null)),
+      franchiseCooccurrence: buildCooccurrence(rows.map((r) => r.franchise as string[] | null)),
     };
     cached = options;
     inflight = null;

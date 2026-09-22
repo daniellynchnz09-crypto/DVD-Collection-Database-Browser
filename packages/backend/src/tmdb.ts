@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isValidNzRating } from "@danflix/shared";
 import { isoCodeToLanguageName } from "./iso639";
 
 /**
@@ -77,11 +78,9 @@ export type TmdbMediaType = "movie" | "tv";
 // written from TMDb's own NZ slot). An invalid code is treated the same as "TMDb has no NZ
 // certification at all" (returns null) rather than trusted at face value, so it falls through
 // to ConfirmScreen's manual Rating field instead of silently writing a wrong classification.
-const VALID_NZ_RATINGS = new Set(["G", "PG", "M", "R12", "R13", "R15", "R16", "R18"]);
-
 function validNzRatingOrNull(value: string | undefined): string | null {
   const trimmed = value?.trim();
-  return trimmed && VALID_NZ_RATINGS.has(trimmed) ? trimmed : null;
+  return trimmed && isValidNzRating(trimmed) ? trimmed : null;
 }
 
 /** Finds the TMDb id for a given IMDb id, via TMDb's "find by external id" endpoint - checks

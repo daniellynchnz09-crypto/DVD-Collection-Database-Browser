@@ -42,7 +42,26 @@ TMDb attribution: once the actual browsable web app (Phase 2+) displays Rating/S
 
 **Scan-the-cover feature (2026-09-18)** - deliberately deferred until after Collection and TV series integration is sorted, per the user's own explicit sequencing. The idea: extend the vision-model format detection already built (`formatVision.ts`) into a proper "scan the cover" mode, not exclusive to barcode scanning - the user's own framing is "you can choose to scan the cover or the barcode or both, one is not exclusive to the other, but scanning both of course could get the most detail." From a single cover photo alone (no web search needed), the user expects we could realistically pull: title, format, disc count, edition/cut, a usable product image (the photo itself), the format of any special-features disc (already proven via the "4K UHD + Blu-Ray" banner-reading logic), franchise, an estimated price (if a price tag/sticker is still visibly attached to the cover), and a rating (PG/G/M/etc., if printed on the cover art). Not specified yet: the actual camera UI/flow for a cover-scan mode, or how its results would merge with a barcode scan's own results when both are used together on the same disc.
 
+**Public project Studio dedup, not yet checked (2026-09-20)**: the Studio-column normalization (see `database-design.md`'s Studio normalization note) was verified end-to-end against the private Supabase project, but the public demo project's `titles` table returned 0 rows via its anon key when checked - no service-role key is stored for that project in this environment, so its own data couldn't be read or fixed this session. Revisit once that project's data is next refreshed from the private one, or a service-role key is provided.
+
 **Miss Marple revisit (2026-09-18)**: "Miss Marple: The Blue Geranium" and "Miss Marples: The Pale Horse" were reclassified from `movie_or_tv="Movie"` to `"TV Movie"` (with the stray `season_no="Unknown"` cleared) as part of the TV-scanning normalization pass - see `Claude/TECH STACK AND ARCHITECTURE/barcode-review-screen-fields.md`'s TV Scanning section. The user flagged that these might really be better modeled as a 2-disc collection of 2 TV movies (IMDb nests them inside a nominal "series" with an "Unknown" season) rather than two independent TV Movie rows - deliberately left as plain TV Movie rows for now since Collection support isn't built yet; revisit once it is.
 
 ~~Collection-wide misspelling audit~~ Done. Audited all 3,064 titles (movies + TV/documentary) against the fuzzy TMDb title indexes, found 199 genuine misspellings (systematic ones like "Carribbean"->"Caribbean", "Abbot"->"Abbott" across ~16 rows, "Tripple"->"Triple" across 11 rows, "Downtown Abbey"->"Downton Abbey", plus ~180 one-off typos). Reported as a filterable web page; the user then approved fixing all of them except "Devilship Pirates" and "The Compelete Claymation Minifigger Collection" (left as-is on request). 198 corrections applied to both the Sheet and Supabase (`scripts/src/backfill-misspelling-corrections.ts`, one-time/already run) - 2 title-text drifts between the audit snapshot and the live Sheet (a trailing space, and a box-set description that had grown since the audit ran) were caught and fixed by hand during the same pass. This surfaced two follow-on features, both built the same session: the "custom/homemade disc" spellcheck-skip toggle and the Pending Scans "+" manual-entry button (both in Claude/TECH STACK AND ARCHITECTURE/barcode-review-screen-fields.md's manual title-search section) - the TV/documentary spelling fixes themselves are done, but no equivalent live spellcheck-skip/fuzzy-index wiring exists for TV search yet (the manual title-search route is movie-only), since TV wasn't scanned via barcode in this pass at all.
 
+
+
+**SCANNER APP ROADMAP (given by the user 2026-09-19, for the session after the weekly limit reset, Tuesday)**
+
+Order of work. The user does the testing and critique at each "user" step; Claude fixes what they report:
+
+1. User bug-fixes and critiques the single-title SLIDES design until it is right and fast to use (built 2026-09-19: match page first, Review last with expanding rows, big-button slides, FranchiseEditor; see Prompt Journal).
+2. Move the slides format to COLLECTIONS (the Collection flow in ConfirmScreen is still the old long form).
+3. User bug-fixes, tests and critiques the collection slides.
+4. User stress-tests the system with a very complex Doctor Who title (many stories/discs/seasons, lots of extras).
+5. Integrate the FRONT-of-case cover scan (approved plan: photo slide, migration `case_photo_path`, Gemini reads the photo, web image priority = scan photo > UPC image > Estimated Value image; plan file was `C:\Users\OEM\.claude\plans\compiled-singing-ocean.md`, Phase 2 - not started).
+6. User bug-fixes, tests and critiques the cover scan design.
+7. "Metalheart" design pass (the user's name for the visual design pass).
+8. Big bug-fix / efficiency / security scan of the scanner app.
+9. Move on to the next project phase.
+
+Open loose ends going into Tuesday: nothing pushed to GitHub this session; slides (single-title) and the barcode-number-in-title fix are untested by the user beyond the first look; 143 Letterboxd review items unresolved; Price Analytics provider untested.

@@ -34,6 +34,7 @@ export interface ConfirmDraftCollectionMember {
   watchedDisc: boolean;
   format: string;
   discCount: string;
+  discNumbers: string;
   specialFeatures: boolean;
   specialFeaturesDiscCount?: string;
   specialFeaturesDiscFormat?: string;
@@ -41,6 +42,11 @@ export interface ConfirmDraftCollectionMember {
 }
 
 export interface ConfirmDraft {
+  /** Collection header's own typed Total Disc Count (every physical disc in the box, bonus disc
+   * included) and which of those numbered discs is the collection's own bonus disc(s) -
+   * redesigned 2026-09-20, see ConfirmScreen.tsx's collectionDiscCount/bonusDiscs. */
+  collectionDiscCount?: string;
+  bonusDiscs?: number[];
   showAllCandidates: boolean;
   selected: string[];
   manualTitle: string;

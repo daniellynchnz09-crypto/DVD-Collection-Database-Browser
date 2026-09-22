@@ -76,6 +76,14 @@ export interface Title {
   genre_location: string | null;
   steelbook: boolean;
   release_name: string | null;
+  // 0030_add_disc_number_in_set.sql - which physical disc(s) within a Collection this title is
+  // on (e.g. "1", "2", or "1,2" for a title spanning more than one disc). Free text like
+  // season_no, since it needs to hold a list, not just a single number. Only meaningful for a
+  // Collection member (a standalone title has no "set" to number a disc within) - see
+  // barcode-scanning-pipeline.md's Collections section for why this exists (the header's own
+  // total disc count needs the count of DISTINCT disc numbers across every member, not a naive
+  // sum of each member's own disc_count, which double-counts a disc two titles share).
+  disc_number_in_set: string | null;
   tmdb_id: number | null;
   // 0028_add_tmdb_media_type.sql - "movie" or "tv", since TMDb ids for each are separate
   // number spaces. Backfilled to "movie" for every row that predates TV scanning support.

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Image, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Image, Keyboard, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { previewTmdbFields, searchTitleOnOmdb, type OmdbSearchCandidate } from "../lib/scanApi";
 import { loadFieldOptions, type FieldOptions } from "../lib/fieldOptions";
 import SearchableModalInput from "./SearchableModalInput";
+import TagSearchableModalInput from "./TagSearchableModalInput";
 
 /** One title added to a Collection scan's running member list (ConfirmScreen.tsx's
  * Collection flow, added 2026-09-20 - see Claude/TECH STACK AND ARCHITECTURE/
@@ -35,6 +36,16 @@ export interface CollectionMember {
   watchedDisc: boolean;
   format: string;
   discCount: string;
+  /** Which physical disc(s) within the set this title is on (e.g. "1", "2", or "1,2" for a
+   * title spanning more than one disc) - added 2026-09-20 after the user hit a real box set
+   * that doesn't follow the "one disc per title" assumption the header's disc-count total was
+   * built on (2 discs holding 4 titles, two titles sharing each disc). Distinct from
+   * `discCount` (unchanged meaning: how many discs relate to this title) - this is what lets
+   * the header total be computed as the count of DISTINCT disc numbers referenced across every
+   * member, rather than a naive sum that double-counts a disc two titles share. Persisted to
+   * the title's own row (0030_add_disc_number_in_set.sql) - also useful later for the web app
+   * to show which disc in a set holds a given title (WEB APP DESIGN.md's DVD Collection Pages). */
+  discNumbers: string;
   specialFeatures: boolean;
   specialFeaturesDiscCount?: string;
   specialFeaturesDiscFormat?: string;
@@ -80,22 +91,33 @@ export default function TitleSearchPicker({
   onAdd,
   onCancel,
   initialFormat,
-  initialDiscCount,
+  totalDiscCount,
+  editingMember,
   initialSpecialFeatures,
   initialSpecialFeaturesDiscCount,
   initialSpecialFeaturesDiscFormat,
   impliedWatched,
   impliedWatchedDisc,
 }: {
+  /** Fires for both a brand-new title and a saved edit - a saved edit hands back the SAME `key`
+   * it was opened with, which ConfirmScreen uses to replace that member in place. */
   onAdd: (member: CollectionMember) => void;
   onCancel: () => void;
+  /** The collection header's own typed Total Disc Count (every physical disc in the box, bonus
+   * disc included) - generates the "What disc(s) is this title on?" checkbox list, 1..N.
+   * Redesigned 2026-09-20: this replaces both the old per-title Disc Count input and the old
+   * free-typed Disc Number(s) field, since a title's own disc count is now simply how many
+   * discs it ticks. */
+  totalDiscCount: number;
+  /** When set, the picker opens on the details step already filled in with this member's saved
+   * values (tap-to-edit from ConfirmScreen's "Titles in this set" list, 2026-09-20). */
+  editingMember?: CollectionMember | null;
   /** Starting values for this title's own disc fields - ConfirmScreen.tsx passes the
    * previously-added member's own values (if any exist yet), else the header's own shared-
    * step values as a first guess. Still fully editable per title - this is just a starting
    * point to cut down on re-typing the same disc pattern for every title in a box set where
    * most/all titles share it, per the user's own real example. */
   initialFormat: string;
-  initialDiscCount: string;
   initialSpecialFeatures: boolean;
   initialSpecialFeaturesDiscCount: string;
   initialSpecialFeaturesDiscFormat: string;
@@ -107,26 +129,42 @@ export default function TitleSearchPicker({
   impliedWatched: boolean;
   impliedWatchedDisc: boolean;
 }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(editingMember?.title ?? "");
   const [isCustomDisc, setIsCustomDisc] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [candidates, setCandidates] = useState<OmdbSearchCandidate[]>([]);
-  const [selectedImdbId, setSelectedImdbId] = useState<string | null>(null);
-  const [manualTitle, setManualTitle] = useState("");
-  const [movieOrTv, setMovieOrTv] = useState("Movie");
-  const [seasonNo, setSeasonNo] = useState("");
-  const [partOfSeasonNo, setPartOfSeasonNo] = useState("");
-  const [episodeCount, setEpisodeCount] = useState("");
-  const [franchise, setFranchise] = useState("");
-  const [watched, setWatched] = useState(impliedWatched);
-  const [watchedDisc, setWatchedDisc] = useState(impliedWatchedDisc);
-  const [format, setFormat] = useState(initialFormat);
-  const [discCount, setDiscCount] = useState(initialDiscCount);
-  const [releaseName, setReleaseName] = useState("");
-  const [specialFeatures, setSpecialFeatures] = useState(initialSpecialFeatures);
-  const [specialFeaturesDiscCount, setSpecialFeaturesDiscCount] = useState(initialSpecialFeaturesDiscCount);
-  const [specialFeaturesDiscFormat, setSpecialFeaturesDiscFormat] = useState(initialSpecialFeaturesDiscFormat);
+  const [hasSearched, setHasSearched] = useState(!!editingMember);
+  // Edit mode seeds the candidate list with one synthesized entry built from what was saved
+  // (title/poster/imdbId), so the same "matched film" details block renders exactly as if the
+  // user had just picked it from a real search - no OMDB call needed to re-open an edit.
+  const [candidates, setCandidates] = useState<OmdbSearchCandidate[]>(
+    editingMember?.imdbId
+      ? [{ Title: editingMember.title, Year: "", imdbID: editingMember.imdbId, Type: "", Poster: editingMember.poster ?? "N/A" }]
+      : []
+  );
+  const [selectedImdbId, setSelectedImdbId] = useState<string | null>(editingMember?.imdbId ?? null);
+  const [manualTitle, setManualTitle] = useState(editingMember && !editingMember.imdbId ? editingMember.title : "");
+  const [movieOrTv, setMovieOrTv] = useState(editingMember?.movieOrTv ?? "Movie");
+  const [seasonNo, setSeasonNo] = useState(editingMember?.seasonNo ?? "");
+  const [partOfSeasonNo, setPartOfSeasonNo] = useState(editingMember?.partOfSeasonNo ?? "");
+  const [episodeCount, setEpisodeCount] = useState(editingMember?.episodeCount ?? "");
+  const [franchise, setFranchise] = useState(editingMember?.franchise ?? "");
+  const [watched, setWatched] = useState(editingMember ? editingMember.watched : impliedWatched);
+  const [watchedDisc, setWatchedDisc] = useState(editingMember ? editingMember.watchedDisc : impliedWatchedDisc);
+  const [format, setFormat] = useState(editingMember?.format ?? initialFormat);
+  const [selectedDiscs, setSelectedDiscs] = useState<number[]>(
+    (editingMember?.discNumbers ?? "")
+      .split(",")
+      .map((n) => parseInt(n.trim(), 10))
+      .filter((n) => Number.isFinite(n) && n > 0)
+  );
+  const [releaseName, setReleaseName] = useState(editingMember?.releaseName ?? "");
+  const [specialFeatures, setSpecialFeatures] = useState(editingMember ? editingMember.specialFeatures : initialSpecialFeatures);
+  const [specialFeaturesDiscCount, setSpecialFeaturesDiscCount] = useState(
+    editingMember ? editingMember.specialFeaturesDiscCount ?? "" : initialSpecialFeaturesDiscCount
+  );
+  const [specialFeaturesDiscFormat, setSpecialFeaturesDiscFormat] = useState(
+    editingMember ? editingMember.specialFeaturesDiscFormat ?? "" : initialSpecialFeaturesDiscFormat
+  );
   const [fieldOptions, setFieldOptions] = useState<FieldOptions | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -134,7 +172,7 @@ export default function TitleSearchPicker({
     loadFieldOptions().then(setFieldOptions);
   }, []);
 
-  const showMemberSpecialFeaturesDiscFields = specialFeatures && (parseInt(discCount, 10) || 1) > 1;
+  const showMemberSpecialFeaturesDiscFields = specialFeatures && selectedDiscs.length > 1;
 
   const selectedCandidate = selectedImdbId ? candidates.find((c) => c.imdbID === selectedImdbId) ?? null : null;
   const resolvedTitle = selectedCandidate?.Title ?? manualTitle.trim();
@@ -143,6 +181,10 @@ export default function TitleSearchPicker({
   async function handleSearch() {
     const q = query.trim();
     if (!q) return;
+    // Closes the on-screen keyboard AND searches in the one press (item 7, 2026-09-20) - the
+    // ScrollView below uses keyboardShouldPersistTaps="handled", so the tap itself now reaches
+    // this handler instead of being spent only on dismissing the keyboard first.
+    Keyboard.dismiss();
     setSearching(true);
     setError(null);
     try {
@@ -184,8 +226,9 @@ export default function TitleSearchPicker({
   function handleAddPressed() {
     if (!resolvedTitle) return;
     setError(null);
+    const sortedDiscs = [...selectedDiscs].sort((a, b) => a - b);
     onAdd({
-      key: generateMemberKey(),
+      key: editingMember?.key ?? generateMemberKey(),
       imdbId: selectedImdbId ?? undefined,
       title: resolvedTitle,
       poster: selectedCandidate?.Poster !== "N/A" ? selectedCandidate?.Poster : undefined,
@@ -197,7 +240,10 @@ export default function TitleSearchPicker({
       watched,
       watchedDisc,
       format,
-      discCount,
+      // A title's own disc count is simply how many discs it ticked (redesigned 2026-09-20 -
+      // there is no separate per-title Disc Count input any more).
+      discCount: String(sortedDiscs.length || 1),
+      discNumbers: sortedDiscs.join(","),
       specialFeatures,
       specialFeaturesDiscCount: showMemberSpecialFeaturesDiscFields ? specialFeaturesDiscCount.trim() || undefined : undefined,
       specialFeaturesDiscFormat: showMemberSpecialFeaturesDiscFields ? specialFeaturesDiscFormat || undefined : undefined,
@@ -207,8 +253,8 @@ export default function TitleSearchPicker({
 
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <Text style={styles.title}>Add a title to this set</Text>
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        <Text style={styles.title}>{editingMember ? "Edit this title" : "Add a title to this set"}</Text>
 
         {!hasSearched && !selectedCandidate && (
           <View style={styles.section}>
@@ -219,6 +265,8 @@ export default function TitleSearchPicker({
               placeholder="Title"
               placeholderTextColor="#71717a"
               autoFocus
+              returnKeyType="search"
+              onSubmitEditing={handleSearch}
             />
             <TouchableOpacity style={styles.checkboxRow} onPress={() => setIsCustomDisc((prev) => !prev)}>
               <View style={[styles.checkbox, isCustomDisc && styles.checkboxChecked]}>
@@ -305,13 +353,33 @@ export default function TitleSearchPicker({
               <SearchableModalInput value={format} onChangeText={setFormat} options={fieldOptions?.format ?? []} />
             </View>
             <View style={styles.section}>
-              <Text style={styles.label}>Disc Count</Text>
-              <TextInput
-                style={styles.input}
-                value={discCount}
-                onChangeText={(text) => setDiscCount(digitsOnly(text))}
-                keyboardType="number-pad"
-              />
+              <Text style={styles.label}>What disc(s) is this title on?</Text>
+              {totalDiscCount > 0 ? (
+                <>
+                  {Array.from({ length: totalDiscCount }, (_, i) => i + 1).map((n) => {
+                    const checked = selectedDiscs.includes(n);
+                    return (
+                      <TouchableOpacity
+                        key={n}
+                        style={styles.checkboxRow}
+                        onPress={() =>
+                          setSelectedDiscs((prev) => (prev.includes(n) ? prev.filter((d) => d !== n) : [...prev, n]))
+                        }
+                      >
+                        <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
+                          {checked && <Text style={styles.checkboxMark}>✓</Text>}
+                        </View>
+                        <Text style={styles.checkboxLabel}>Disc {n}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  <Text style={styles.hint}>
+                    Tick every disc this title is on. Two titles that share a disc just tick the same one.
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.hint}>Set the collection&apos;s Total Disc Count first, then come back.</Text>
+              )}
             </View>
             <View style={[styles.section, styles.row]}>
               <Text style={styles.label}>Special Features (this title's own bonus disc)</Text>
@@ -376,7 +444,13 @@ export default function TitleSearchPicker({
             )}
             <View style={styles.section}>
               <Text style={styles.label}>Franchise (optional, comma-separated)</Text>
-              <TextInput style={styles.input} value={franchise} onChangeText={setFranchise} placeholderTextColor="#71717a" />
+              <TagSearchableModalInput
+                value={franchise}
+                onChangeText={setFranchise}
+                options={fieldOptions?.franchise ?? []}
+                placeholder="e.g. Marvel, Marvel Cinematic Universe"
+                numberOfLines={3}
+              />
             </View>
             <View style={styles.section}>
               <Text style={styles.label}>Release Name (optional, if different from Title)</Text>
@@ -433,9 +507,9 @@ export default function TitleSearchPicker({
             <TouchableOpacity
               style={styles.button}
               onPress={handleAddPressed}
-              disabled={!resolvedTitle || !format.trim() || !discCount.trim()}
+              disabled={!resolvedTitle || !format.trim() || selectedDiscs.length === 0}
             >
-              <Text style={styles.buttonText}>Add to set</Text>
+              <Text style={styles.buttonText}>{editingMember ? "Save changes" : "Add to set"}</Text>
             </TouchableOpacity>
           </>
         )}

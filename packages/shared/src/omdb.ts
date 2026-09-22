@@ -171,6 +171,10 @@ export function cleanProductTitleForSearch(productTitle: string): string {
     .replace(COLLECTION_HINT_WORDS, "")
     .replace(MARKETPLACE_NOISE_WORDS, "")
     .replace(/[([].*?[)\]]/g, "")
+    // Some listings append the product's own barcode to the title ("Justice League, 5051892211390",
+    // found live 2026-09-19), which made the movie search find nothing. Real titles never contain a
+    // run of 8+ digits, so any such run is dropped.
+    .replace(/\b\d{8,14}\b/g, "")
     .replace(/[,;]+/g, " ")
     .replace(/\s+-\s+/g, " ")
     .replace(/^[-.\s]+|[-.\s]+$/g, "")

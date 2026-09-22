@@ -52,6 +52,12 @@ import { getIsOnline } from "../lib/network";
 import { queueSubmissionOffline } from "../lib/offlineQueue";
 import SearchableModalInput from "../components/SearchableModalInput";
 import TagSearchableModalInput from "../components/TagSearchableModalInput";
+import IndeterminateBar from "../components/IndeterminateBar";
+import SlideFlow from "../components/SlideFlow";
+import BigChoice from "../components/BigChoice";
+import SummaryRow from "../components/SummaryRow";
+import FranchiseEditor from "../components/FranchiseEditor";
+import { autoMatchTitlesFromName, isGenericCollectionName, nameListsAllTitles } from "../lib/collectionName";
 import MultiSelectChips from "../components/MultiSelectChips";
 import SingleSelectChips from "../components/SingleSelectChips";
 import SelectDropdown from "../components/SelectDropdown";
@@ -156,11 +162,20 @@ function guessMovieOrTvFromType(type: string | undefined): string {
  * locations that actually apply to what's currently being catalogued means a movie scan never
  * has to scroll past TV/Collection shelves (and vice versa) to find its own. Existing values
  * predating this convention have no prefix either, so they fall into the "movie" bucket by
- * default - genuinely correct for the vast majority of the real collection, which is movies. */
+ * default - genuinely correct for the vast majority of the real collection, which is movies.
+ *
+ * **"BOX COLLECTION " added (2026-09-20, later)** - the user physically stores big, dedicated
+ * box sets (e.g. the Alfred Hitchcock 4K Classics) in a separate area of the room from smaller
+ * single-case multi-movie sets (e.g. a 2-movies-on-one-disc Abbott and Costello release), each
+ * with their own "Person" (and presumably other) sub-categories - "BOX COLLECTION Person" and
+ * plain "COLLECTION Person" are therefore two genuinely different real shelf sections, not a
+ * spelling variant of each other. Both are collection-only prefixes for filtering purposes. */
 function filterGenreLocationOptions(options: string[], isCollectionEntry: boolean, movieOrTvValue: string): string[] {
-  if (isCollectionEntry) return options.filter((o) => o.startsWith("COLLECTION "));
+  if (isCollectionEntry) return options.filter((o) => o.startsWith("COLLECTION ") || o.startsWith("BOX COLLECTION "));
   const isTv = movieOrTvValue.startsWith("TV ");
-  return options.filter((o) => (isTv ? o.startsWith("TV ") : !o.startsWith("TV ") && !o.startsWith("COLLECTION ")));
+  return options.filter(
+    (o) => (isTv ? o.startsWith("TV ") : !o.startsWith("TV ") && !o.startsWith("COLLECTION ") && !o.startsWith("BOX COLLECTION "))
+  );
 }
 
 function formatDateOnly(date: Date): string {
@@ -613,6 +628,12 @@ export default function ConfirmScreen({
   const [tmdbPreview, setTmdbPreview] = useState<TmdbPreview | null>(null);
   const [tmdbPreviewLoading, setTmdbPreviewLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [activeSlide, setActiveSlide] = useState("title");
+  const [slideReturn, setSlideReturn] = useState<string | null>(null);
+  const [openRow, setOpenRow] = useState<string | null>(null);
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [activeSlide]);
   const [checkingExisting, setCheckingExisting] = useState(false);
   const [existingCheck, setExistingCheck] = useState<MatchCheck | null>(null);
   const [chosenExistingId, setChosenExistingId] = useState<string | null>(null);
@@ -637,6 +658,17 @@ export default function ConfirmScreen({
   // counts at once, so there is exactly one value of each for the header and every member.
   // (isCollectionOverride itself is declared much earlier, right after `draft` - needsTitleSearch
   // below needs to read it and runs before this point in the function.)
+  // Collection header's own Total Disc Count (typed once - every physical disc in the box, bonus
+  // disc included) and which numbered disc(s) are the collection's own bonus disc. Redesigned
+  // 2026-09-20 (see barcode-scanning-pipeline.md's Collections section): the header total used to
+  // be computed from the members, which double-counted a disc two titles share and was then
+  // overwritten again server-side by a naive sum - now it's a plain typed field, and each title
+  // just ticks which numbered disc(s) it's on. Kept separate from `discCount` (the single-title
+  // form's own field) so it starts blank instead of inheriting that field's "1" default.
+  const [collectionDiscCount, setCollectionDiscCount] = useState(draft?.collectionDiscCount ?? "");
+  const [bonusDiscs, setBonusDiscs] = useState<number[]>(draft?.bonusDiscs ?? []);
+  // Key of the member currently open in the edit-title picker, or null when adding a new one.
+  const [editingMemberKey, setEditingMemberKey] = useState<string | null>(null);
   const [collectionMembers, setCollectionMembers] = useState<CollectionMember[]>(
     draft?.collectionMembers ?? []
   );
@@ -759,6 +791,8 @@ export default function ConfirmScreen({
       episodeCount,
       isCollectionOverride,
       collectionMembers,
+      collectionDiscCount,
+      bonusDiscs,
     });
   }, [
     scan.id,
@@ -803,6 +837,8 @@ export default function ConfirmScreen({
     episodeCount,
     isCollectionOverride,
     collectionMembers,
+    collectionDiscCount,
+    bonusDiscs,
   ]);
 
   /** Runs the typed title through the same OMDB search the automatic resolver uses,
@@ -842,13 +878,58 @@ export default function ConfirmScreen({
   // this isn't gated on "more than 1 disc" - Special Features alone means "this collection has
   // its own bonus disc, separate from any title's own", per the user's own explicit spec.
   const showHeaderSpecialFeaturesDiscFields = specialFeatures;
-  // The header's own Disc Count is no longer manually typed (per the user's own request) -
-  // it's the true total of every physical disc in the box: each title's own disc_count, plus
-  // the collection's own bonus disc(s) if it has one. Recomputed live as titles are added so
-  // the shared step can show it for the user's own information.
-  const collectionTotalDiscCount =
-    collectionMembers.reduce((sum, m) => sum + (parseInt(m.discCount, 10) || 0), 0) +
-    (specialFeatures ? parseInt(specialFeaturesDiscCount, 10) || 0 : 0);
+  // Numeric form of the header's typed Total Disc Count - drives the per-title "What disc(s) is
+  // this title on?" checkbox lists and the bonus-disc selector below (0 until it's filled in).
+  const totalDiscCountNumber = Math.max(0, parseInt(collectionDiscCount, 10) || 0);
+  // Mirrors performCreateCollection's own `nameOfCollection` generation (kept in sync with it
+  // deliberately) so the user can watch the real saved name build up live as titles are added,
+  // rather than only discovering the final colon-list string after Confirm. `manualTitle` stays
+  // the plain base name the whole time - this is a read-only preview, never fed back into it.
+  // Two collection-name rules (2026-09-20, kept identical to performCreateCollection's): a name that
+  // already lists every added title is saved exactly as typed (no ": Title1, Title2" suffix), and a
+  // generic name like "2 Movie Collection" needs no Release Name at all.
+  const collectionNameListsTitles = nameListsAllTitles(
+    manualTitle,
+    collectionMembers.map((m) => m.title)
+  );
+  const collectionNameIsGeneric = isGenericCollectionName(manualTitle);
+  const previewCollectionName =
+    collectionMembers.length > 0
+      ? collectionNameListsTitles
+        ? manualTitle.trim()
+        : `${manualTitle.trim()}: ${collectionMembers.map((m) => m.title).join(", ")}`
+      : "";
+
+  // Pre-search (2026-09-20, "fully automatic on entering the name" per the user): once a name has
+  // been typed and settled, look its film titles up on OMDB and pre-fill the titles list with the
+  // confident matches. Only while the list is still empty (never overwrites work), each distinct
+  // name is tried once, and a result for a name that has since changed is discarded.
+  const autoMatchedNameRef = useRef("");
+  const [autoMatching, setAutoMatching] = useState(false);
+  useEffect(() => {
+    if (!isCollectionOverride || collectionMembers.length > 0) return;
+    const name = manualTitle.trim();
+    if (name.length < 8 || autoMatchedNameRef.current === name) return;
+    const handle = setTimeout(async () => {
+      autoMatchedNameRef.current = name;
+      setAutoMatching(true);
+      try {
+        const matched = await autoMatchTitlesFromName(
+          name,
+          format,
+          (q) => searchTitleOnOmdb(q, false),
+          () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+        );
+        if (matched.length > 0 && autoMatchedNameRef.current === name) {
+          setCollectionMembers((prev) => (prev.length > 0 ? prev : matched));
+        }
+      } finally {
+        setAutoMatching(false);
+      }
+    }, 1200);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCollectionOverride, manualTitle, collectionMembers.length]);
   // A multi-disc release with special features almost always means exactly one of those
   // discs is the bonus-features disc - default the count to 1 the moment these fields
   // become relevant, but only while blank, so it's never overwritten once the user has
@@ -1307,8 +1388,13 @@ export default function ConfirmScreen({
     if (!genreLocation.trim()) missing.push("Genre Location");
     if (diskRegions.size === 0) missing.push("Disk Region");
     if (!discCondition.trim()) missing.push("Disc Condition");
+    if (totalDiscCountNumber < 1) missing.push("Total Disc Count");
+    const membersMissingDiscs = collectionMembers.filter((m) => !m.discNumbers.trim()).map((m) => m.title);
+    if (membersMissingDiscs.length > 0) missing.push(`Disc(s) for: ${membersMissingDiscs.join(", ")}`);
+    const membersMissingFormat = collectionMembers.filter((m) => !m.format.trim()).map((m) => m.title);
+    if (membersMissingFormat.length > 0) missing.push(`Format for: ${membersMissingFormat.join(", ")}`);
     if (showHeaderSpecialFeaturesDiscFields) {
-      if (!specialFeaturesDiscCount.trim()) missing.push("Number of Special Features Discs (for the collection's own bonus disc)");
+      if (bonusDiscs.length === 0) missing.push("Which disc is the collection's own bonus disc");
       if (!specialFeaturesDiscFormat.trim()) missing.push("Format of Special Features Discs (for the collection's own bonus disc)");
     }
     if (isHistoryDocumentary && !depictedEraLabel.trim()) missing.push("Depicted Era");
@@ -1520,6 +1606,9 @@ export default function ConfirmScreen({
       disc_condition: discCondition,
       case_notes: caseNotes.trim() || null,
       steelbook,
+      // Optional collection-wide animation style ("2D 3D Hybrid Animation"); blank lets each title
+      // use its own TMDb-detected value and the header derive from them.
+      animation_or_live_action: animationOrLiveAction.trim() || undefined,
       is_currently_rented_out: isCurrentlyRentedOut,
       rented_by_who: isCurrentlyRentedOut ? rentedByWho.trim() || null : null,
       date_rented: isCurrentlyRentedOut ? dateRented || null : null,
@@ -1542,6 +1631,11 @@ export default function ConfirmScreen({
    * to fit is the simpler, lower-risk choice for this pass. */
   async function performCreateCollection(overwriteDecisions: Record<string, string | undefined>) {
     setSubmitting(true);
+    // Scroll to the bottom (where the Confirm button now reads "Saving..." and the loading bar
+    // sits) instead of letting the form snap back to the top - a Collection save takes a
+    // few seconds and the user wants to watch it happen (2026-09-20). Delayed a beat so it runs
+    // after the screen has finished switching back from the duplicate-resolution view, if any.
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 250);
     setError(null);
     try {
       const shared = buildSharedCollectionFields();
@@ -1555,7 +1649,11 @@ export default function ConfirmScreen({
       // match and the Sheet aggregation both group by), so members get this same full name too.
       const baseCollectionName = manualTitle.trim();
       const memberTitleList = collectionMembers.map((m) => m.title).join(", ");
-      const nameOfCollection = memberTitleList ? `${baseCollectionName}: ${memberTitleList}` : baseCollectionName;
+      // A name that already lists every added title is kept exactly as typed (2026-09-20).
+      const nameOfCollection =
+        memberTitleList && !nameListsAllTitles(baseCollectionName, collectionMembers.map((m) => m.title))
+          ? `${baseCollectionName}: ${memberTitleList}`
+          : baseCollectionName;
       const headerEntry: ConfirmEntry = {
         barcodeId: scan.barcode ?? undefined,
         overwriteUniqueId: overwriteDecisions["header"],
@@ -1576,14 +1674,30 @@ export default function ConfirmScreen({
           // any more, it's the real total across every physical disc in the box (every
           // member's own disc_count, plus the collection's own bonus disc(s) if it has one).
           format,
-          disc_count: collectionTotalDiscCount || 1,
+          disc_count: totalDiscCountNumber || 1,
           special_features: specialFeatures,
-          special_features_disc_count: showHeaderSpecialFeaturesDiscFields ? parseInt(specialFeaturesDiscCount, 10) || null : null,
+          special_features_disc_count: showHeaderSpecialFeaturesDiscFields ? bonusDiscs.length || null : null,
+          // Which numbered disc(s) hold the collection's own bonus features - stored in the
+          // header's own disc_number_in_set (the same column each member uses for "which disc(s)
+          // am I on"), so the shape of the data is the same at both levels.
+          disc_number_in_set: showHeaderSpecialFeaturesDiscFields ? [...bonusDiscs].sort((x, y) => x - y).join(",") || null : null,
           special_features_disc_format: showHeaderSpecialFeaturesDiscFields ? specialFeaturesDiscFormat || null : null,
           // Release Name describes the box's own edition/packaging (e.g. "The Coppola
           // Restoration") - a member's own is independent, since a definitive/remastered cut
-          // of one specific film can be bundled into an otherwise-ordinary box set.
-          release_name: releaseNameMatchesTitle ? null : releaseName.trim() || null,
+          // of one specific film can be bundled into an otherwise-ordinary box set. When
+          // "Same as name" is checked, this deliberately stores `baseCollectionName` (the
+          // plain name actually printed on the box) rather than null - unlike the single-title
+          // flow (where null correctly means "release_name would just duplicate title, so skip
+          // it"), a collection header's own `title`/`name_of_collection` always differ from the
+          // box's own printed name once the colon+member-list suffix is appended, so nulling
+          // this out would silently discard the one real fact the checkbox was confirming
+          // (found 2026-09-20 - the user asked this be checked after this exact ambiguity).
+          // A generic name ("2 Movie Collection") identifies nothing by itself, so no Release Name.
+          release_name: isGenericCollectionName(baseCollectionName)
+            ? null
+            : releaseNameMatchesTitle
+              ? baseCollectionName || null
+              : releaseName.trim() || null,
           // Rating (#7): the collection's own classification as printed on the box - always a
           // plain manual field, since there's no TMDb id for a header to auto-fill it from.
           rating: rating.trim() || null,
@@ -1627,6 +1741,9 @@ export default function ConfirmScreen({
           // This title's own Release Name, independent of the collection's - see the comment
           // on the header entry above.
           release_name: m.releaseName?.trim() || null,
+          // Which physical disc(s) this title is on within the set - ticked from the header's
+          // Total Disc Count checkbox list; disc_count above is just how many it ticked.
+          disc_number_in_set: m.discNumbers?.trim() || null,
         },
       }));
 
@@ -1647,6 +1764,15 @@ export default function ConfirmScreen({
    * title along (`collectionMemberTitles`) so find-existing's fuzzy match can use member-title
    * overlap as its strongest signal - see find-existing/route.ts's own comment. A "none" result
    * (the common case) skips straight to submission with no overwrite decisions at all. */
+  /** Same test the server uses for collection members (find-existing/route.ts): a shared IMDb id,
+   * or titles equal once every space/hyphen/colon/case difference is ignored ("Spider-Man: Into the
+   * Spider-Verse" vs "Spiderman into the Spiderverse"). */
+  function memberMatchesExisting(m: CollectionMember, e: { title: string; imdbId?: string | null }): boolean {
+    if (m.imdbId && e.imdbId && m.imdbId === e.imdbId) return true;
+    const loose = (t: string) => normalizeTitleForMatch(t).replace(/\s+/g, "");
+    return loose(m.title) === loose(e.title);
+  }
+
   async function handleConfirmCollectionPressed() {
     setError(null);
     const missingFields = getMissingCollectionFields();
@@ -1668,7 +1794,8 @@ export default function ConfirmScreen({
         format,
         undefined,
         true,
-        collectionMembers.map((m) => m.title)
+        collectionMembers.map((m) => m.title),
+        collectionMembers.map((m) => m.imdbId)
       );
       if (result.status === "none") {
         await performCreateCollection({});
@@ -1698,11 +1825,12 @@ export default function ConfirmScreen({
       await performCreateCollection({});
       return;
     }
-    const decisions: Record<string, string | undefined> = { header: chosenMatch.unique_id };
+    // A member-only group (older set with no header row of its own) must never become the header's
+    // overwrite target - the header is simply inserted fresh, only the matching members overwrite.
+    const decisions: Record<string, string | undefined> = chosenMatch.memberOnlyGroup ? {} : { header: chosenMatch.unique_id };
     const existingMembers = chosenMatch.existingMemberTitles ?? [];
     for (const m of collectionMembers) {
-      const target = normalizeTitleForMatch(m.title);
-      const existingMatch = existingMembers.find((e) => normalizeTitleForMatch(e.title) === target);
+      const existingMatch = existingMembers.find((e) => memberMatchesExisting(m, e));
       if (existingMatch) decisions[m.key] = existingMatch.unique_id;
     }
     setCollectionMatchCheck(null);
@@ -1715,11 +1843,7 @@ export default function ConfirmScreen({
       collectionMatchCheck.status === "auto" ? [collectionMatchCheck.match] : collectionMatchCheck.candidates;
     const chosenMatch = matchCandidates.find((c) => c.unique_id === chosenCollectionMatchId) ?? null;
     const overlapCount = chosenMatch
-      ? collectionMembers.filter((m) =>
-          (chosenMatch.existingMemberTitles ?? []).some(
-            (e) => normalizeTitleForMatch(e.title) === normalizeTitleForMatch(m.title)
-          )
-        ).length
+      ? collectionMembers.filter((m) => (chosenMatch.existingMemberTitles ?? []).some((e) => memberMatchesExisting(m, e))).length
       : 0;
 
     return (
@@ -1943,13 +2067,15 @@ export default function ConfirmScreen({
       </TouchableOpacity>
       <Text style={styles.title}>{scan.barcode ? `Barcode ${scan.barcode}` : "New Entry"}</Text>
 
+      {(isCollectionOverride || needsTitleSearch || activeSlide === "title" || (activeSlide === "summary" && selected.size === 0)) && (
       <TouchableOpacity style={styles.checkboxRow} onPress={() => setIsCollectionOverride((prev) => !prev)}>
         <View style={[styles.checkbox, isCollectionOverride && styles.checkboxChecked]}>
           {isCollectionOverride && <Text style={styles.checkboxMark}>✓</Text>}
         </View>
         <Text style={styles.checkboxLabel}>This is a collection / box set (more than one movie in this case)</Text>
       </TouchableOpacity>
-      {autoDetectedCollection !== isCollectionOverride && (
+      )}
+      {autoDetectedCollection !== isCollectionOverride && (isCollectionOverride || needsTitleSearch || activeSlide === "title" || (activeSlide === "summary" && selected.size === 0)) && (
         <Text style={styles.hint}>Overriding the automatic guess.</Text>
       )}
 
@@ -1966,9 +2092,17 @@ export default function ConfirmScreen({
               placeholderTextColor="#71717a"
             />
             <Text style={styles.hint}>
-              If this exact box-set name is also used for a different set of titles, add a colon and list the
-              titles in this specific set to tell them apart.
+              Just the base name - as you add titles below, this automatically becomes &quot;{"<name>"}: Title 1,
+              Title 2, ...&quot; so a box set sharing this same base name with a different set of titles can still be
+              told apart.
             </Text>
+            {autoMatching && <Text style={styles.hint}>Looking up the film titles in this name...</Text>}
+            {previewCollectionName !== "" && (
+              <Text style={styles.hint}>
+                Will be saved as: {previewCollectionName}
+                {collectionNameListsTitles ? " (this name already lists the titles, so nothing is added to it)" : ""}
+              </Text>
+            )}
           </View>
           <View style={styles.section}>
             <Text style={styles.label}>Collection Type (Movie or TV)</Text>
@@ -2020,10 +2154,36 @@ export default function ConfirmScreen({
             </Text>
           </View>
           <View style={styles.section}>
-            <Text style={styles.label}>Disc Count</Text>
-            <Text style={styles.body}>
-              Total discs in this box: {collectionTotalDiscCount || 0} (every title&apos;s own Disc
-              Count added below, plus the collection&apos;s own bonus disc if it has one)
+            <Text style={styles.label}>Total Disc Count</Text>
+            <TextInput
+              style={styles.input}
+              value={collectionDiscCount}
+              onChangeText={(text) => {
+                const next = digitsOnly(text);
+                setCollectionDiscCount(next);
+                const max = parseInt(next, 10) || 0;
+                setBonusDiscs((prev) => prev.filter((n) => n <= max));
+              }}
+              keyboardType="number-pad"
+              placeholder="e.g. 2"
+              placeholderTextColor="#71717a"
+            />
+            <Text style={styles.hint}>
+              Every physical disc in the box, the collection&apos;s own bonus disc included. Each title you add
+              below then just ticks which of these discs it&apos;s on.
+            </Text>
+          </View>
+          <View style={styles.section}>
+            <Text style={styles.label}>Animation or Live Action (optional - applies to every title)</Text>
+            <SearchableModalInput
+              value={animationOrLiveAction}
+              onChangeText={setAnimationOrLiveAction}
+              options={fieldOptions?.animationOrLiveAction ?? []}
+              onFocusScroll={scrollFieldIntoView}
+            />
+            <Text style={styles.hint}>
+              For an animated set, type or pick the style (e.g. 2D 3D Hybrid Animation). Leave blank and each
+              title uses what TMDb says, with the collection taking the shared value (or Hybrid if they differ).
             </Text>
           </View>
           <View style={styles.section}>
@@ -2042,15 +2202,26 @@ export default function ConfirmScreen({
           {showHeaderSpecialFeaturesDiscFields && (
             <>
               <View style={styles.section}>
-                <Text style={styles.label}>Number of Special Features Discs</Text>
-                <TextInput
-                  style={styles.input}
-                  value={specialFeaturesDiscCount}
-                  onChangeText={(text) => setSpecialFeaturesDiscCount(digitsOnly(text))}
-                  keyboardType="number-pad"
-                  placeholder="e.g. 1"
-                  placeholderTextColor="#71717a"
-                />
+                <Text style={styles.label}>Which disc is the bonus disc?</Text>
+                {totalDiscCountNumber > 0 ? (
+                  Array.from({ length: totalDiscCountNumber }, (_, i) => i + 1).map((n) => {
+                    const checked = bonusDiscs.includes(n);
+                    return (
+                      <TouchableOpacity
+                        key={n}
+                        style={styles.checkboxRow}
+                        onPress={() => setBonusDiscs((prev) => (prev.includes(n) ? prev.filter((d) => d !== n) : [...prev, n]))}
+                      >
+                        <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
+                          {checked && <Text style={styles.checkboxMark}>✓</Text>}
+                        </View>
+                        <Text style={styles.checkboxLabel}>Disc {n}</Text>
+                      </TouchableOpacity>
+                    );
+                  })
+                ) : (
+                  <Text style={styles.hint}>Enter the Total Disc Count above first, then pick the bonus disc here.</Text>
+                )}
               </View>
               <View style={styles.section}>
                 <Text style={styles.label}>Format of Special Features Discs</Text>
@@ -2063,27 +2234,35 @@ export default function ConfirmScreen({
               </View>
             </>
           )}
-          <View style={styles.section}>
-            <View style={styles.row}>
-              <Text style={styles.label}>Release Name (if different from the collection name)</Text>
-              <TouchableOpacity style={styles.checkboxRow} onPress={() => setReleaseNameMatchesTitle((prev) => !prev)}>
-                <View style={[styles.checkbox, releaseNameMatchesTitle && styles.checkboxChecked]}>
-                  {releaseNameMatchesTitle && <Text style={styles.checkboxMark}>✓</Text>}
-                </View>
-                <Text style={styles.checkboxLabel}>Same as name</Text>
-              </TouchableOpacity>
+          {collectionNameIsGeneric ? (
+            <Text style={styles.hint}>
+              This name is generic, so it doesn&apos;t need a Release Name - it will be saved without one.
+            </Text>
+          ) : (
+            <>
+            <View style={styles.section}>
+              <View style={styles.row}>
+                <Text style={styles.label}>Release Name (if different from the collection name)</Text>
+                <TouchableOpacity style={styles.checkboxRow} onPress={() => setReleaseNameMatchesTitle((prev) => !prev)}>
+                  <View style={[styles.checkbox, releaseNameMatchesTitle && styles.checkboxChecked]}>
+                    {releaseNameMatchesTitle && <Text style={styles.checkboxMark}>✓</Text>}
+                  </View>
+                  <Text style={styles.checkboxLabel}>Same as name</Text>
+                </TouchableOpacity>
+              </View>
+              <TextInput
+                style={styles.input}
+                value={releaseName}
+                onChangeText={(text) => {
+                  setReleaseName(text);
+                  setReleaseNameMatchesTitle(text.trim().length === 0);
+                }}
+                placeholder="e.g. The Coppola Restoration"
+                placeholderTextColor="#71717a"
+              />
             </View>
-            <TextInput
-              style={styles.input}
-              value={releaseName}
-              onChangeText={(text) => {
-                setReleaseName(text);
-                setReleaseNameMatchesTitle(text.trim().length === 0);
-              }}
-              placeholder="e.g. The Coppola Restoration"
-              placeholderTextColor="#71717a"
-            />
-          </View>
+            </>
+          )}
           <View style={styles.section}>
             <Text style={styles.label}>Release Variant Note (optional)</Text>
             <TextInput
@@ -2192,17 +2371,31 @@ export default function ConfirmScreen({
           )}
 
           <Text style={styles.groupHeader}>Titles in this set ({collectionMembers.length})</Text>
+          {previewCollectionName !== "" && (
+            <Text style={styles.hint}>Will be saved as: {previewCollectionName}</Text>
+          )}
+          {collectionMembers.some((m) => !m.discNumbers.trim()) && (
+            <Text style={styles.hint}>
+              Some titles were matched automatically from the collection name - tap Edit on each to tick which disc(s) it&apos;s on (set the Total Disc Count above first).
+            </Text>
+          )}
           {collectionMembers.map((m) => (
             <View key={m.key} style={styles.section}>
-              <View style={styles.row}>
+              <TouchableOpacity
+                style={styles.row}
+                onPress={() => {
+                  setEditingMemberKey(m.key);
+                  setShowTitleSearchPicker(true);
+                }}
+              >
                 {m.poster && <Image source={{ uri: m.poster }} style={styles.posterThumbInline} resizeMode="cover" />}
                 <Text style={styles.body}>
                   {m.title}
                   {m.seasonNo ? ` - Season ${m.seasonNo}` : ""}
                 </Text>
-              </View>
+              </TouchableOpacity>
               <Text style={styles.hint}>
-                {m.format}, {m.discCount} disc{m.discCount === "1" ? "" : "s"}
+                {m.format}, disc{m.discNumbers.includes(",") ? "s" : ""} {m.discNumbers || "?"}
                 {m.specialFeatures ? " (+ special features disc)" : ""}
               </Text>
               <View style={styles.row}>
@@ -2219,14 +2412,34 @@ export default function ConfirmScreen({
                   <Text style={styles.checkboxLabel}>Watched</Text>
                 </TouchableOpacity>
               </View>
-              <TouchableOpacity onPress={() => removeCollectionMember(m.key)}>
-                <Text style={styles.link}>Remove</Text>
-              </TouchableOpacity>
+              <View style={styles.row}>
+                <TouchableOpacity
+                  onPress={() => {
+                    setEditingMemberKey(m.key);
+                    setShowTitleSearchPicker(true);
+                  }}
+                >
+                  <Text style={styles.link}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => removeCollectionMember(m.key)}>
+                  <Text style={styles.link}>Remove</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           ))}
-          <TouchableOpacity style={styles.button} onPress={() => setShowTitleSearchPicker(true)}>
+          <TouchableOpacity
+            style={[styles.button, totalDiscCountNumber < 1 && { opacity: 0.4 }]}
+            onPress={() => {
+              setEditingMemberKey(null);
+              setShowTitleSearchPicker(true);
+            }}
+            disabled={totalDiscCountNumber < 1}
+          >
             <Text style={styles.buttonText}>+ Add a title</Text>
           </TouchableOpacity>
+          {totalDiscCountNumber < 1 && (
+            <Text style={styles.hint}>Enter the Total Disc Count above first, so each title can pick its disc(s).</Text>
+          )}
 
           {error && <Text style={styles.error}>{error}</Text>}
           <TouchableOpacity
@@ -2238,6 +2451,7 @@ export default function ConfirmScreen({
               {checkingCollectionDuplicates ? "Checking your collection..." : submitting ? "Saving..." : "Confirm Collection"}
             </Text>
           </TouchableOpacity>
+          {(submitting || checkingCollectionDuplicates) && <IndeterminateBar />}
           <TouchableOpacity onPress={handleDiscard} disabled={submitting || checkingCollectionDuplicates}>
             <Text style={styles.link}>This was a stray scan - discard it</Text>
           </TouchableOpacity>
@@ -2249,13 +2463,20 @@ export default function ConfirmScreen({
                 so this cuts down on re-typing it for every title while still leaving each one
                 fully editable. */}
             <TitleSearchPicker
+              editingMember={editingMemberKey ? collectionMembers.find((m) => m.key === editingMemberKey) ?? null : null}
+              totalDiscCount={totalDiscCountNumber}
               onAdd={(member) => {
-                setCollectionMembers((prev) => [...prev, member]);
+                setCollectionMembers((prev) =>
+                  prev.some((m) => m.key === member.key) ? prev.map((m) => (m.key === member.key ? member : m)) : [...prev, member]
+                );
+                setEditingMemberKey(null);
                 setShowTitleSearchPicker(false);
               }}
-              onCancel={() => setShowTitleSearchPicker(false)}
+              onCancel={() => {
+                setEditingMemberKey(null);
+                setShowTitleSearchPicker(false);
+              }}
               initialFormat={collectionMembers.length > 0 ? collectionMembers[collectionMembers.length - 1].format : format}
-              initialDiscCount={collectionMembers.length > 0 ? collectionMembers[collectionMembers.length - 1].discCount : "1"}
               initialSpecialFeatures={
                 collectionMembers.length > 0 ? collectionMembers[collectionMembers.length - 1].specialFeatures : false
               }
@@ -2317,14 +2538,12 @@ export default function ConfirmScreen({
         </View>
       ) : (
         <>
-      {existingMatch && (
-        <Text style={styles.hint}>
-          This barcode already matches your entry for &quot;{existingMatch.title}&quot; - fields
-          below are pre-filled from it. Add or edit anything new, then Confirm to choose whether
-          to overwrite it, add it as a genuinely separate entry, or reject this scan.
-        </Text>
-      )}
 
+
+      {(() => {
+        const commonFormats = (fieldOptions?.format ?? []).filter((f) => /^(dvd|blu-?ray|4k uhd blu-?ray)$/i.test(f.trim()));
+        const matchNode = (
+          <>
       {upcProduct?.imageUrl && (
         <View style={styles.section}>
           <Text style={styles.label}>Your scanned item</Text>
@@ -2339,7 +2558,6 @@ export default function ConfirmScreen({
           </Text>
         </View>
       )}
-
       {autoMatchedCandidate && !showAllCandidates ? (
         <View style={styles.section}>
           <Text style={styles.label}>Matched by cover photo</Text>
@@ -2418,12 +2636,6 @@ export default function ConfirmScreen({
       ) : (
         <Text style={styles.hint}>No match found - enter this title manually.</Text>
       )}
-
-      {/* Moved up here 2026-09-19 (was near the bottom of the form) - the user asked for the
-          Movie/TV type to be settled right after the best match, since the type guess itself
-          is informed by whichever candidate was just picked above, and everything below this
-          point (the Title suggestion, Disc Details, ...) can then already account for it. */}
-      <Text style={styles.groupHeader}>Type</Text>
       <View style={styles.section}>
         <Text style={styles.label}>Movie or TV</Text>
         <SelectDropdown
@@ -2468,7 +2680,6 @@ export default function ConfirmScreen({
           </View>
         </>
       )}
-
       {/* Hidden for a plain single-movie match with a real OMDB/TMDb title already linked -
           added 2026-09-19 per the user's own request: the Title field is only worth seeing
           when it's genuinely being modified from what OMDB/TMDb already supplies, which only
@@ -2551,27 +2762,33 @@ export default function ConfirmScreen({
           </View>
         </>
       )}
-      <Text style={styles.groupHeader}>Disc Details</Text>
-      <View style={styles.section}>
-        <Text style={styles.label}>Format</Text>
+            <TouchableOpacity style={styles.button} onPress={() => setActiveSlide("summary")}>
+              <Text style={styles.buttonText}>{selected.size > 0 ? "This is the one - review" : "Continue to review"}</Text>
+            </TouchableOpacity>
+            {candidates.length > 0 && selected.size > 0 && (
+              <TouchableOpacity onPress={() => setSelected(new Set())}>
+                <Text style={styles.link}>None of these - enter it manually instead</Text>
+              </TouchableOpacity>
+            )}
+          </>
+        );
+        const formatNode = (
+          <>
+                <View style={styles.section}>
+                  <Text style={styles.label}>Format</Text>
+                  <BigChoice
+                    options={(fieldOptions?.format ?? []).filter((f) => /^(dvd|blu-?ray|4k uhd blu-?ray)$/i.test(f.trim()))}
+                    value={format}
+                    onChange={setFormat}
+                  />
+                  <Text style={styles.hint}>Something else (VHS, 3D, HD DVD...)? Pick it here:</Text>
         <SearchableModalInput
           value={format}
           onChangeText={setFormat}
           options={fieldOptions?.format ?? []}
           onFocusScroll={scrollFieldIntoView}
         />
-      </View>
-      <View style={styles.section}>
-        <Text style={styles.label}>Disc Count</Text>
-        <TextInput
-          ref={discCountInputRef}
-          style={styles.input}
-          value={discCount}
-          onChangeText={(text) => setDiscCount(digitsOnly(text))}
-          onFocus={() => scrollInputRefIntoView(discCountInputRef)}
-          keyboardType="number-pad"
-        />
-      </View>
+                </View>
       <View style={styles.section}>
         <Text style={styles.label}>Disk Region</Text>
         <MultiSelectChips
@@ -2582,37 +2799,138 @@ export default function ConfirmScreen({
         />
       </View>
       <View style={[styles.section, styles.row]}>
-        <Text style={styles.label}>Special Features</Text>
-        <Switch value={specialFeatures} onValueChange={setSpecialFeatures} />
+        <Text style={styles.label}>Steelbook</Text>
+        <Switch value={steelbook} onValueChange={setSteelbook} />
       </View>
-      {showSpecialFeaturesDiscFields && (
-        <>
-          <View style={styles.section}>
-            <Text style={styles.label}>Number of Special Features Discs</Text>
-            <TextInput
-              ref={specialFeaturesDiscCountInputRef}
-              style={styles.input}
-              value={specialFeaturesDiscCount}
-              onChangeText={(text) => setSpecialFeaturesDiscCount(digitsOnly(text))}
-              onFocus={() => scrollInputRefIntoView(specialFeaturesDiscCountInputRef)}
-              keyboardType="number-pad"
-              placeholder="e.g. 1"
-              placeholderTextColor="#71717a"
-            />
-          </View>
-          <View style={styles.section}>
-            <Text style={styles.label}>Format of Special Features Discs</Text>
-            <SearchableModalInput
-              value={specialFeaturesDiscFormat}
-              onChangeText={setSpecialFeaturesDiscFormat}
-              options={fieldOptions?.format ?? []}
-              onFocusScroll={scrollFieldIntoView}
-            />
-          </View>
-        </>
+          </>
+        );
+        const setSfCount = (n: number) => setSpecialFeaturesDiscCount(String(Math.max(1, n)));
+        const discsNode = (
+          <>
+                <View style={styles.section}>
+                  <Text style={styles.label}>Disc Count</Text>
+                  <View style={styles.stepper}>
+                    <TouchableOpacity
+                      style={styles.stepperButton}
+                      onPress={() => setDiscCount(String(Math.max(1, (parseInt(discCount, 10) || 1) - 1)))}
+                    >
+                      <Text style={styles.stepperButtonText}>-</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.stepperValue}>{discCount || "1"}</Text>
+                    <TouchableOpacity
+                      style={styles.stepperButton}
+                      onPress={() => setDiscCount(String((parseInt(discCount, 10) || 1) + 1))}
+                    >
+                      <Text style={styles.stepperButtonText}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+            <View style={[styles.section, styles.row]}>
+              <Text style={styles.label}>Special Features</Text>
+              <Switch value={specialFeatures} onValueChange={setSpecialFeatures} />
+            </View>
+            {showSpecialFeaturesDiscFields && (
+              <>
+                <View style={styles.section}>
+                  <Text style={styles.label}>Number of Special Features Discs</Text>
+                  <View style={styles.stepperSm}>
+                    <TouchableOpacity style={styles.stepperSmButton} onPress={() => setSfCount((parseInt(specialFeaturesDiscCount, 10) || 1) - 1)}>
+                      <Text style={styles.stepperSmText}>-</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.stepperSmValue}>{specialFeaturesDiscCount || "1"}</Text>
+                    <TouchableOpacity style={styles.stepperSmButton} onPress={() => setSfCount((parseInt(specialFeaturesDiscCount, 10) || 1) + 1)}>
+                      <Text style={styles.stepperSmText}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                <View style={styles.section}>
+                  <Text style={styles.label}>Format of Special Features Discs</Text>
+                  <BigChoice options={commonFormats} value={specialFeaturesDiscFormat} onChange={setSpecialFeaturesDiscFormat} columns={3} />
+                  <Text style={styles.hint}>Something else? Pick or type it here:</Text>
+                  <SearchableModalInput
+                    value={specialFeaturesDiscFormat}
+                    onChangeText={setSpecialFeaturesDiscFormat}
+                    options={fieldOptions?.format ?? []}
+                    onFocusScroll={scrollFieldIntoView}
+                  />
+                </View>
+              </>
+            )}
+          </>
+        );
+        const locationNode = (
+          <>
+            <View style={styles.section}>
+              <Text style={styles.label}>Genre Location (shelf section)</Text>
+              <BigChoice
+                options={filterGenreLocationOptions(fieldOptions?.genreLocation ?? [], false, movieOrTv)}
+                value={genreLocation}
+                onChange={setGenreLocation}
+              />
+              <Text style={styles.hint}>Not listed? Type a new one here:</Text>
+              <SearchableModalInput
+                value={genreLocation}
+                onChangeText={setGenreLocation}
+                options={filterGenreLocationOptions(fieldOptions?.genreLocation ?? [], false, movieOrTv)}
+                placeholder="e.g. Action, History Documentary"
+                onFocusScroll={scrollFieldIntoView}
+              />
+            </View>
+      {isHistoryDocumentary && (
+        <View style={styles.section}>
+          <Text style={styles.label}>Depicted Era (worded, e.g. &quot;Spanish Civil War&quot;)</Text>
+          <TextInput
+            ref={depictedEraLabelInputRef}
+            style={styles.input}
+            value={depictedEraLabel}
+            onChangeText={setDepictedEraLabel}
+            onFocus={() => scrollInputRefIntoView(depictedEraLabelInputRef)}
+            placeholder="e.g. Spanish Civil War, 1980s"
+            placeholderTextColor="#71717a"
+          />
+        </View>
       )}
-
-      <Text style={styles.groupHeader}>Physical Description</Text>
+          </>
+        );
+        const franchiseNode = (
+          <>
+            <View style={styles.section}>
+              <Text style={styles.label}>
+                Franchise (optional)
+                {singleSelectedImdbId && !franchise ? " - no series match on Wikidata" : ""}
+              </Text>
+              <FranchiseEditor
+                value={franchise}
+                onChange={setFranchise}
+                options={fieldOptions?.franchise ?? []}
+                cooccurrence={fieldOptions?.franchiseCooccurrence ?? {}}
+              />
+            </View>
+      {singleSelectedImdbId && tmdbPreviewLoading && (
+        <Text style={styles.hint}>Checking TMDb for Animation/Live Action...</Text>
+      )}
+      {singleSelectedImdbId && !tmdbPreviewLoading && !showAnimationField && (
+        <Text style={styles.hint}>Confirmed Live Action on TMDb.</Text>
+      )}
+      {showAnimationField && (
+        <View style={styles.section}>
+          <Text style={styles.label}>
+            Animation / Live Action
+            {singleSelectedImdbId && tmdbPreview?.isAnimated === true ? " (TMDb: Animation - pick a style)" : ""}
+          </Text>
+          <SearchableModalInput
+            value={animationOrLiveAction}
+            onChangeText={setAnimationOrLiveAction}
+            options={animationOptions}
+            placeholder="e.g. 2D Animation, 3D Animation, Claymation"
+            onFocusScroll={scrollFieldIntoView}
+          />
+        </View>
+      )}
+          </>
+        );
+        const releaseNode = (
+          <>
       <View style={styles.section}>
         <View style={styles.row}>
           <Text style={styles.label}>Release Name (if different from Title)</Text>
@@ -2657,10 +2975,6 @@ export default function ConfirmScreen({
         />
       </View>
       <View style={styles.section}>
-        <Text style={styles.label}>Disc Condition</Text>
-        <SingleSelectChips options={DISC_CONDITION_VALUES} value={discCondition} onChange={setDiscCondition} />
-      </View>
-      <View style={styles.section}>
         <Text style={styles.label}>Case Notes (optional)</Text>
         <TextInput
           ref={caseNotesInputRef}
@@ -2672,141 +2986,13 @@ export default function ConfirmScreen({
           placeholderTextColor="#71717a"
         />
       </View>
-
-      <Text style={styles.groupHeader}>Classification</Text>
+          </>
+        );
+        const detailsNode = (
+          <>
       <View style={styles.section}>
-        <Text style={styles.label}>Genre Location (shelf section)</Text>
-        <SearchableModalInput
-          value={genreLocation}
-          onChangeText={setGenreLocation}
-          options={filterGenreLocationOptions(fieldOptions?.genreLocation ?? [], false, movieOrTv)}
-          placeholder="e.g. Action, History Documentary"
-          onFocusScroll={scrollFieldIntoView}
-        />
-      </View>
-      {isHistoryDocumentary && (
-        <View style={styles.section}>
-          <Text style={styles.label}>Depicted Era (worded, e.g. &quot;Spanish Civil War&quot;)</Text>
-          <TextInput
-            ref={depictedEraLabelInputRef}
-            style={styles.input}
-            value={depictedEraLabel}
-            onChangeText={setDepictedEraLabel}
-            onFocus={() => scrollInputRefIntoView(depictedEraLabelInputRef)}
-            placeholder="e.g. Spanish Civil War, 1980s"
-            placeholderTextColor="#71717a"
-          />
-        </View>
-      )}
-      <View style={styles.section}>
-        <Text style={styles.label}>
-          Franchise (optional, comma-separated)
-          {singleSelectedImdbId && !franchise ? " - no series match on Wikidata" : ""}
-        </Text>
-        <TagSearchableModalInput
-          value={franchise}
-          onChangeText={setFranchise}
-          options={fieldOptions?.franchise ?? []}
-          placeholder="e.g. Marvel, Marvel Cinematic Universe, Captain Marvel"
-          onFocusScroll={scrollFieldIntoView}
-          numberOfLines={3}
-        />
-      </View>
-      {singleSelectedImdbId && tmdbPreviewLoading && (
-        <Text style={styles.hint}>Checking TMDb for Animation/Live Action...</Text>
-      )}
-      {singleSelectedImdbId && !tmdbPreviewLoading && !showAnimationField && (
-        <Text style={styles.hint}>Confirmed Live Action on TMDb.</Text>
-      )}
-      {showAnimationField && (
-        <View style={styles.section}>
-          <Text style={styles.label}>
-            Animation / Live Action
-            {singleSelectedImdbId && tmdbPreview?.isAnimated === true ? " (TMDb: Animation - pick a style)" : ""}
-          </Text>
-          <SearchableModalInput
-            value={animationOrLiveAction}
-            onChangeText={setAnimationOrLiveAction}
-            options={animationOptions}
-            placeholder="e.g. 2D Animation, 3D Animation, Claymation"
-            onFocusScroll={scrollFieldIntoView}
-          />
-        </View>
-      )}
-      {showTmdbOverrideField && (
-        <View style={styles.section}>
-          <Text style={styles.label}>TMDb Link or ID (required - TMDb had no automatic match)</Text>
-          <TextInput
-            ref={tmdbIdOverrideInputRef}
-            style={styles.input}
-            value={tmdbIdOverride}
-            onChangeText={setTmdbIdOverride}
-            onFocus={() => scrollInputRefIntoView(tmdbIdOverrideInputRef)}
-            placeholder="e.g. https://www.themoviedb.org/movie/12345"
-            placeholderTextColor="#71717a"
-            autoCapitalize="none"
-          />
-          <Text style={styles.hint}>
-            Every scanned title needs a real TMDb match so ratings, cast, posters and everything
-            else can be filled in automatically later - search themoviedb.org for this title and
-            paste its link here.
-          </Text>
-        </View>
-      )}
-      {singleSelectedImdbId && tmdbPreviewLoading && (
-        <Text style={styles.hint}>Checking TMDb for Rating/Studio/Original Language...</Text>
-      )}
-      {singleSelectedImdbId &&
-        !tmdbPreviewLoading &&
-        !showRatingField &&
-        !showStudioField &&
-        !showOriginalLanguageField && (
-          <Text style={styles.hint}>Rating, Studio and Original Language will be filled in from TMDb.</Text>
-        )}
-      {showRatingField && (
-        <View style={styles.section}>
-          <Text style={styles.label}>
-            Rating{singleSelectedImdbId ? " (not on TMDb - from the case)" : " (from the case)"}
-          </Text>
-          <SearchableModalInput
-            value={rating}
-            onChangeText={setRating}
-            options={fieldOptions?.rating ?? []}
-            placeholder="e.g. G, PG, M, R13"
-            onFocusScroll={scrollFieldIntoView}
-          />
-        </View>
-      )}
-      {showStudioField && (
-        <View style={styles.section}>
-          <Text style={styles.label}>Studio{singleSelectedImdbId ? " (not on TMDb)" : ""}</Text>
-          <SearchableModalInput
-            value={studio}
-            onChangeText={setStudio}
-            options={fieldOptions?.studio ?? []}
-            onFocusScroll={scrollFieldIntoView}
-          />
-        </View>
-      )}
-      {showOriginalLanguageField && (
-        <View style={styles.section}>
-          <Text style={styles.label}>
-            Original Language{singleSelectedImdbId ? " (not on TMDb)" : ""}
-          </Text>
-          <SearchableModalInput
-            value={originalLanguage}
-            onChangeText={setOriginalLanguage}
-            options={fieldOptions?.originalLanguage ?? []}
-            placeholder="e.g. English, Japanese"
-            onFocusScroll={scrollFieldIntoView}
-          />
-        </View>
-      )}
-
-      <Text style={styles.groupHeader}>Checkboxes</Text>
-      <View style={[styles.section, styles.row]}>
-        <Text style={styles.label}>Steelbook</Text>
-        <Switch value={steelbook} onValueChange={setSteelbook} />
+        <Text style={styles.label}>Disc Condition</Text>
+        <SingleSelectChips options={DISC_CONDITION_VALUES} value={discCondition} onChange={setDiscCondition} />
       </View>
       <TouchableOpacity
         style={styles.checkboxRow}
@@ -2913,7 +3099,164 @@ export default function ConfirmScreen({
         </View>
         <Text style={styles.checkboxLabel}>Watched</Text>
       </TouchableOpacity>
-
+          </>
+        );
+        const needsCaseInfo = showTmdbOverrideField || showRatingField || showStudioField || showOriginalLanguageField;
+        const neededNode = (
+          <>
+      {showTmdbOverrideField && (
+        <View style={styles.section}>
+          <Text style={styles.label}>TMDb Link or ID (required - TMDb had no automatic match)</Text>
+          <TextInput
+            ref={tmdbIdOverrideInputRef}
+            style={styles.input}
+            value={tmdbIdOverride}
+            onChangeText={setTmdbIdOverride}
+            onFocus={() => scrollInputRefIntoView(tmdbIdOverrideInputRef)}
+            placeholder="e.g. https://www.themoviedb.org/movie/12345"
+            placeholderTextColor="#71717a"
+            autoCapitalize="none"
+          />
+          <Text style={styles.hint}>
+            Every scanned title needs a real TMDb match so ratings, cast, posters and everything
+            else can be filled in automatically later - search themoviedb.org for this title and
+            paste its link here.
+          </Text>
+        </View>
+      )}
+      {singleSelectedImdbId && tmdbPreviewLoading && (
+        <Text style={styles.hint}>Checking TMDb for Rating/Studio/Original Language...</Text>
+      )}
+      {singleSelectedImdbId &&
+        !tmdbPreviewLoading &&
+        !showRatingField &&
+        !showStudioField &&
+        !showOriginalLanguageField && (
+          <Text style={styles.hint}>Rating, Studio and Original Language will be filled in from TMDb.</Text>
+        )}
+      {showRatingField && (
+        <View style={styles.section}>
+          <Text style={styles.label}>
+            Rating{singleSelectedImdbId ? " (not on TMDb - from the case)" : " (from the case)"}
+          </Text>
+          <SearchableModalInput
+            value={rating}
+            onChangeText={setRating}
+            options={fieldOptions?.rating ?? []}
+            placeholder="e.g. G, PG, M, R13"
+            onFocusScroll={scrollFieldIntoView}
+          />
+        </View>
+      )}
+      {showStudioField && (
+        <View style={styles.section}>
+          <Text style={styles.label}>Studio{singleSelectedImdbId ? " (not on TMDb)" : ""}</Text>
+          <SearchableModalInput
+            value={studio}
+            onChangeText={setStudio}
+            options={fieldOptions?.studio ?? []}
+            onFocusScroll={scrollFieldIntoView}
+          />
+        </View>
+      )}
+      {showOriginalLanguageField && (
+        <View style={styles.section}>
+          <Text style={styles.label}>
+            Original Language{singleSelectedImdbId ? " (not on TMDb)" : ""}
+          </Text>
+          <SearchableModalInput
+            value={originalLanguage}
+            onChangeText={setOriginalLanguage}
+            options={fieldOptions?.originalLanguage ?? []}
+            placeholder="e.g. English, Japanese"
+            onFocusScroll={scrollFieldIntoView}
+          />
+        </View>
+      )}
+          </>
+        );
+        const missingNow = getMissingRequiredFields();
+        const toggleRow = (key: string) => setOpenRow((prev) => (prev === key ? null : key));
+        const summaryNode = (
+          <>
+      {existingMatch && (
+        <Text style={styles.hint}>
+          This barcode already matches your entry for &quot;{existingMatch.title}&quot; - fields
+          below are pre-filled from it. Add or edit anything new, then Confirm to choose whether
+          to overwrite it, add it as a genuinely separate entry, or reject this scan.
+        </Text>
+      )}
+            <Text style={styles.hint}>Everything below is pre-filled. Tap a line to change it right here, or just Save.</Text>
+            <SummaryRow
+              label="Match & type"
+              value={
+                ((singleSelectedImdbId ? candidates.find((c) => c.imdbID === singleSelectedImdbId)?.Title : "") ||
+                  (candidates.length > 0 && selected.size === 0 ? "" : manualTitle)) + (movieOrTv ? ` (${movieOrTv})` : "")
+              }
+              missing={(candidates.length > 0 && selected.size === 0 && !manualTitle.trim()) || missingNow.includes("Title") || missingNow.includes("Movie or TV")}
+              onPress={() => {
+                setSlideReturn("summary");
+                setActiveSlide("title");
+              }}
+            />
+            <SummaryRow
+              label="Format & region"
+              value={[format, [...diskRegions].join(" / "), steelbook ? "Steelbook" : ""].filter(Boolean).join(", ")}
+              missing={!format.trim() || diskRegions.size === 0}
+              expanded={openRow === "format"}
+              onPress={() => toggleRow("format")}
+            >
+              {formatNode}
+            </SummaryRow>
+            <SummaryRow
+              label="Discs"
+              value={`${discCount || "1"} disc(s)` + (specialFeatures ? (showSpecialFeaturesDiscFields ? `, special features: ${specialFeaturesDiscCount || "?"} x ${specialFeaturesDiscFormat || "format?"}` : ", special features") : "")}
+              missing={showSpecialFeaturesDiscFields && (!specialFeaturesDiscCount.trim() || !specialFeaturesDiscFormat.trim())}
+              expanded={openRow === "discs"}
+              onPress={() => toggleRow("discs")}
+            >
+              {discsNode}
+            </SummaryRow>
+            <SummaryRow
+              label="Genre Location"
+              value={genreLocation + (isHistoryDocumentary && depictedEraLabel ? ` (${depictedEraLabel})` : "")}
+              missing={!genreLocation.trim() || (isHistoryDocumentary && !depictedEraLabel.trim())}
+              expanded={openRow === "location"}
+              onPress={() => toggleRow("location")}
+            >
+              {locationNode}
+            </SummaryRow>
+            <SummaryRow label="Franchise" value={franchise} expanded={openRow === "franchise"} onPress={() => toggleRow("franchise")}>
+              {franchiseNode}
+            </SummaryRow>
+            <SummaryRow
+              label="Release name & notes"
+              value={[releaseNameMatchesTitle ? "" : releaseName, releaseVariantNote, caseNotes].filter((v) => v.trim()).join("; ") || "Same as Title"}
+              expanded={openRow === "release"}
+              onPress={() => toggleRow("release")}
+            >
+              {releaseNode}
+            </SummaryRow>
+            <SummaryRow
+              label="Condition & watched"
+              value={[discCondition, watchedDisc ? "watched this disc" : watched ? "watched" : "", isCurrentlyRentedOut ? "rented out" : ""].filter(Boolean).join(", ")}
+              missing={!discCondition.trim()}
+              expanded={openRow === "details"}
+              onPress={() => toggleRow("details")}
+            >
+              {detailsNode}
+            </SummaryRow>
+            {needsCaseInfo && (
+              <SummaryRow
+                label="Needed from the case"
+                value={[showTmdbOverrideField ? "TMDb link" : "", showRatingField ? rating : "", showStudioField ? studio : "", showOriginalLanguageField ? originalLanguage : ""].filter(Boolean).join(", ")}
+                missing={missingNow.some((f) => ["Rating", "Studio", "Original Language"].includes(f)) || (showTmdbOverrideField && !tmdbIdOverride.trim())}
+                expanded={openRow === "needed"}
+                onPress={() => toggleRow("needed")}
+              >
+                {neededNode}
+              </SummaryRow>
+            )}
       {error && <Text style={styles.error}>{error}</Text>}
 
       <TouchableOpacity
@@ -2928,6 +3271,30 @@ export default function ConfirmScreen({
       <TouchableOpacity onPress={handleDiscard} disabled={submitting || checkingExisting}>
         <Text style={styles.link}>This was a stray scan - discard it</Text>
       </TouchableOpacity>
+          </>
+        );
+        return (
+          <SlideFlow
+            activeKey={activeSlide}
+            onChange={(key) => {
+              setSlideReturn(null);
+              setActiveSlide(key);
+            }}
+            returnKey={slideReturn}
+            slides={[
+              { key: "title", label: "Which title is this?", node: matchNode },
+              { key: "format", label: "Format & region", node: formatNode },
+              { key: "discs", label: "Discs & special features", node: discsNode },
+              { key: "location", label: "Where does it go on the shelf?", node: locationNode },
+              { key: "franchise", label: "Franchise & animation", node: franchiseNode },
+              { key: "release", label: "Release name & notes", node: releaseNode },
+              { key: "details", label: "Condition & watched", node: detailsNode },
+              ...(needsCaseInfo ? [{ key: "needed", label: "Needed from the case", node: neededNode }] : []),
+              { key: "summary", label: "Review & save", node: summaryNode },
+            ]}
+          />
+        );
+      })()}
         </>
       )}
       </ScrollView>
@@ -2937,6 +3304,14 @@ export default function ConfirmScreen({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#09090b" },
+  stepper: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 24 },
+  stepperButton: { width: 72, height: 72, borderRadius: 36, backgroundColor: "#27272a", alignItems: "center", justifyContent: "center" },
+  stepperButtonText: { color: "#f4f4f5", fontSize: 36, fontWeight: "700" },
+  stepperSm: { flexDirection: "row", alignItems: "center", gap: 16 },
+  stepperSmButton: { width: 52, height: 52, borderRadius: 26, backgroundColor: "#27272a", alignItems: "center", justifyContent: "center" },
+  stepperSmText: { color: "#f4f4f5", fontSize: 26, fontWeight: "700" },
+  stepperSmValue: { color: "#f4f4f5", fontSize: 26, fontWeight: "700", minWidth: 36, textAlign: "center" },
+  stepperValue: { color: "#f4f4f5", fontSize: 40, fontWeight: "700", minWidth: 60, textAlign: "center" },
   scrollView: { flex: 1 },
   scrollContent: { padding: 16, paddingTop: 48, gap: 12 },
   title: { color: "#f4f4f5", fontSize: 18, fontWeight: "700" },

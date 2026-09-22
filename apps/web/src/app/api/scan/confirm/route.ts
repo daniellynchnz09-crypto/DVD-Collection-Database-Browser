@@ -12,7 +12,11 @@ import {
   normalizeAnimationOrLiveAction,
   normalizeDiscCondition,
   normalizeFormat,
+  isValidNzRating,
+  normalizeFranchiseList,
   normalizeRating,
+  normalizeStudio,
+  removeNonGenreTags,
   omdbGetById,
   parseOmdbReleaseDate,
   parseOmdbRuntimeMins,
@@ -140,10 +144,18 @@ async function computeShelfLocation(
 ): Promise<{ before: string | null; after: string | null }> {
   if (!genreLocation) return { before: null, after: null };
 
+  // Excludes collection members (found live 2026-09-20, a real box set) - a member disc lives
+  // inside its own box, not as an independent object on the open shelf, so it must never be
+  // offered as a shelf-neighbor to anything (a standalone title, or a collection header, which
+  // shares its own genre_location with every one of its own members). Without this, a new
+  // collection header's own "neighbor" query could land on one of its own just-inserted
+  // members, or another set's member elsewhere in the same genre_location bucket - "you can't
+  // put a box set inside another box set."
   const { data: siblings } = await supabase
     .from("titles")
     .select("title, depicted_era_start")
     .eq("genre_location", genreLocation)
+    .eq("title_in_a_collection", false)
     .neq("unique_id", excludeUniqueId);
   if (!siblings || siblings.length === 0) return { before: null, after: null };
 
@@ -393,7 +405,7 @@ export async function POST(request: Request) {
     // column). A near-duplicate casing across two individual franchise entries (e.g.
     // "casper" vs "Casper") is a cosmetic gap left for a future backfill pass, same as the
     // Format-casing drift found and fixed once already - not a correctness issue.
-    const cleanFranchise: string[] = Array.isArray(manual.franchise) ? manual.franchise : [];
+    const cleanFranchise: string[] = normalizeFranchiseList(Array.isArray(manual.franchise) ? manual.franchise : []);
 
     // Priority: a manual entry (the physical case, or a single-title scan) always wins
     // when given; otherwise TMDb's per-title lookup above; otherwise whatever OMDB itself
@@ -404,8 +416,17 @@ export async function POST(request: Request) {
     const manualRating = normalizeRating(asString(manual.rating));
     const manualStudio = cleanFreeText(asString(manual.studio));
     const manualOriginalLanguage = cleanFreeText(asString(manual.original_language));
-    const finalRating = manualRating ?? tmdbFields.rating ?? (omdbFields.rating as string | null) ?? null;
-    const finalStudio = manualStudio ?? tmdbFields.studio ?? null;
+    // omdbFields.rating (OMDB's own `Rated` field) was never passed through normalizeRating at
+    // all until now (found live 2026-09-20 via 4 real rows stuck with the literal US
+    // pre-1968-classification value "Approved") - RATING_ALIASES' NZ-scheme entries are a no-op
+    // on an already-valid NZ code, so this is a strict fix, not a behavior change for the
+    // common case.
+    // Only a real NZ code is trusted from OMDB (same gate TMDb's NZ slot already has): "Not Rated",
+    // "Passed", "Unrated", "TV-14", "PG-13", "R" ... are US classifications, not this collection's
+    // scheme, so they're treated as "no answer" and reveal the manual Rating field instead.
+    const omdbRating = normalizeRating(asString(omdbFields.rating));
+    const finalRating = manualRating ?? tmdbFields.rating ?? (isValidNzRating(omdbRating) ? omdbRating : null);
+    const finalStudio = normalizeStudio(manualStudio ?? tmdbFields.studio ?? undefined);
     const finalOriginalLanguage = manualOriginalLanguage ?? tmdbFields.originalLanguage ?? null;
 
     const uniqueId = entry.overwriteUniqueId ?? randomUUID();
@@ -468,7 +489,8 @@ export async function POST(request: Request) {
       episode_count: manual.episode_count ?? null,
       release_date: manual.release_date ?? omdbFields.release_date ?? null,
       running_time_mins: manual.running_time_mins ?? omdbFields.running_time_mins ?? null,
-      genre: manual.genre ?? omdbFields.genre ?? [],
+      // "Animation" is a medium, not a genre - stripped here and captured in animation_or_live_action.
+      genre: removeNonGenreTags((manual.genre ?? omdbFields.genre ?? []) as string[]),
       director: manual.director ?? omdbFields.director ?? [],
       franchise: cleanFranchise,
       rating: finalRating,
@@ -480,7 +502,14 @@ export async function POST(request: Request) {
       special_features_disc_count: manual.special_features_disc_count ?? null,
       special_features_disc_format: normalizeFormat(asString(manual.special_features_disc_format)),
       animation_or_live_action:
-        normalizeAnimationOrLiveAction(asString(manual.animation_or_live_action)) ?? "Live Action",
+        normalizeAnimationOrLiveAction(asString(manual.animation_or_live_action)) ??
+        // No style was given (a collection member, or a scan where it wasn't asked): trust TMDb's
+        // own animated flag / the "Animation" genre tag rather than defaulting a cartoon to Live Action
+        // (found live: both Spider-Verse films saved as Live Action).
+        (tmdbFields.isAnimated === true ||
+        ((manual.genre ?? omdbFields.genre ?? []) as string[]).some((g) => /^animation$/i.test(g.trim()))
+          ? "Animation"
+          : "Live Action"),
       documentary: manual.documentary ?? "n",
       is_collection: manual.is_collection ?? false,
       name_of_collection: manual.name_of_collection ?? null,
@@ -511,6 +540,7 @@ export async function POST(request: Request) {
       ...(caseImagePath ? { case_image_path: caseImagePath } : {}),
       genre_location: cleanGenreLocation,
       release_name: cleanFreeText(asString(manual.release_name)),
+      disc_number_in_set: cleanFreeText(asString(manual.disc_number_in_set)),
       depicted_era_start:
         manual.depicted_era_start ??
         inferDepictedEraStart(String(manual.title ?? omdbFields.title ?? ""), synopsis),
@@ -602,17 +632,29 @@ export async function POST(request: Request) {
       // belonging to the set as a whole) only ever adds to this, never overrides it back to
       // false. Its own disc count/format are left exactly as the header form set them - a
       // per-title bonus disc is NOT the collection's own, per the user's explicit distinction.
+      // Animation or Live Action: an explicit value typed on the collection form wins; otherwise the
+      // members' own detected values - unanimous keeps that value, a mix of animated and live action
+      // titles becomes the existing "Live Action/Animation Hybrid" value.
+      if (normalizeAnimationOrLiveAction(asString((headerBuilt.entry.manualFields ?? {}).animation_or_live_action)) == null) {
+        const memberStyles = memberBuilts.map((b) => b.title.animation_or_live_action as string);
+        const allSame = memberStyles.every((v) => v === memberStyles[0]);
+        headerBuilt.title.animation_or_live_action = allSame
+          ? memberStyles[0]
+          : memberStyles.some((v) => v !== "Live Action")
+            ? "Live Action/Animation Hybrid"
+            : "Live Action";
+      }
       const anyMemberSpecialFeatures = memberBuilts.some((b) => b.title.special_features === true);
       headerBuilt.title.special_features = headerBuilt.title.special_features === true || anyMemberSpecialFeatures;
 
-      // Disc Count: the real total across every physical disc in the box - every member's
-      // own disc_count, summed, plus the collection's own bonus disc(s) if it has one
-      // (already resolved into special_features_disc_count above, before this aggregation
-      // pass touches special_features itself).
-      const memberDiscTotal = memberBuilts.reduce((sum, b) => sum + ((b.title.disc_count as number) || 0), 0);
-      const headerOwnBonusDiscCount =
-        headerBuilt.title.special_features === true ? (headerBuilt.title.special_features_disc_count as number | null) ?? 0 : 0;
-      headerBuilt.title.disc_count = memberDiscTotal + headerOwnBonusDiscCount || 1;
+      // Disc Count is deliberately NOT aggregated here any more (removed 2026-09-20). It used to
+      // be recomputed server-side as a naive sum of every member's own disc_count, which
+      // silently overwrote whatever the app had correctly computed client-side and double-
+      // counted a disc two titles share (found live: a real 2-disc box set, two titles per
+      // disc, saved with disc_count 4). The header's disc_count is now a plain manual field the
+      // user types once on the Collection header form (the true total of every physical disc in
+      // the box, bonus disc included) - it flows through from manualFields untouched, exactly
+      // like the header's own Rating already does.
 
       // Personal Rating (#11): the average of every member's own, but ONLY when every single
       // member is both watched and has a real personal_rating already - a partial set (some

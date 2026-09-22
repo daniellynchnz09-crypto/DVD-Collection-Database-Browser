@@ -101,7 +101,9 @@ export interface ExistingTitleCandidate {
    * (added 2026-09-20) - that candidate's own already-catalogued members, so a single
    * "overwrite the whole collection" decision can resolve into a per-title match client-side
    * without a second round-trip. See find-existing/route.ts's own comment for the full design. */
-  existingMemberTitles?: { title: string; unique_id: string }[];
+  existingMemberTitles?: { title: string; unique_id: string; imdbId?: string | null }[];
+  /** See find-existing/route.ts - a group of members with no collection header row of its own. */
+  memberOnlyGroup?: boolean;
 }
 
 export type FindExistingResult =
@@ -144,7 +146,8 @@ export function findExistingTitle(
   formatOverride?: string,
   discCountOverride?: number,
   scopeToCollections?: boolean,
-  collectionMemberTitles?: string[]
+  collectionMemberTitles?: string[],
+  collectionMemberImdbIds?: (string | undefined)[]
 ) {
   return post<FindExistingResult>("/api/scan/find-existing", {
     title,
@@ -154,6 +157,7 @@ export function findExistingTitle(
     discCountOverride,
     scopeToCollections,
     collectionMemberTitles,
+    collectionMemberImdbIds,
   });
 }
 

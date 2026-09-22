@@ -71,7 +71,11 @@ export interface ExistingTitleCandidate extends ExistingTitleRow {
    * decision into a per-title match (an exact normalized-title equal to one of these becomes
    * that new member's own `overwriteUniqueId`; anything else is a genuinely new addition to
    * the collection) without a second round-trip. */
-  existingMemberTitles?: { title: string; unique_id: string }[];
+  existingMemberTitles?: { title: string; unique_id: string; imdbId?: string | null }[];
+  /** True when this "candidate" is really a group of collection MEMBERS that has no collection
+   * header row of its own (older Sheet-entered sets often only have their member rows) - the
+   * client then overwrites the matching members but never tries to overwrite a header with it. */
+  memberOnlyGroup?: boolean;
 }
 
 /**
@@ -143,6 +147,9 @@ export async function POST(request: Request) {
   const collectionMemberTitles: string[] = Array.isArray(body?.collectionMemberTitles)
     ? body.collectionMemberTitles.filter((t: unknown): t is string => typeof t === "string")
     : [];
+  const collectionMemberImdbIds: (string | null)[] = Array.isArray(body?.collectionMemberImdbIds)
+    ? body.collectionMemberImdbIds.map((x: unknown) => (typeof x === "string" && x ? x : null))
+    : [];
   if (!title) {
     return NextResponse.json({ error: "title is required" }, { status: 400 });
   }
@@ -181,10 +188,19 @@ export async function POST(request: Request) {
   // Populated only by the collection-header fuzzy-match branch below, keyed by unique_id -
   // attached to the final response candidates further down so the client can resolve a
   // single "overwrite the whole collection" decision into a per-title match.
-  const existingMembersByHeaderId = new Map<string, { title: string; unique_id: string }[]>();
+  const existingMembersByHeaderId = new Map<string, { title: string; unique_id: string; imdbId: string | null }[]>();
+  // Member matching is by shared IMDb id first, then by a "loose" title key that ignores every
+  // space/hyphen/colon/case difference (2026-09-20): a real set's new members ("Spider-Man:
+  // Into the Spider-Verse") failed to match the same set's older entries ("Spiderman into the
+  // Spiderverse") on exact normalized text even though both carry the same IMDb id - it was never
+  // just the colon, hyphens and spacing differed too.
+  const looseKey = (t: string) => normalizeTitleForMatch(t).replace(/\s+/g, "");
+  const newMembers = collectionMemberTitles.map((t, i) => ({ key: looseKey(t), imdbId: collectionMemberImdbIds[i] ?? null }));
+  const memberMatchesNew = (existing: ExistingTitleRow, nm: { key: string; imdbId: string | null }) =>
+    (nm.imdbId != null && extractImdbIdFromPage(existing.imdb_page) === nm.imdbId) || looseKey(existing.title) === nm.key;
+  const memberOnlyIds = new Set<string>();
   if (scopeToCollections && collectionMemberTitles.length > 0) {
     const headerCandidates = scopedRows.filter((r) => r.is_collection);
-    const normalizedNewMemberTitles = collectionMemberTitles.map((t) => normalizeTitleForMatch(t));
     const scored = headerCandidates.map((r) => {
       const nameScore = textSimilarity(title, r.title);
       const formatBonus = formatOverride && r.format?.toLowerCase() === formatOverride.toLowerCase() ? 0.15 : 0;
@@ -193,17 +209,34 @@ export async function POST(request: Request) {
       );
       existingMembersByHeaderId.set(
         r.unique_id,
-        existingMembers.map((m) => ({ title: m.title, unique_id: m.unique_id }))
+        existingMembers.map((m) => ({ title: m.title, unique_id: m.unique_id, imdbId: extractImdbIdFromPage(m.imdb_page) }))
       );
-      const memberTitleOverlap = normalizedNewMemberTitles.filter((t) =>
-        existingMembers.some((m) => normalizeTitleForMatch(m.title) === t)
-      ).length;
+      const memberTitleOverlap = newMembers.filter((nm) => existingMembers.some((m) => memberMatchesNew(m, nm))).length;
       // Weighted well above name/format similarity alone - two different collections
       // sharing even one exact member title (by title-text equality, the same check a
       // single-title scan already uses) is a far stronger signal than approximate name
       // similarity could ever be on its own.
       return { row: r, score: nameScore + formatBonus + memberTitleOverlap * 0.5, memberTitleOverlap };
     });
+    // Groups of members whose collection has no header row at all (legacy Sheet data) - never
+    // candidates above, so an older copy of the same set was silently skipped. Each such group that
+    // shares at least one member with the new set becomes a member-only candidate.
+    const headerNames = new Set(headerCandidates.map((h) => h.name_of_collection).filter(Boolean));
+    const orphanGroups = new Map<string, ExistingTitleRow[]>();
+    for (const m of scopedRows) {
+      if (!m.title_in_a_collection || !m.name_of_collection || headerNames.has(m.name_of_collection)) continue;
+      orphanGroups.set(m.name_of_collection, [...(orphanGroups.get(m.name_of_collection) ?? []), m]);
+    }
+    for (const group of orphanGroups.values()) {
+      const overlap = newMembers.filter((nm) => group.some((m) => memberMatchesNew(m, nm))).length;
+      if (overlap === 0) continue;
+      existingMembersByHeaderId.set(
+        group[0].unique_id,
+        group.map((m) => ({ title: m.title, unique_id: m.unique_id, imdbId: extractImdbIdFromPage(m.imdb_page) }))
+      );
+      memberOnlyIds.add(group[0].unique_id);
+      scored.push({ row: group[0], score: overlap * 0.5, memberTitleOverlap: overlap });
+    }
     const plausible = scored
       .filter((s) => s.score > 0.3 || s.memberTitleOverlap > 0)
       .sort((a, b) => b.score - a.score)
@@ -249,8 +282,9 @@ export async function POST(request: Request) {
     })
   );
 
-  if (withPosters.length === 1) {
-    return NextResponse.json({ status: "auto", match: withPosters[0] });
+  const flagged = withPosters.map((c) => (memberOnlyIds.has(c.unique_id) ? { ...c, memberOnlyGroup: true } : c));
+  if (flagged.length === 1) {
+    return NextResponse.json({ status: "auto", match: flagged[0] });
   }
-  return NextResponse.json({ status: "ambiguous", candidates: withPosters });
+  return NextResponse.json({ status: "ambiguous", candidates: flagged });
 }

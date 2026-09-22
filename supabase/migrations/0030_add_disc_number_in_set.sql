@@ -1,0 +1,21 @@
+-- Adds a real, persisted "which physical disc(s) in the set this title is on" field for
+-- Collection members - added 2026-09-20 after the user hit a real box set that doesn't follow
+-- the "one disc per title" assumption the Collection flow's header disc-count total was built
+-- on (2 discs holding 4 titles, two titles per disc). Free text ("1", "2", or "1,2" for a
+-- title spanning more than one disc) rather than a plain integer, for the same reason
+-- `season_no` is text - it needs to hold a list, not just a single number.
+--
+-- Deliberately separate from the existing per-title `disc_count` column (kept as-is, unchanged
+-- meaning: "how many discs relate to this specific title") - this new column is what actually
+-- lets the Collection header's own total disc count be computed correctly (as the count of
+-- DISTINCT disc numbers referenced across every member, not a naive sum of each member's own
+-- disc_count, which double-counts a disc two titles share) - see
+-- Claude/TECH STACK AND ARCHITECTURE/barcode-scanning-pipeline.md's Collections section.
+--
+-- Also explicitly requested by the user for the future web app (WEB APP DESIGN.md's DVD
+-- Collection Pages) - a member's own DVD Page should be able to show which disc in the set
+-- holds it, not just that it's part of the collection at all.
+--
+-- Not private-project-only - applies to both live Supabase projects, same as disc_count itself.
+
+alter table titles add column if not exists disc_number_in_set text;
