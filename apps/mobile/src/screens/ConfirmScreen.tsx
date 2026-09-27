@@ -32,12 +32,14 @@ import {
   looksLikeNonMediaCategory,
   normalizeTitleForMatch,
   NOT_LISTED_REGION,
+  resolveDiskRegionText,
   splitCutVariantTitle,
 } from "@danflix/shared";
 import {
   confirmScan,
   discardScan,
   findExistingTitle,
+  getCroppedImageSource,
   previewTmdbFields,
   searchTitleOnOmdb,
   type ConfirmEntry,
@@ -53,6 +55,7 @@ import { queueSubmissionOffline } from "../lib/offlineQueue";
 import SearchableModalInput from "../components/SearchableModalInput";
 import TagSearchableModalInput from "../components/TagSearchableModalInput";
 import IndeterminateBar from "../components/IndeterminateBar";
+import ProgressBar from "../components/ProgressBar";
 import SlideFlow from "../components/SlideFlow";
 import BigChoice from "../components/BigChoice";
 import SummaryRow from "../components/SummaryRow";
@@ -105,6 +108,46 @@ function parseDateOnly(value: string): Date {
  * eventually gets saved. */
 function digitsOnly(value: string): string {
   return value.replace(/[^0-9]/g, "");
+}
+
+/** Parses a CollectionMember's comma-separated disc-number field (discNumbers or
+ * specialFeaturesDiscNumbers, e.g. "1,3") into real numbers - same parse used inline in
+ * TitleSearchPicker.tsx's own state seeding, pulled out here as a named helper since
+ * discFormatLookup below needs it twice. */
+function parseDiscNumberList(value: string | undefined): number[] {
+  return (value ?? "")
+    .split(",")
+    .map((n) => parseInt(n.trim(), 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
+
+/** One-time migration for a draft saved before the 2026-09-27 "a special features disc
+ * that's also the movie's own disc doesn't count as a separate disc" fix
+ * (TitleSearchPicker.tsx's handleAddPressed) - that fix only runs when a member is actively
+ * added/edited, so an already-saved, not-yet-submitted collection draft (confirmDrafts.ts,
+ * on-device AsyncStorage) can still carry the old, unfiltered specialFeaturesDiscCount/
+ * Format/Numbers. Applied once, right where `collectionMembers` loads from the draft, so
+ * reopening any existing in-progress Collection scan (the user's own real Universal Monsters
+ * box set, mid-scan when this shipped) self-corrects with no manual re-editing needed -
+ * every future add/edit is already correct at the source and never needs this. Recomputes
+ * from scratch (own discNumbers vs. specialFeaturesDiscNumbers) rather than just checking
+ * "any overlap at all", so a member with a genuine MIX of shared and distinct discs keeps
+ * only the distinct ones, exactly like handleAddPressed's own filter does. Returns the same
+ * object reference untouched when nothing needs fixing, so this can't cause a spurious
+ * re-render for the (typical) case of a draft that never needed correcting in the first
+ * place. */
+function sanitizeSpecialFeaturesDiscOverlap(member: CollectionMember): CollectionMember {
+  const rawSpecialFeaturesDiscs = parseDiscNumberList(member.specialFeaturesDiscNumbers);
+  if (rawSpecialFeaturesDiscs.length === 0) return member;
+  const ownDiscs = new Set(parseDiscNumberList(member.discNumbers));
+  const distinct = rawSpecialFeaturesDiscs.filter((d) => !ownDiscs.has(d));
+  if (distinct.length === rawSpecialFeaturesDiscs.length) return member;
+  return {
+    ...member,
+    specialFeaturesDiscCount: distinct.length > 0 ? String(distinct.length) : undefined,
+    specialFeaturesDiscNumbers: distinct.length > 0 ? distinct.join(",") : undefined,
+    specialFeaturesDiscFormat: distinct.length > 0 ? member.specialFeaturesDiscFormat : undefined,
+  };
 }
 
 /** What a case's own format banner listing more than one disc format implies for the disc-
@@ -251,6 +294,7 @@ export default function ConfirmScreen({
   const manualTitleInputRef = useRef<TextInput>(null);
   const releaseNameInputRef = useRef<TextInput>(null);
   const discCountInputRef = useRef<TextInput>(null);
+  const collectionDiscCountInputRef = useRef<TextInput>(null);
   const specialFeaturesDiscCountInputRef = useRef<TextInput>(null);
   const releaseVariantNoteInputRef = useRef<TextInput>(null);
   const caseNotesInputRef = useRef<TextInput>(null);
@@ -285,10 +329,17 @@ export default function ConfirmScreen({
   // all. Falls back to 2:3 only until the real size loads (or if it fails to load at all),
   // same as before.
   const [scannedImageAspectRatio, setScannedImageAspectRatio] = useState(2 / 3);
+  // Sized against the CROPPED preview's own real dimensions (2026-09-22), not the raw source
+  // image's - cropping changes the aspect ratio (the whole point of it), so measuring the
+  // original would size this box wrong and letterbox the cropped photo inside it.
+  // `getSizeWithHeaders` (not plain `getSize`) since the preview URL is secret-gated, same as
+  // every other scan route.
+  const scannedImageSource = upcProduct?.imageUrl ? getCroppedImageSource(upcProduct.imageUrl) : null;
   useEffect(() => {
-    if (!upcProduct?.imageUrl) return;
-    Image.getSize(
-      upcProduct.imageUrl,
+    if (!scannedImageSource) return;
+    Image.getSizeWithHeaders(
+      scannedImageSource.uri,
+      scannedImageSource.headers,
       (width, height) => {
         if (width > 0 && height > 0) setScannedImageAspectRatio(width / height);
       },
@@ -297,7 +348,7 @@ export default function ConfirmScreen({
         // from rendering at all, just means it might letterbox slightly this one time.
       }
     );
-  }, [upcProduct?.imageUrl]);
+  }, [scannedImageSource?.uri]);
   // Splits a barcode title like "Blade Runner the Final Cut" into the film's own base title
   // ("Blade Runner") and the full verbatim cleaned title ("Blade Runner the Final Cut") -
   // added 2026-09-17 so a disc's specific cut/edition (already correctly kept OUT of the
@@ -310,12 +361,30 @@ export default function ConfirmScreen({
   const posterMatch = (scan.resolved_candidates as { posterMatch?: PosterMatch | null })
     ?.posterMatch;
   // This barcode already belongs to a cataloged entry - a rescan of a disc already in the
-  // collection (e.g. to backfill the newer physical-only fields onto it). The resolver
-  // still runs the normal UPC/OMDB pipeline above so this screen has real candidate/poster
-  // data, but every field below also gets a chance to pre-fill from this entry's current
-  // values, and Confirm skips straight to the Overwrite/Is-a-new-entry/Reject choice below
-  // instead of running the ordinary title-text similar-entry check - we already know the
-  // match with certainty (same physical barcode), not just a similar title.
+  // collection. The resolver still runs the normal UPC/OMDB pipeline above so this screen
+  // has real candidate/poster data, and Confirm skips straight to the Overwrite/Is-a-new-
+  // entry/Reject choice below instead of running the ordinary title-text similar-entry
+  // check - we already know the match with certainty (same physical barcode), not just a
+  // similar title.
+  //
+  // PREFILL ONLY FROM AN UNSUBMITTED DRAFT, NEVER FROM existingMatch (2026-09-24): every
+  // detail field below used to also pre-fill from this entry's current stored values (e.g.
+  // "backfill the newer physical-only fields onto it" without retyping the rest), but real
+  // use showed this backfires for the opposite, equally common case: rescanning specifically
+  // to FIX a wrong or incomplete field (the user's own report: "even when I rescan the same
+  // barcode to fix it it shows up with all the old details"). Since existingMatch is always
+  // an already-CONFIRMED, permanent titles row - not "pending" in any sense - its stale
+  // values just kept resurfacing no matter how many times the scan was discarded and
+  // retried, because discarding only ever deletes the pending_scans row, never the
+  // underlying confirmed entry that existingMatch keeps being found from. The user's own
+  // fix: "remove the prefill data if the entry has been submitted, but keep it if
+  // unsubmitted." So every field below now prefills from `draft` (an unsubmitted,
+  // still-in-progress local autosave - confirmDrafts.ts) or a fresh guess (TMDb, the UPC
+  // listing text, the vision model, ...) only - never from existingMatch. existingMatch
+  // itself is still used for identification (the synthesized candidate/auto-selected
+  // imdbId below, so Overwrite still has a certain target and no re-search is ever needed)
+  // and for the "already matches" banner/choice - only the EDITABLE DETAIL FIELDS stopped
+  // being pre-filled from it.
   const existingMatch = scan.resolved_candidates?.existingMatch ?? null;
   // No separate imdb_id column any more (0019_drop_imdb_id.sql) - recovered from imdb_page
   // instead, which already contains it.
@@ -363,7 +432,10 @@ export default function ConfirmScreen({
               : existingMatch.movie_or_tv === "TV Episode"
                 ? "episode"
                 : "movie",
-          Poster: existingMatch.case_image_url ?? "N/A",
+          // `resolvedPosterUrl` (scanResolver.ts's withResolvedPoster, 2026-09-25) - a
+          // fresh OMDB poster fetched server-side when this entry has no case_image_url
+          // of its own, so the "best match" step isn't left with no image at all.
+          Poster: existingMatch.case_image_url ?? existingMatch.resolvedPosterUrl ?? "N/A",
         },
         ...base,
       ];
@@ -436,7 +508,6 @@ export default function ConfirmScreen({
   const [manualTitle, setManualTitle] = useState(
     () =>
       draft?.manualTitle ??
-      existingMatch?.title ??
       upcCutVariant?.baseTitle ??
       (upcProduct?.title ? cleanProductTitleForSearch(upcProduct.title) : "")
   );
@@ -444,9 +515,15 @@ export default function ConfirmScreen({
   // Only ever non-null when visionFormatGuess itself is - see deriveDiscConfigFromExtraDiscs's
   // own comment for the disc-count/special-features/bonus-disc-format mapping this implies.
   const visionDiscConfig = deriveDiscConfigFromExtraDiscs(visionFormatGuess?.format ?? "", visionFormatGuess?.extraDiscs);
+  // LLM listing-text parse (packages/backend/src/listingTextExtract.ts) - only ever populated
+  // when the plain regex-cleaned title search found zero OMDB candidates at all (see
+  // scanResolver.ts). format/region below fall back to it the same way they already fall back
+  // to visionFormatGuess/text hints; the block rendered near the UPC product image (below)
+  // shows the raw parse (title/actors/format/region) read-only, for transparency into why a
+  // second-attempt search or cast-hint match came out the way it did.
+  const listingTextExtraction = scan.resolved_candidates?.listingTextExtraction ?? null;
   const [format, setFormat] = useState(() => {
     if (draft?.format) return draft.format;
-    if (existingMatch?.format) return existingMatch.format;
     const hint = upcProduct
       ? extractFormatHint(`${upcProduct.title} ${upcProduct.description ?? ""}`)
       : null;
@@ -458,35 +535,42 @@ export default function ConfirmScreen({
     // vision model at all (see its own comment) - a specific text hint always wins outright,
     // but "DVD" specifically gets cross-checked against a real product photo when one exists.
     if (hint && hint !== "DVD") return hint;
-    return visionFormatGuess?.format ?? hint ?? "DVD";
+    return visionFormatGuess?.format ?? listingTextExtraction?.format ?? hint ?? "DVD";
   });
   const [discCount, setDiscCount] = useState(
-    draft?.discCount ?? existingMatch?.disc_count?.toString() ?? visionDiscConfig?.discCount.toString() ?? "1"
+    draft?.discCount ?? visionDiscConfig?.discCount.toString() ?? "1"
   );
   // A fixed small set of codes (see getDiskRegionOptions), not free text - and some discs
   // are coded for more than one region at once (e.g. "2, 4"), so this is a toggleable set
   // rather than a single value (see MultiSelectChips). Auto-filled from the UPC listing's own
   // text when it says (e.g. "[regions 2,5]", "Region A", "Region Free") - added 2026-09-19
   // after a real scan's listing text clearly stated the region but the field was still left
-  // for the user to fill in by hand every time. Same draft/existingMatch precedence as every
-  // other auto-filled field on this screen; still fully editable either way.
+  // for the user to fill in by hand every time. Same draft-only precedence as every other
+  // auto-filled field on this screen (see existingMatch's own 2026-09-24 comment above);
+  // still fully editable either way.
   const [diskRegions, setDiskRegions] = useState<Set<string>>(
     () =>
       new Set(
         draft?.diskRegions ??
-          existingMatch?.disk_region?.split(",").map((r) => r.trim()).filter(Boolean) ??
           (upcProduct
             ? extractDiskRegionHint(`${upcProduct.title} ${upcProduct.description ?? ""}`, format)
                 ?.split(",")
                 .map((r) => r.trim())
                 .filter(Boolean)
             : null) ??
+          // A country/market name in the LLM extraction's own words ("UK", "China") isn't a
+          // real region code by itself - resolveDiskRegionText maps it to the actual
+          // numeric/letter code that market uses for this format (see formatHints.ts).
+          (listingTextExtraction?.region
+            ? (() => {
+                const resolved = resolveDiskRegionText(listingTextExtraction.region!, format);
+                return resolved ? [resolved] : null;
+              })()
+            : null) ??
           []
       )
   );
-  const [genreLocation, setGenreLocation] = useState(
-    draft?.genreLocation ?? existingMatch?.genre_location ?? ""
-  );
+  const [genreLocation, setGenreLocation] = useState(draft?.genreLocation ?? "");
   // Both exposed here for the first time, per the user's own request after finding
   // Casper's Haunted Christmas silently logged with no Franchise and the wrong Animation/
   // Live Action value - neither field had ever actually been asked for anywhere in the scan
@@ -501,49 +585,42 @@ export default function ConfirmScreen({
   // Genre/Director below, since a film can genuinely belong to several franchises at once
   // at different specificities (e.g. Marvel, Marvel Cinematic Universe, and the Captain
   // Marvel character franchise itself, all at once).
-  const [franchise, setFranchise] = useState(
-    draft?.franchise ?? existingMatch?.franchise?.join(", ") ?? ""
-  );
+  const [franchise, setFranchise] = useState(draft?.franchise ?? "");
   const [animationOrLiveAction, setAnimationOrLiveAction] = useState(
-    draft?.animationOrLiveAction ?? existingMatch?.animation_or_live_action ?? ""
+    draft?.animationOrLiveAction ?? ""
   );
   // Movie/TV type - always visible and editable (unlike Rating/Studio's hidden-until-no-
   // match pattern), since OMDB's own Type field is too coarse to reliably guess the real
   // vocabulary on its own (see guessMovieOrTvFromType above and barcode-review-screen-
-  // fields.md's TV Scanning section). Prefers the already-catalogued value on a rescan
-  // (existingMatch.movie_or_tv), never auto-guessed over - the initial guess from the best
-  // match candidate is applied reactively below (near singleSelectedImdbId), not here, so it
-  // stays correct if the user picks a different candidate after this screen first renders.
-  const [movieOrTv, setMovieOrTv] = useState(draft?.movieOrTv ?? existingMatch?.movie_or_tv ?? "");
-  const [seasonNo, setSeasonNo] = useState(draft?.seasonNo ?? existingMatch?.season_no ?? "");
-  const [partOfSeasonNo, setPartOfSeasonNo] = useState(
-    draft?.partOfSeasonNo ?? existingMatch?.part_of_season_no ?? ""
-  );
-  const [episodeCount, setEpisodeCount] = useState(
-    draft?.episodeCount ?? existingMatch?.episode_count?.toString() ?? ""
-  );
+  // fields.md's TV Scanning section). Deliberately NOT prefilled from an existingMatch (an
+  // already-submitted, confirmed entry) any more - see this file's 2026-09-24 "prefill only
+  // from an unsubmitted draft" note near existingMatch's own declaration. The initial guess
+  // from the best match candidate is applied reactively below (near singleSelectedImdbId),
+  // not here, so it stays correct if the user picks a different candidate after this screen
+  // first renders.
+  const [movieOrTv, setMovieOrTv] = useState(draft?.movieOrTv ?? "");
+  const [seasonNo, setSeasonNo] = useState(draft?.seasonNo ?? "");
+  const [partOfSeasonNo, setPartOfSeasonNo] = useState(draft?.partOfSeasonNo ?? "");
+  const [episodeCount, setEpisodeCount] = useState(draft?.episodeCount ?? "");
   const showSeasonFields = SEASON_FIELDS_MOVIE_OR_TV_VALUES.has(movieOrTv);
   // Fields added ahead of the full-collection backfill rescan (Claude/TECH STACK AND
   // ARCHITECTURE.md's "Backfill Rescan" section) - captured now because they're only
   // observable from the physical disc/case itself, unlike the metadata-driven fields
   // above, which can be backfilled later via a script keyed on tmdb_id/imdb_id.
-  const [releaseVariantNote, setReleaseVariantNote] = useState(
-    draft?.releaseVariantNote ?? existingMatch?.release_variant_note ?? ""
-  );
-  const [discCondition, setDiscCondition] = useState(
-    draft?.discCondition ?? existingMatch?.disc_condition ?? "None"
-  );
-  const [caseNotes, setCaseNotes] = useState(draft?.caseNotes ?? existingMatch?.case_notes ?? "");
+  const [releaseVariantNote, setReleaseVariantNote] = useState(draft?.releaseVariantNote ?? "");
+  const [discCondition, setDiscCondition] = useState(draft?.discCondition ?? "None");
+  const [caseNotes, setCaseNotes] = useState(draft?.caseNotes ?? "");
+  // Collection-only: a previous owner put unrelated films in one disc case (2026-09-27) - see
+  // buildSharedCollectionFields's own comment for why this flips the Estimated Value
+  // pipeline's usual "price the header, skip the members" rule for this one set. Meaningless
+  // for a single title, which is never sent through buildSharedCollectionFields at all.
+  const [unintentionalCollection, setUnintentionalCollection] = useState(draft?.unintentionalCollection ?? false);
   // `watched` means "seen this film at all, any format" (the broad claim); `watchedDisc`
   // means "watched this specific disc" (the narrow claim) - see 0018_rename_watched_title_
   // to_watched_disc.sql for why this isn't named `watchedTitle` any more.
-  const [watched, setWatched] = useState(draft?.watched ?? existingMatch?.watched ?? false);
-  const [watchedDisc, setWatchedDisc] = useState(
-    draft?.watchedDisc ?? existingMatch?.watched_disc ?? false
-  );
-  const [depictedEraLabel, setDepictedEraLabel] = useState(
-    draft?.depictedEraLabel ?? existingMatch?.depicted_era_label ?? ""
-  );
+  const [watched, setWatched] = useState(draft?.watched ?? false);
+  const [watchedDisc, setWatchedDisc] = useState(draft?.watchedDisc ?? false);
+  const [depictedEraLabel, setDepictedEraLabel] = useState(draft?.depictedEraLabel ?? "");
   // Rental tracking (0021_add_rental_and_language_fields.sql) - a real physical loan can
   // happen to any already-catalogued disc at any time, independent of any scan/rescan event,
   // so this is asked for on every scan the same way Disc Condition/Case Notes are, not gated
@@ -551,23 +628,17 @@ export default function ConfirmScreen({
   // while isCurrentlyRentedOut is true - unticking it clears both below (see the checkbox's
   // onPress), same "hide + clear" precedent as Special Features Disc Count/Format.
   const [isCurrentlyRentedOut, setIsCurrentlyRentedOut] = useState(
-    draft?.isCurrentlyRentedOut ?? existingMatch?.is_currently_rented_out ?? false
+    draft?.isCurrentlyRentedOut ?? false
   );
-  const [rentedByWho, setRentedByWho] = useState(
-    draft?.rentedByWho ?? existingMatch?.rented_by_who ?? ""
-  );
+  const [rentedByWho, setRentedByWho] = useState(draft?.rentedByWho ?? "");
   // Plain "YYYY-MM-DD" text, same shape release_date/last_watched_date already use - backed
   // by a real native date picker (below) rather than typed free text.
-  const [dateRented, setDateRented] = useState(
-    draft?.dateRented ?? existingMatch?.date_rented ?? ""
-  );
+  const [dateRented, setDateRented] = useState(draft?.dateRented ?? "");
   const [showDateRentedPicker, setShowDateRentedPicker] = useState(false);
   // Auto-filled from TMDb (see showOriginalLanguageField below) - manual entry only shows
   // up as a fallback when TMDb has no match at all, same pattern as Rating/Studio (see
   // barcode-review-screen-fields.md for the full history of this field).
-  const [originalLanguage, setOriginalLanguage] = useState(
-    draft?.originalLanguage ?? existingMatch?.original_language ?? ""
-  );
+  const [originalLanguage, setOriginalLanguage] = useState(draft?.originalLanguage ?? "");
   // Manual fallback for when TMDb's own /find-by-imdb-id lookup comes up empty - see
   // showTmdbOverrideField below. Only ever needed for a genuine TMDb miss, not shown by
   // default.
@@ -581,16 +652,14 @@ export default function ConfirmScreen({
   // Director are comma-separated free text (matching RESOURCES.md's own Sheet convention -
   // "many genres can be listed separated by commas") rather than autocomplete chips, since
   // there's no existing-value list worth suggesting from for either.
-  const [genre, setGenre] = useState(draft?.genre ?? existingMatch?.genre?.join(", ") ?? "");
-  const [runningTimeMins, setRunningTimeMins] = useState(
-    draft?.runningTimeMins ?? existingMatch?.running_time_mins?.toString() ?? ""
-  );
-  const [director, setDirector] = useState(draft?.director ?? existingMatch?.director?.join(", ") ?? "");
+  const [genre, setGenre] = useState(draft?.genre ?? "");
+  const [runningTimeMins, setRunningTimeMins] = useState(draft?.runningTimeMins ?? "");
+  const [director, setDirector] = useState(draft?.director ?? "");
   // Manual-only, deliberately never auto-filled from OMDB's "Rated" field - that's a US
   // MPAA-style value and often just "Not Rated" even for titles that do carry a real NZ/
   // Oceania classification on the physical case, which is the authoritative source here.
-  const [rating, setRating] = useState(draft?.rating ?? existingMatch?.rating ?? "");
-  const [studio, setStudio] = useState(draft?.studio ?? existingMatch?.studio ?? "");
+  const [rating, setRating] = useState(draft?.rating ?? "");
+  const [studio, setStudio] = useState(draft?.studio ?? "");
   // Verbatim edition/PACKAGING title (e.g. "Gladiator Special Edition"), distinct from the
   // canonical `title` above - saved as null/"n/a" whenever releaseNameMatchesTitle is
   // checked, regardless of whatever's left in the text field (see Claude/TECH STACK AND
@@ -601,24 +670,21 @@ export default function ConfirmScreen({
   // (see `cutSuffix` sent in the confirm payload below) - release_name is reserved purely for
   // genuine packaging/marketing special editions ("Special Edition," "Collector's Edition,"
   // ...), a different, unrelated category this screen has no reliable automatic signal for.
-  const [releaseName, setReleaseName] = useState(draft?.releaseName ?? existingMatch?.release_name ?? "");
+  const [releaseName, setReleaseName] = useState(draft?.releaseName ?? "");
   const [releaseNameMatchesTitle, setReleaseNameMatchesTitle] = useState(
-    draft?.releaseNameMatchesTitle ?? (existingMatch ? !existingMatch.release_name : true)
+    draft?.releaseNameMatchesTitle ?? true
   );
   const [steelbook, setSteelbook] = useState(
-    draft?.steelbook ?? existingMatch?.steelbook ?? visionFormatGuess?.steelbook ?? false
+    draft?.steelbook ?? visionFormatGuess?.steelbook ?? false
   );
   const [specialFeatures, setSpecialFeatures] = useState(
-    draft?.specialFeatures ?? existingMatch?.special_features ?? Boolean(visionDiscConfig) ?? false
+    draft?.specialFeatures ?? Boolean(visionDiscConfig)
   );
   const [specialFeaturesDiscCount, setSpecialFeaturesDiscCount] = useState(
-    draft?.specialFeaturesDiscCount ??
-      existingMatch?.special_features_disc_count?.toString() ??
-      visionDiscConfig?.specialFeaturesDiscCount.toString() ??
-      ""
+    draft?.specialFeaturesDiscCount ?? visionDiscConfig?.specialFeaturesDiscCount.toString() ?? ""
   );
   const [specialFeaturesDiscFormat, setSpecialFeaturesDiscFormat] = useState(
-    draft?.specialFeaturesDiscFormat ?? existingMatch?.special_features_disc_format ?? visionDiscConfig?.specialFeaturesDiscFormat ?? ""
+    draft?.specialFeaturesDiscFormat ?? visionDiscConfig?.specialFeaturesDiscFormat ?? ""
   );
   const [fieldOptions, setFieldOptions] = useState<FieldOptions | null>(null);
   // "Would TMDb find anything for this specific title" - keeps the manual Rating/Studio
@@ -628,6 +694,8 @@ export default function ConfirmScreen({
   const [tmdbPreview, setTmdbPreview] = useState<TmdbPreview | null>(null);
   const [tmdbPreviewLoading, setTmdbPreviewLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Drives ProgressBar during a Collection submit - see performCreateCollection's own comment.
+  const [submitProgress, setSubmitProgress] = useState(0);
   const [activeSlide, setActiveSlide] = useState("title");
   const [slideReturn, setSlideReturn] = useState<string | null>(null);
   const [openRow, setOpenRow] = useState<string | null>(null);
@@ -669,9 +737,54 @@ export default function ConfirmScreen({
   const [bonusDiscs, setBonusDiscs] = useState<number[]>(draft?.bonusDiscs ?? []);
   // Key of the member currently open in the edit-title picker, or null when adding a new one.
   const [editingMemberKey, setEditingMemberKey] = useState<string | null>(null);
-  const [collectionMembers, setCollectionMembers] = useState<CollectionMember[]>(
-    draft?.collectionMembers ?? []
+  const [collectionMembers, setCollectionMembers] = useState<CollectionMember[]>(() =>
+    (draft?.collectionMembers ?? []).map(sanitizeSpecialFeaturesDiscOverlap)
   );
+  // Extends the single-title flow's franchise-rating-buttons/family-genre Disc Condition
+  // warning to the Collection header too, but only when every member agrees - added
+  // 2026-09-27 per the user's own rule: "It would map to collections if all the titles in
+  // the collection are of the same franchise, or if all the titles in the collection were
+  // kids or family titles." Requires at least 2 members (an empty/single-member collection
+  // has nothing to be unanimous about) - each check below intersects/ANDs across every
+  // member rather than picking the first one, so one disagreeing title anywhere in the set
+  // correctly suppresses it for the whole header, not just a majority vote.
+  //
+  // Every member's OWN franchise tags, intersected down to only the ones every single member
+  // shares - empty the moment even one member has none, or the members don't actually share
+  // one in common.
+  const collectionSharedFranchiseTags =
+    collectionMembers.length < 2
+      ? []
+      : collectionMembers.reduce<string[] | null>((shared, m) => {
+          const tags = (m.franchise ?? "").split(",").map((f) => f.trim()).filter(Boolean);
+          if (shared === null) return tags;
+          return shared.filter((tag) => tags.includes(tag));
+        }, null) ?? [];
+  // Conservative both ways: undefined ("no TMDb match to check yet") counts as "no" for
+  // either flag, same as TitleSearchPicker's own CollectionMember comment explains.
+  const collectionAllMembersFamilyOrKids =
+    collectionMembers.length >= 2 && collectionMembers.every((m) => m.isFamilyOrKidsGenre === true);
+  const collectionAllMembersAnimated =
+    collectionMembers.length >= 2 && collectionMembers.every((m) => m.isAnimatedStyle === true);
+  // Same G/PG heuristic and franchise-ranked-count lookup the single-title flow's own
+  // franchiseCommonRatings uses below, just fed from the shared-across-every-member values
+  // above instead of the single-title flow's own franchise/genre/animation fields.
+  const collectionCommonRatings = (() => {
+    const suggestions = collectionAllMembersFamilyOrKids && collectionAllMembersAnimated ? ["G", "PG"] : [];
+    const counts: Record<string, number> = {};
+    for (const tag of collectionSharedFranchiseTags) {
+      const byRating = fieldOptions?.ratingsByFranchise?.[tag];
+      if (!byRating) continue;
+      for (const [ratingValue, count] of Object.entries(byRating)) {
+        counts[ratingValue] = (counts[ratingValue] ?? 0) + count;
+      }
+    }
+    const ranked = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([ratingValue]) => ratingValue);
+    return [...new Set([...suggestions, ...ranked])];
+  })();
   const [showTitleSearchPicker, setShowTitleSearchPicker] = useState(false);
   // Collection-wide duplicate check (redesigned 2026-09-20, twice the same day): originally
   // ran per-title inside TitleSearchPicker at add time, then briefly became a queue asking
@@ -774,6 +887,7 @@ export default function ConfirmScreen({
       releaseVariantNote,
       discCondition,
       caseNotes,
+      unintentionalCollection,
       watched,
       watchedDisc,
       depictedEraLabel,
@@ -820,6 +934,7 @@ export default function ConfirmScreen({
     releaseVariantNote,
     discCondition,
     caseNotes,
+    unintentionalCollection,
     watched,
     watchedDisc,
     depictedEraLabel,
@@ -881,6 +996,31 @@ export default function ConfirmScreen({
   // Numeric form of the header's typed Total Disc Count - drives the per-title "What disc(s) is
   // this title on?" checkbox lists and the bonus-disc selector below (0 until it's filled in).
   const totalDiscCountNumber = Math.max(0, parseInt(collectionDiscCount, 10) || 0);
+  // Which disc number maps to which physical format, derived live from what's already known
+  // about this set - added 2026-09-23 per the user's own correction: the format of a shared
+  // bonus disc doesn't need typing in fresh by every title that points at it, since it's
+  // already recorded wherever that disc's format was first established. Passed to
+  // TitleSearchPicker so it can auto-fill "Format of Special Features Disc(s)" instead of
+  // asking again. Priority (highest first, later entries win the object-key overwrite below):
+  // (1) any member's own movie-disc format - the most physically authoritative source, since
+  // that's literally what format that disc actually is; (2) the header's own designated bonus
+  // disc format; (3) any other member's own already-typed special-features-disc format, the
+  // weakest source (just an earlier guess) but still better than asking a third time.
+  const discFormatLookup = (() => {
+    const map: Record<number, string> = {};
+    for (const m of collectionMembers) {
+      if (!m.specialFeatures || !m.specialFeaturesDiscFormat) continue;
+      for (const n of parseDiscNumberList(m.specialFeaturesDiscNumbers)) if (!map[n]) map[n] = m.specialFeaturesDiscFormat;
+    }
+    if (specialFeatures && specialFeaturesDiscFormat) {
+      for (const n of bonusDiscs) map[n] = specialFeaturesDiscFormat;
+    }
+    for (const m of collectionMembers) {
+      if (!m.format) continue;
+      for (const n of parseDiscNumberList(m.discNumbers)) map[n] = m.format;
+    }
+    return map;
+  })();
   // Mirrors performCreateCollection's own `nameOfCollection` generation (kept in sync with it
   // deliberately) so the user can watch the real saved name build up live as titles are added,
   // rather than only discovering the final colon-list string after Confirm. `manualTitle` stays
@@ -904,10 +1044,22 @@ export default function ConfirmScreen({
   // been typed and settled, look its film titles up on OMDB and pre-fill the titles list with the
   // confident matches. Only while the list is still empty (never overwrites work), each distinct
   // name is tried once, and a result for a name that has since changed is discarded.
+  //
+  // `userManagedMembersRef` (added 2026-09-27, fixing a real reported bug: auto-matched titles
+  // kept reappearing after being removed and replaced with the user's own) tracks something the
+  // old guard didn't - not "is the list currently empty" but "has the user ever taken over
+  // curating it by hand." Those aren't the same thing: removing every auto-matched title (a
+  // deliberate rejection of all of them) also makes the list empty again, and the old guard
+  // read that bare zero-length exactly like "never touched yet," re-arming the very next debounce
+  // tick if it happened to land while the name was still unchanged. Set the instant the user adds,
+  // edits, or removes any member by hand (see removeCollectionMember and the Add/Edit modal's
+  // onAdd below) - once true, this collection never auto-matches again for the rest of this
+  // screen's life, regardless of how the list's length bounces around afterward.
   const autoMatchedNameRef = useRef("");
+  const userManagedMembersRef = useRef(false);
   const [autoMatching, setAutoMatching] = useState(false);
   useEffect(() => {
-    if (!isCollectionOverride || collectionMembers.length > 0) return;
+    if (!isCollectionOverride || collectionMembers.length > 0 || userManagedMembersRef.current) return;
     const name = manualTitle.trim();
     if (name.length < 8 || autoMatchedNameRef.current === name) return;
     const handle = setTimeout(async () => {
@@ -920,7 +1072,7 @@ export default function ConfirmScreen({
           (q) => searchTitleOnOmdb(q, false),
           () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
         );
-        if (matched.length > 0 && autoMatchedNameRef.current === name) {
+        if (matched.length > 0 && autoMatchedNameRef.current === name && !userManagedMembersRef.current) {
           setCollectionMembers((prev) => (prev.length > 0 ? prev : matched));
         }
       } finally {
@@ -946,15 +1098,18 @@ export default function ConfirmScreen({
   // Movie/TV type guess, reactive to whichever candidate is the current best match - added
   // 2026-09-19 per the user's own clarification that Type should be settled from the best
   // match, not just guessed once at mount. Never runs at all when a real starting value
-  // already exists (a draft, or a rescan of an already-catalogued title) - those are
-  // authoritative and must never be silently overwritten by a fresh guess. Otherwise
-  // re-guesses every time the selected candidate itself changes (e.g. the user picks a
-  // different candidate than the one auto-selected), but backs off the moment the field no
-  // longer holds the tool's own last suggestion verbatim - same guard pattern as the Title
-  // composition effects below.
+  // already exists from a draft - an unsubmitted in-progress form is authoritative and must
+  // never be silently overwritten by a fresh guess. An existingMatch (an already-submitted,
+  // confirmed entry) is deliberately NOT treated the same way any more (2026-09-24, see this
+  // file's "prefill only from an unsubmitted draft" note near existingMatch's own
+  // declaration) - movieOrTv starts blank for one of those, so this guess is exactly what
+  // fills it back in, freshly, rather than leaving it blank. Otherwise re-guesses every time
+  // the selected candidate itself changes (e.g. the user picks a different candidate than
+  // the one auto-selected), but backs off the moment the field no longer holds the tool's
+  // own last suggestion verbatim - same guard pattern as the Title composition effects below.
   const lastAutoMovieOrTvRef = useRef<string | null>(null);
   useEffect(() => {
-    if (draft?.movieOrTv || existingMatch?.movie_or_tv) return;
+    if (draft?.movieOrTv) return;
     if (!singleSelectedImdbId) return;
     if (movieOrTv !== "" && movieOrTv !== lastAutoMovieOrTvRef.current) return;
     const guessed = guessMovieOrTvFromType(candidates.find((c) => c.imdbID === singleSelectedImdbId)?.Type);
@@ -1102,6 +1257,23 @@ export default function ConfirmScreen({
   // confirm/route.ts) - only worth asking for a worded era label when this scan is
   // actually headed for that shelf section.
   const isHistoryDocumentary = /history document/i.test(genreLocation);
+  // Added 2026-09-27 per the user's own observation: a high proportion of the family/kids/
+  // animated titles already in the collection turned out scratched from previous owners -
+  // Disc Condition is easy to breeze past on a title like this without a second look, so it's
+  // flagged the same amber "worth a look" way Franchise/Special Features already are. Genre
+  // is comma-separated free text (matches "Animated" and "Animation" both); Genre Location is
+  // a single fixed value, checked the same case-insensitive way isHistoryDocumentary is above.
+  const isFamilyRiskGenre =
+    genre.split(",").some((g) => /family|kids|animat/i.test(g.trim())) || /family/i.test(genreLocation);
+  // Added 2026-09-27, same day, per the user's follow-up: "if a title is given the genre
+  // kids, family is found as animated rather than live action the rating buttons that appear
+  // for quick selection will be G or PG" - a narrower pair of checks than isFamilyRiskGenre
+  // above (genre kids/family specifically, not also matching "animat" as a genre tag - that
+  // signal comes from animationOrLiveAction instead, a separate field entirely). Feeds
+  // franchiseCommonRatings below, not the Disc Condition warning above.
+  const isFamilyOrKidsGenre =
+    genre.split(",").some((g) => /family|kids/i.test(g.trim())) || /family/i.test(genreLocation);
+  const isAnimatedStyle = animationOrLiveAction.trim() !== "" && animationOrLiveAction !== "Live Action";
   // Hard requirement (Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan" section):
   // a candidate-backed entry (a real film was identified) must end up with a real TMDb id,
   // so every metadata-driven feature can be backfilled later without re-touching the
@@ -1364,9 +1536,29 @@ export default function ConfirmScreen({
     // a blank Franchise is very often the genuinely correct answer (most films aren't part of
     // one at all), not missing data, so treating it as required would wrongly block
     // confirming any standalone film.
-    if (showRatingField && !rating.trim()) missing.push("Rating");
-    if (showStudioField && !studio.trim()) missing.push("Studio");
-    if (showOriginalLanguageField && !originalLanguage.trim()) missing.push("Original Language");
+    //
+    // Deliberately checked against tmdbPreview/tmdbPreviewLoading directly here, NOT via
+    // showRatingField/showStudioField/showOriginalLanguageField - found live 2026-09-24, a
+    // real "Resident Evil: Welcome to Raccoon City" scan confirmed with no Rating at all and
+    // no warning. Root cause: those three show* flags are also used to control the manual
+    // field's on-screen VISIBILITY, and are deliberately false while the TMDb lookup is still
+    // in flight (to avoid a flash of the field appearing then disappearing once it resolves) -
+    // but that same "false while loading" state also skipped this required-field check
+    // entirely if Confirm was pressed before the lookup finished, so a fast tap-through could
+    // slip past a field TMDb was always going to come up empty for (this film genuinely has no
+    // NZ rating certification on TMDb - confirmed directly against the saved row afterward).
+    // Requiring an ACTUAL confirmed value (not loading, and TMDb genuinely returned one) closes
+    // that gap: while still loading, nothing is confirmed yet, so it's correctly treated as
+    // still-missing until the lookup resolves one way or the other, exactly like Genre
+    // Location's own unconditional check above already behaves.
+    const tmdbConfirmedRating = singleSelectedImdbId ? !tmdbPreviewLoading && !!tmdbPreview?.rating : false;
+    const tmdbConfirmedStudio = singleSelectedImdbId ? !tmdbPreviewLoading && !!tmdbPreview?.studio : false;
+    const tmdbConfirmedOriginalLanguage = singleSelectedImdbId
+      ? !tmdbPreviewLoading && !!tmdbPreview?.originalLanguage
+      : false;
+    if (!rating.trim() && !tmdbConfirmedRating) missing.push("Rating");
+    if (!studio.trim() && !tmdbConfirmedStudio) missing.push("Studio");
+    if (!originalLanguage.trim() && !tmdbConfirmedOriginalLanguage) missing.push("Original Language");
     return missing;
   }
 
@@ -1393,6 +1585,14 @@ export default function ConfirmScreen({
     if (membersMissingDiscs.length > 0) missing.push(`Disc(s) for: ${membersMissingDiscs.join(", ")}`);
     const membersMissingFormat = collectionMembers.filter((m) => !m.format.trim()).map((m) => m.title);
     if (membersMissingFormat.length > 0) missing.push(`Format for: ${membersMissingFormat.join(", ")}`);
+    // Added 2026-09-27 per the user's report that some already-catalogued collection titles
+    // ended up with no rating at all - `m.tmdbRating` (captured in TitleSearchPicker.tsx the
+    // same way `isFamilyOrKidsGenre`/`isAnimatedStyle` already are) means TMDb genuinely had
+    // one, so only a member with neither a manual value nor a confirmed TMDb one is missing -
+    // same unconditional-once-resolved treatment the single-title flow's own Rating check got
+    // in the earlier race-condition fix (getMissingRequiredFields below), just per-member here.
+    const membersMissingRating = collectionMembers.filter((m) => !m.rating?.trim() && !m.tmdbRating).map((m) => m.title);
+    if (membersMissingRating.length > 0) missing.push(`Rating for: ${membersMissingRating.join(", ")}`);
     if (showHeaderSpecialFeaturesDiscFields) {
       if (bonusDiscs.length === 0) missing.push("Which disc is the collection's own bonus disc");
       if (!specialFeaturesDiscFormat.trim()) missing.push("Format of Special Features Discs (for the collection's own bonus disc)");
@@ -1538,6 +1738,7 @@ export default function ConfirmScreen({
   // See Claude/TECH STACK AND ARCHITECTURE/barcode-scanning-pipeline.md for the full design.
 
   function removeCollectionMember(key: string) {
+    userManagedMembersRef.current = true;
     setCollectionMembers((prev) => prev.filter((m) => m.key !== key));
   }
 
@@ -1605,6 +1806,12 @@ export default function ConfirmScreen({
       release_variant_note: releaseVariantNote.trim() || null,
       disc_condition: discCondition,
       case_notes: caseNotes.trim() || null,
+      // 0037_add_unintentional_collection.sql - flips the Estimated Value pipeline's usual
+      // "price the header, skip the members" rule for a set that's really just unrelated films
+      // a previous owner put in one disc case, not a genuine box-set product. Sent on the
+      // header AND every member (this whole object is spread into both) since the eligibility
+      // queries filter by this flag on the row being priced, not by looking up the header.
+      unintentional_collection: unintentionalCollection,
       steelbook,
       // Optional collection-wide animation style ("2D 3D Hybrid Animation"); blank lets each title
       // use its own TMDb-detected value and the header derive from them.
@@ -1637,6 +1844,33 @@ export default function ConfirmScreen({
     // after the screen has finished switching back from the duplicate-resolution view, if any.
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 250);
     setError(null);
+    // A real determinate progress bar (2026-09-27, ProgressBar.tsx - see its own comment on
+    // why this is a time-based estimate, not exact backend progress: the header+members submit
+    // as one atomic request specifically so a later entry's validation failure can never leave
+    // an earlier one already written, which rules out genuine per-entry progress without a much
+    // bigger streaming-response change). Eases toward a 95% cap rather than reaching it outright,
+    // so it never falsely claims "done" for a collection that's actually still writing - the real
+    // completion (100%) only ever happens once the request genuinely resolves, below.
+    //
+    // Decay rate tightened from -2 to -4 (2026-09-27, fixing a real reported bug: the bar "moves
+    // smoothly until the last 16th and then moves at a snail's pace, and the title is submitted
+    // before the loading bar gets to the end"). The old -2 rate only reached ~80% of its own cap
+    // by the time the ESTIMATE itself fully elapsed (0.92*(1-e^-2) = 0.80), meaning most of a
+    // real submit's whole duration was spent crawling through the flattest, slowest-feeling part
+    // of the curve, then snapping a large, jarring distance to 100% the moment the real response
+    // landed. At -4, the curve is already at ~93% of its cap by the time the estimate elapses
+    // (0.95*(1-e^-4) = 0.933) and essentially fully capped soon after - so a submit that takes
+    // roughly as long as estimated reads as "fast, then briefly holds near done" rather than
+    // "slows to a crawl," and the final jump to 100% is small either way. A submit slower than
+    // estimated still just holds flat at the 95% cap waiting for the real response, which reads
+    // as "almost done" rather than broken.
+    setSubmitProgress(0);
+    const estimatedMs = (collectionMembers.length + 1) * 900;
+    const progressStartedAt = Date.now();
+    const progressInterval = setInterval(() => {
+      const elapsed = (Date.now() - progressStartedAt) / estimatedMs;
+      setSubmitProgress(0.95 * (1 - Math.exp(-4 * elapsed)));
+    }, 150);
     try {
       const shared = buildSharedCollectionFields();
       // Colon-suffix disambiguation convention (barcode-scanning-pipeline.md's Collections
@@ -1723,6 +1957,12 @@ export default function ConfirmScreen({
           part_of_season_no: m.partOfSeasonNo || null,
           episode_count: m.episodeCount ? parseInt(m.episodeCount, 10) || null : null,
           franchise: m.franchise ? m.franchise.split(",").map((f) => f.trim()).filter(Boolean) : [],
+          // Manual Rating fallback (2026-09-27) - see TitleSearchPicker's CollectionMember.rating
+          // comment. The confirm route's own per-entry manualRating ?? tmdbFields.rating ??
+          // omdbRating precedence already applied to every entry uniformly; this was simply
+          // never populated for a member before, so a title with no TMDb rating silently ended
+          // up with none saved at all.
+          rating: m.rating?.trim() || null,
           is_collection: false,
           title_in_a_collection: true,
           name_of_collection: nameOfCollection,
@@ -1738,6 +1978,11 @@ export default function ConfirmScreen({
           special_features: m.specialFeatures,
           special_features_disc_count: m.specialFeaturesDiscCount ? parseInt(m.specialFeaturesDiscCount, 10) || null : null,
           special_features_disc_format: m.specialFeaturesDiscFormat ?? null,
+          // Which of the set's own numbered discs actually hold this title's special features -
+          // can genuinely differ from disc_number_in_set below (its own movie disc(s)), e.g. a
+          // bonus disc shared with other titles. See TitleSearchPicker's own comment on
+          // CollectionMember.specialFeaturesDiscNumbers.
+          special_features_disc_number_in_set: m.specialFeaturesDiscNumbers?.trim() || null,
           // This title's own Release Name, independent of the collection's - see the comment
           // on the header entry above.
           release_name: m.releaseName?.trim() || null,
@@ -1748,10 +1993,14 @@ export default function ConfirmScreen({
       }));
 
       const result = await confirmScan(scan.id, [headerEntry, ...memberEntries]);
+      clearInterval(progressInterval);
+      setSubmitProgress(1);
       clearConfirmDraft(scan.id);
       loadFieldOptions(true);
       onConfirmed({ shelfLocation: result.shelfLocation });
     } catch (err) {
+      clearInterval(progressInterval);
+      setSubmitProgress(0);
       setError((err as Error).message);
     } finally {
       setSubmitting(false);
@@ -2080,417 +2329,600 @@ export default function ConfirmScreen({
       )}
 
       {isCollectionOverride ? (
-        <>
-          <Text style={styles.groupHeader}>Collection</Text>
-          <View style={styles.section}>
-            <Text style={styles.label}>Name of Collection</Text>
-            <TextInput
-              style={styles.input}
-              value={manualTitle}
-              onChangeText={setManualTitle}
-              placeholder="e.g. Alfred Hitchcock: A Collection of 10 Classic Movies"
-              placeholderTextColor="#71717a"
-            />
-            <Text style={styles.hint}>
-              Just the base name - as you add titles below, this automatically becomes &quot;{"<name>"}: Title 1,
-              Title 2, ...&quot; so a box set sharing this same base name with a different set of titles can still be
-              told apart.
-            </Text>
-            {autoMatching && <Text style={styles.hint}>Looking up the film titles in this name...</Text>}
-            {previewCollectionName !== "" && (
-              <Text style={styles.hint}>
-                Will be saved as: {previewCollectionName}
-                {collectionNameListsTitles ? " (this name already lists the titles, so nothing is added to it)" : ""}
-              </Text>
-            )}
-          </View>
-          <View style={styles.section}>
-            <Text style={styles.label}>Collection Type (Movie or TV)</Text>
-            <SelectDropdown options={fieldOptions?.movieOrTv ?? [movieOrTv].filter(Boolean)} value={movieOrTv} onChange={setMovieOrTv} />
-          </View>
-          <View style={styles.section}>
-            <Text style={styles.label}>Rating (as printed on the box)</Text>
-            <SearchableModalInput value={rating} onChangeText={setRating} options={fieldOptions?.rating ?? []} />
-          </View>
-          <View style={styles.section}>
-            <Text style={styles.label}>Distributor (optional)</Text>
-            <SearchableModalInput value={studio} onChangeText={setStudio} options={fieldOptions?.studio ?? []} />
-            <Text style={styles.hint}>
-              Only used if no single studio turns out to be common among the titles you add below - the box&apos;s
-              own publisher (e.g. Universal), not any one film&apos;s original production company.
-            </Text>
-          </View>
-          <TouchableOpacity style={styles.checkboxRow} onPress={toggleWatchedCollectionDisc}>
-            <View style={[styles.checkbox, watchedDisc && styles.checkboxChecked]}>
-              {watchedDisc && <Text style={styles.checkboxMark}>✓</Text>}
-            </View>
-            <Text style={styles.checkboxLabel}>Watched Collection Disc (every disc in this set watched)</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.checkboxRow} onPress={toggleWatchedCollection}>
-            <View style={[styles.checkbox, watched && styles.checkboxChecked]}>
-              {watched && <Text style={styles.checkboxMark}>✓</Text>}
-            </View>
-            <Text style={styles.checkboxLabel}>Watched Collection (every film in this set watched)</Text>
-          </TouchableOpacity>
-          <Text style={styles.hint}>
-            Checking either box above marks every title already added the same way. Set this before adding
-            titles and their own Watched/Watched Disc checkboxes won&apos;t even be asked - they&apos;ll
-            already match. Each title's own checkboxes still show up afterward in the list below, in case one
-            title genuinely differs.
-          </Text>
-
-          <Text style={styles.groupHeader}>Shared Details (apply to the whole box set)</Text>
-          <View style={styles.section}>
-            <Text style={styles.label}>Format (the box's own general format)</Text>
-            <SearchableModalInput
-              value={format}
-              onChangeText={setFormat}
-              options={fieldOptions?.format ?? []}
-              onFocusScroll={scrollFieldIntoView}
-            />
-            <Text style={styles.hint}>
-              Each title below also gets its own Format, in case any title's discs differ from
-              the rest.
-            </Text>
-          </View>
-          <View style={styles.section}>
-            <Text style={styles.label}>Total Disc Count</Text>
-            <TextInput
-              style={styles.input}
-              value={collectionDiscCount}
-              onChangeText={(text) => {
-                const next = digitsOnly(text);
-                setCollectionDiscCount(next);
-                const max = parseInt(next, 10) || 0;
-                setBonusDiscs((prev) => prev.filter((n) => n <= max));
-              }}
-              keyboardType="number-pad"
-              placeholder="e.g. 2"
-              placeholderTextColor="#71717a"
-            />
-            <Text style={styles.hint}>
-              Every physical disc in the box, the collection&apos;s own bonus disc included. Each title you add
-              below then just ticks which of these discs it&apos;s on.
-            </Text>
-          </View>
-          <View style={styles.section}>
-            <Text style={styles.label}>Animation or Live Action (optional - applies to every title)</Text>
-            <SearchableModalInput
-              value={animationOrLiveAction}
-              onChangeText={setAnimationOrLiveAction}
-              options={fieldOptions?.animationOrLiveAction ?? []}
-              onFocusScroll={scrollFieldIntoView}
-            />
-            <Text style={styles.hint}>
-              For an animated set, type or pick the style (e.g. 2D 3D Hybrid Animation). Leave blank and each
-              title uses what TMDb says, with the collection taking the shared value (or Hybrid if they differ).
-            </Text>
-          </View>
-          <View style={styles.section}>
-            <Text style={styles.label}>Disk Region</Text>
-            <MultiSelectChips
-              options={diskRegionOptions}
-              selected={diskRegions}
-              onChange={setDiskRegions}
-              exclusiveOptions={["All", NOT_LISTED_REGION]}
-            />
-          </View>
-          <View style={[styles.section, styles.row]}>
-            <Text style={styles.label}>Special Features (a bonus disc for the whole collection)</Text>
-            <Switch value={specialFeatures} onValueChange={setSpecialFeatures} />
-          </View>
-          {showHeaderSpecialFeaturesDiscFields && (
+        (() => {
+          // Collection version of the single-title SlideFlow below (2026-09-22, per the
+          // user's own explicit request to bring the "slideshow style" to Collections too) -
+          // same SlideFlow/BigChoice/SummaryRow components, same activeSlide/slideReturn/
+          // openRow state (shared with the single-title flow; harmless if a stale key from
+          // the other mode briefly doesn't match one of these slides, since SlideFlow already
+          // falls back to its first slide rather than crashing). Every field below is the
+          // exact same state/handler this branch always used - only the JSX layout changed,
+          // grouped into themed slides instead of one long scroll, mirroring the single-title
+          // flow's own grouping (title/format/discs/location/franchise/release/details/
+          // summary) as closely as this screen's different fields allow.
+          const collectionNameNode = (
             <>
               <View style={styles.section}>
-                <Text style={styles.label}>Which disc is the bonus disc?</Text>
-                {totalDiscCountNumber > 0 ? (
-                  Array.from({ length: totalDiscCountNumber }, (_, i) => i + 1).map((n) => {
-                    const checked = bonusDiscs.includes(n);
-                    return (
-                      <TouchableOpacity
-                        key={n}
-                        style={styles.checkboxRow}
-                        onPress={() => setBonusDiscs((prev) => (prev.includes(n) ? prev.filter((d) => d !== n) : [...prev, n]))}
-                      >
-                        <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
-                          {checked && <Text style={styles.checkboxMark}>✓</Text>}
-                        </View>
-                        <Text style={styles.checkboxLabel}>Disc {n}</Text>
-                      </TouchableOpacity>
-                    );
-                  })
-                ) : (
-                  <Text style={styles.hint}>Enter the Total Disc Count above first, then pick the bonus disc here.</Text>
+                <Text style={styles.label}>Name of Collection</Text>
+                <TextInput
+                  ref={manualTitleInputRef}
+                  style={styles.input}
+                  value={manualTitle}
+                  onChangeText={setManualTitle}
+                  onFocus={() => scrollInputRefIntoView(manualTitleInputRef)}
+                  placeholder="e.g. Alfred Hitchcock: A Collection of 10 Classic Movies"
+                  placeholderTextColor="#71717a"
+                />
+                <Text style={styles.hint}>
+                  Just the base name - as you add titles below, this automatically becomes &quot;{"<name>"}: Title 1,
+                  Title 2, ...&quot; so a box set sharing this same base name with a different set of titles can still be
+                  told apart.
+                </Text>
+                {autoMatching && <Text style={styles.hint}>Looking up the film titles in this name...</Text>}
+                {previewCollectionName !== "" && (
+                  <Text style={styles.hint}>
+                    Will be saved as: {previewCollectionName}
+                    {collectionNameListsTitles ? " (this name already lists the titles, so nothing is added to it)" : ""}
+                  </Text>
                 )}
               </View>
               <View style={styles.section}>
-                <Text style={styles.label}>Format of Special Features Discs</Text>
+                <Text style={styles.label}>Collection Type (Movie or TV)</Text>
+                <SelectDropdown options={fieldOptions?.movieOrTv ?? [movieOrTv].filter(Boolean)} value={movieOrTv} onChange={setMovieOrTv} />
+              </View>
+              <View style={styles.section}>
+                <Text style={styles.label}>Rating (as printed on the box)</Text>
+                {collectionCommonRatings.length > 0 && (
+                  <>
+                    <Text style={styles.hint}>
+                      {collectionAllMembersFamilyOrKids && collectionAllMembersAnimated
+                        ? "Common for a family/kids animated set:"
+                        : `Common for ${collectionSharedFranchiseTags[0]}:`}
+                    </Text>
+                    <SingleSelectChips options={collectionCommonRatings} value={rating} onChange={setRating} />
+                  </>
+                )}
+                <SearchableModalInput value={rating} onChangeText={setRating} options={fieldOptions?.rating ?? []} />
+              </View>
+              <View style={styles.section}>
+                <Text style={styles.label}>Distributor (optional)</Text>
+                <SearchableModalInput value={studio} onChangeText={setStudio} options={fieldOptions?.studio ?? []} />
+                <Text style={styles.hint}>
+                  Only used if no single studio turns out to be common among the titles you add below - the box&apos;s
+                  own publisher (e.g. Universal), not any one film&apos;s original production company.
+                </Text>
+              </View>
+              <TouchableOpacity style={styles.checkboxRow} onPress={toggleWatchedCollectionDisc}>
+                <View style={[styles.checkbox, watchedDisc && styles.checkboxChecked]}>
+                  {watchedDisc && <Text style={styles.checkboxMark}>✓</Text>}
+                </View>
+                <Text style={styles.checkboxLabel}>Watched Collection Disc (every disc in this set watched)</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.checkboxRow} onPress={toggleWatchedCollection}>
+                <View style={[styles.checkbox, watched && styles.checkboxChecked]}>
+                  {watched && <Text style={styles.checkboxMark}>✓</Text>}
+                </View>
+                <Text style={styles.checkboxLabel}>Watched Collection (every film in this set watched)</Text>
+              </TouchableOpacity>
+              <Text style={styles.hint}>
+                Checking either box above marks every title already added the same way. Set this before adding
+                titles and their own Watched/Watched Disc checkboxes won&apos;t even be asked - they&apos;ll
+                already match. Each title's own checkboxes still show up afterward in the list below, in case one
+                title genuinely differs.
+              </Text>
+            </>
+          );
+          const collectionCommonFormats = (fieldOptions?.format ?? []).filter((f) => /^(dvd|blu-?ray|4k uhd blu-?ray)$/i.test(f.trim()));
+          const collectionFormatNode = (
+            <>
+              <View style={styles.section}>
+                <Text style={styles.label}>Format (the box's own general format)</Text>
+                <BigChoice options={collectionCommonFormats} value={format} onChange={setFormat} />
+                <Text style={styles.hint}>Something else (VHS, 3D, HD DVD...)? Pick it here:</Text>
                 <SearchableModalInput
-                  value={specialFeaturesDiscFormat}
-                  onChangeText={setSpecialFeaturesDiscFormat}
+                  value={format}
+                  onChangeText={setFormat}
                   options={fieldOptions?.format ?? []}
                   onFocusScroll={scrollFieldIntoView}
                 />
+                <Text style={styles.hint}>
+                  Each title below also gets its own Format, in case any title's discs differ from
+                  the rest.
+                </Text>
               </View>
-            </>
-          )}
-          {collectionNameIsGeneric ? (
-            <Text style={styles.hint}>
-              This name is generic, so it doesn&apos;t need a Release Name - it will be saved without one.
-            </Text>
-          ) : (
-            <>
-            <View style={styles.section}>
-              <View style={styles.row}>
-                <Text style={styles.label}>Release Name (if different from the collection name)</Text>
-                <TouchableOpacity style={styles.checkboxRow} onPress={() => setReleaseNameMatchesTitle((prev) => !prev)}>
-                  <View style={[styles.checkbox, releaseNameMatchesTitle && styles.checkboxChecked]}>
-                    {releaseNameMatchesTitle && <Text style={styles.checkboxMark}>✓</Text>}
-                  </View>
-                  <Text style={styles.checkboxLabel}>Same as name</Text>
-                </TouchableOpacity>
-              </View>
-              <TextInput
-                style={styles.input}
-                value={releaseName}
-                onChangeText={(text) => {
-                  setReleaseName(text);
-                  setReleaseNameMatchesTitle(text.trim().length === 0);
-                }}
-                placeholder="e.g. The Coppola Restoration"
-                placeholderTextColor="#71717a"
-              />
-            </View>
-            </>
-          )}
-          <View style={styles.section}>
-            <Text style={styles.label}>Release Variant Note (optional)</Text>
-            <TextInput
-              style={styles.input}
-              value={releaseVariantNote}
-              onChangeText={setReleaseVariantNote}
-              placeholder="e.g. numbered slipcover, first pressing"
-              placeholderTextColor="#71717a"
-            />
-          </View>
-          <View style={styles.section}>
-            <Text style={styles.label}>Disc Condition</Text>
-            <SingleSelectChips options={DISC_CONDITION_VALUES} value={discCondition} onChange={setDiscCondition} />
-          </View>
-          <View style={styles.section}>
-            <Text style={styles.label}>Case Notes (optional)</Text>
-            <TextInput
-              style={styles.input}
-              value={caseNotes}
-              onChangeText={setCaseNotes}
-              placeholder="e.g. blank case, wrong disc inside"
-              placeholderTextColor="#71717a"
-            />
-          </View>
-          <View style={styles.section}>
-            <Text style={styles.label}>Genre Location (shelf section)</Text>
-            <SearchableModalInput
-              value={genreLocation}
-              onChangeText={setGenreLocation}
-              options={filterGenreLocationOptions(fieldOptions?.genreLocation ?? [], true, movieOrTv)}
-              placeholder="e.g. COLLECTION Person"
-              onFocusScroll={scrollFieldIntoView}
-            />
-          </View>
-          {isHistoryDocumentary && (
-            <View style={styles.section}>
-              <Text style={styles.label}>Depicted Era (worded, e.g. &quot;Spanish Civil War&quot;)</Text>
-              <TextInput
-                style={styles.input}
-                value={depictedEraLabel}
-                onChangeText={setDepictedEraLabel}
-                placeholder="e.g. Spanish Civil War, 1980s"
-                placeholderTextColor="#71717a"
-              />
-            </View>
-          )}
-          <View style={[styles.section, styles.row]}>
-            <Text style={styles.label}>Steelbook</Text>
-            <Switch value={steelbook} onValueChange={setSteelbook} />
-          </View>
-          <TouchableOpacity
-            style={styles.checkboxRow}
-            onPress={() =>
-              setIsCurrentlyRentedOut((prev) => {
-                const next = !prev;
-                if (!next) {
-                  setRentedByWho("");
-                  setDateRented("");
-                  setShowDateRentedPicker(false);
-                }
-                return next;
-              })
-            }
-          >
-            <View style={[styles.checkbox, isCurrentlyRentedOut && styles.checkboxChecked]}>
-              {isCurrentlyRentedOut && <Text style={styles.checkboxMark}>✓</Text>}
-            </View>
-            <Text style={styles.checkboxLabel}>Currently rented out</Text>
-          </TouchableOpacity>
-          {isCurrentlyRentedOut && (
-            <>
               <View style={styles.section}>
-                <Text style={styles.label}>Rented By Who</Text>
-                <SearchableModalInput
-                  value={rentedByWho}
-                  onChangeText={setRentedByWho}
-                  options={fieldOptions?.rentedByWho ?? []}
-                  placeholder="e.g. Liam"
-                  onFocusScroll={scrollFieldIntoView}
+                <Text style={styles.label}>Disk Region</Text>
+                <MultiSelectChips
+                  options={diskRegionOptions}
+                  selected={diskRegions}
+                  onChange={setDiskRegions}
+                  exclusiveOptions={["All", NOT_LISTED_REGION]}
                 />
               </View>
               <View style={styles.section}>
-                <Text style={styles.label}>Date Rented</Text>
-                <TouchableOpacity style={styles.input} onPress={() => setShowDateRentedPicker(true)}>
-                  <Text style={{ color: dateRented ? "#f4f4f5" : "#71717a" }}>{dateRented || "Select a date"}</Text>
-                </TouchableOpacity>
-                {showDateRentedPicker && (
-                  <DateTimePicker
-                    value={dateRented ? parseDateOnly(dateRented) : new Date()}
-                    mode="date"
-                    display={Platform.OS === "ios" ? "spinner" : "default"}
-                    maximumDate={new Date()}
-                    onChange={(event, selectedDate) => {
-                      if (Platform.OS === "android") setShowDateRentedPicker(false);
-                      if (event.type === "set" && selectedDate) setDateRented(formatDateOnly(selectedDate));
-                    }}
-                  />
-                )}
-                {Platform.OS === "ios" && showDateRentedPicker && (
-                  <TouchableOpacity onPress={() => setShowDateRentedPicker(false)}>
-                    <Text style={styles.link}>Done</Text>
-                  </TouchableOpacity>
-                )}
+                <Text style={styles.label}>Animation or Live Action (optional - applies to every title)</Text>
+                <SearchableModalInput
+                  value={animationOrLiveAction}
+                  onChangeText={setAnimationOrLiveAction}
+                  options={fieldOptions?.animationOrLiveAction ?? []}
+                  onFocusScroll={scrollFieldIntoView}
+                />
+                <Text style={styles.hint}>
+                  For an animated set, type or pick the style (e.g. 2D 3D Hybrid Animation). Leave blank and each
+                  title uses what TMDb says, with the collection taking the shared value (or Hybrid if they differ).
+                </Text>
+              </View>
+              <View style={[styles.section, styles.row]}>
+                <Text style={styles.label}>Steelbook</Text>
+                <Switch value={steelbook} onValueChange={setSteelbook} />
               </View>
             </>
-          )}
-
-          <Text style={styles.groupHeader}>Titles in this set ({collectionMembers.length})</Text>
-          {previewCollectionName !== "" && (
-            <Text style={styles.hint}>Will be saved as: {previewCollectionName}</Text>
-          )}
-          {collectionMembers.some((m) => !m.discNumbers.trim()) && (
-            <Text style={styles.hint}>
-              Some titles were matched automatically from the collection name - tap Edit on each to tick which disc(s) it&apos;s on (set the Total Disc Count above first).
-            </Text>
-          )}
-          {collectionMembers.map((m) => (
-            <View key={m.key} style={styles.section}>
+          );
+          const collectionDiscsNode = (
+            <>
+              <View style={styles.section}>
+                <Text style={styles.label}>Total Disc Count</Text>
+                <TextInput
+                  ref={collectionDiscCountInputRef}
+                  style={styles.input}
+                  value={collectionDiscCount}
+                  onChangeText={(text) => {
+                    const next = digitsOnly(text);
+                    setCollectionDiscCount(next);
+                    const max = parseInt(next, 10) || 0;
+                    setBonusDiscs((prev) => prev.filter((n) => n <= max));
+                  }}
+                  onFocus={() => scrollInputRefIntoView(collectionDiscCountInputRef)}
+                  keyboardType="number-pad"
+                  placeholder="e.g. 2"
+                  placeholderTextColor="#71717a"
+                />
+                <Text style={styles.hint}>
+                  Every physical disc in the box, the collection&apos;s own bonus disc included. Each title you add
+                  below then just ticks which of these discs it&apos;s on.
+                </Text>
+              </View>
+              <View style={[styles.section, styles.row]}>
+                <Text style={styles.label}>Special Features (a bonus disc for the whole collection)</Text>
+                <Switch value={specialFeatures} onValueChange={setSpecialFeatures} />
+              </View>
+              {showHeaderSpecialFeaturesDiscFields && (
+                <>
+                  <View style={styles.section}>
+                    <Text style={styles.label}>Which disc is the bonus disc?</Text>
+                    {totalDiscCountNumber > 0 ? (
+                      Array.from({ length: totalDiscCountNumber }, (_, i) => i + 1).map((n) => {
+                        const checked = bonusDiscs.includes(n);
+                        return (
+                          <TouchableOpacity
+                            key={n}
+                            style={styles.checkboxRow}
+                            onPress={() => setBonusDiscs((prev) => (prev.includes(n) ? prev.filter((d) => d !== n) : [...prev, n]))}
+                          >
+                            <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
+                              {checked && <Text style={styles.checkboxMark}>✓</Text>}
+                            </View>
+                            <Text style={styles.checkboxLabel}>Disc {n}</Text>
+                          </TouchableOpacity>
+                        );
+                      })
+                    ) : (
+                      <Text style={styles.hint}>Enter the Total Disc Count above first, then pick the bonus disc here.</Text>
+                    )}
+                  </View>
+                  <View style={styles.section}>
+                    <Text style={styles.label}>Format of Special Features Discs</Text>
+                    <SearchableModalInput
+                      value={specialFeaturesDiscFormat}
+                      onChangeText={setSpecialFeaturesDiscFormat}
+                      options={fieldOptions?.format ?? []}
+                      onFocusScroll={scrollFieldIntoView}
+                    />
+                  </View>
+                </>
+              )}
+            </>
+          );
+          const collectionLocationNode = (
+            <>
+              <View style={styles.section}>
+                <Text style={styles.label}>Genre Location (shelf section)</Text>
+                <BigChoice
+                  options={filterGenreLocationOptions(fieldOptions?.genreLocation ?? [], true, movieOrTv)}
+                  value={genreLocation}
+                  onChange={setGenreLocation}
+                />
+                <Text style={styles.hint}>Not listed? Type a new one here:</Text>
+                <SearchableModalInput
+                  value={genreLocation}
+                  onChangeText={setGenreLocation}
+                  options={filterGenreLocationOptions(fieldOptions?.genreLocation ?? [], true, movieOrTv)}
+                  placeholder="e.g. COLLECTION Person"
+                  onFocusScroll={scrollFieldIntoView}
+                />
+              </View>
+              {isHistoryDocumentary && (
+                <View style={styles.section}>
+                  <Text style={styles.label}>Depicted Era (worded, e.g. &quot;Spanish Civil War&quot;)</Text>
+                  <TextInput
+                    ref={depictedEraLabelInputRef}
+                    style={styles.input}
+                    value={depictedEraLabel}
+                    onChangeText={setDepictedEraLabel}
+                    onFocus={() => scrollInputRefIntoView(depictedEraLabelInputRef)}
+                    placeholder="e.g. Spanish Civil War, 1980s"
+                    placeholderTextColor="#71717a"
+                  />
+                </View>
+              )}
+            </>
+          );
+          const collectionReleaseNode = (
+            <>
+              {collectionNameIsGeneric ? (
+                <Text style={styles.hint}>
+                  This name is generic, so it doesn&apos;t need a Release Name - it will be saved without one.
+                </Text>
+              ) : (
+                <View style={styles.section}>
+                  <View style={styles.row}>
+                    <Text style={styles.label}>Release Name (if different from the collection name)</Text>
+                    <TouchableOpacity style={styles.checkboxRow} onPress={() => setReleaseNameMatchesTitle((prev) => !prev)}>
+                      <View style={[styles.checkbox, releaseNameMatchesTitle && styles.checkboxChecked]}>
+                        {releaseNameMatchesTitle && <Text style={styles.checkboxMark}>✓</Text>}
+                      </View>
+                      <Text style={styles.checkboxLabel}>Same as name</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TextInput
+                    ref={releaseNameInputRef}
+                    style={styles.input}
+                    value={releaseName}
+                    onChangeText={(text) => {
+                      setReleaseName(text);
+                      setReleaseNameMatchesTitle(text.trim().length === 0);
+                    }}
+                    onFocus={() => scrollInputRefIntoView(releaseNameInputRef)}
+                    placeholder="e.g. The Coppola Restoration"
+                    placeholderTextColor="#71717a"
+                  />
+                </View>
+              )}
+              <View style={styles.section}>
+                <Text style={styles.label}>Release Variant Note (optional)</Text>
+                <TextInput
+                  ref={releaseVariantNoteInputRef}
+                  style={styles.input}
+                  value={releaseVariantNote}
+                  onChangeText={setReleaseVariantNote}
+                  onFocus={() => scrollInputRefIntoView(releaseVariantNoteInputRef)}
+                  placeholder="e.g. numbered slipcover, first pressing"
+                  placeholderTextColor="#71717a"
+                />
+              </View>
+              <View style={styles.section}>
+                <Text style={styles.label}>Case Notes (optional)</Text>
+                <TextInput
+                  ref={caseNotesInputRef}
+                  style={styles.input}
+                  value={caseNotes}
+                  onChangeText={setCaseNotes}
+                  onFocus={() => scrollInputRefIntoView(caseNotesInputRef)}
+                  placeholder="e.g. blank case, wrong disc inside"
+                  placeholderTextColor="#71717a"
+                />
+              </View>
               <TouchableOpacity
-                style={styles.row}
+                style={styles.checkboxRow}
+                onPress={() => setUnintentionalCollection((prev) => !prev)}
+              >
+                <View style={[styles.checkbox, unintentionalCollection && styles.checkboxChecked]}>
+                  {unintentionalCollection && <Text style={styles.checkboxMark}>✓</Text>}
+                </View>
+                <Text style={styles.checkboxLabel}>Unintentional collection (unrelated movies sharing one case)</Text>
+              </TouchableOpacity>
+              {unintentionalCollection && (
+                <Text style={styles.hint}>
+                  Estimated Value will price each title in this set individually instead of the set as a whole.
+                </Text>
+              )}
+            </>
+          );
+          const collectionDetailsNode = (
+            <>
+              <View style={styles.section}>
+                <Text style={styles.label}>Disc Condition</Text>
+                <SingleSelectChips options={DISC_CONDITION_VALUES} value={discCondition} onChange={setDiscCondition} />
+              </View>
+              <TouchableOpacity
+                style={styles.checkboxRow}
+                onPress={() =>
+                  setIsCurrentlyRentedOut((prev) => {
+                    const next = !prev;
+                    if (!next) {
+                      setRentedByWho("");
+                      setDateRented("");
+                      setShowDateRentedPicker(false);
+                    }
+                    return next;
+                  })
+                }
+              >
+                <View style={[styles.checkbox, isCurrentlyRentedOut && styles.checkboxChecked]}>
+                  {isCurrentlyRentedOut && <Text style={styles.checkboxMark}>✓</Text>}
+                </View>
+                <Text style={styles.checkboxLabel}>Currently rented out</Text>
+              </TouchableOpacity>
+              {isCurrentlyRentedOut && (
+                <>
+                  <View style={styles.section}>
+                    <Text style={styles.label}>Rented By Who</Text>
+                    <SearchableModalInput
+                      value={rentedByWho}
+                      onChangeText={setRentedByWho}
+                      options={fieldOptions?.rentedByWho ?? []}
+                      placeholder="e.g. Liam"
+                      onFocusScroll={scrollFieldIntoView}
+                    />
+                  </View>
+                  <View style={styles.section}>
+                    <Text style={styles.label}>Date Rented</Text>
+                    <TouchableOpacity style={styles.input} onPress={() => setShowDateRentedPicker(true)}>
+                      <Text style={{ color: dateRented ? "#f4f4f5" : "#71717a" }}>{dateRented || "Select a date"}</Text>
+                    </TouchableOpacity>
+                    {showDateRentedPicker && (
+                      <DateTimePicker
+                        value={dateRented ? parseDateOnly(dateRented) : new Date()}
+                        mode="date"
+                        display={Platform.OS === "ios" ? "spinner" : "default"}
+                        maximumDate={new Date()}
+                        onChange={(event, selectedDate) => {
+                          if (Platform.OS === "android") setShowDateRentedPicker(false);
+                          if (event.type === "set" && selectedDate) setDateRented(formatDateOnly(selectedDate));
+                        }}
+                      />
+                    )}
+                    {Platform.OS === "ios" && showDateRentedPicker && (
+                      <TouchableOpacity onPress={() => setShowDateRentedPicker(false)}>
+                        <Text style={styles.link}>Done</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </>
+              )}
+            </>
+          );
+          const collectionTitlesNode = (
+            <>
+              {previewCollectionName !== "" && (
+                <Text style={styles.hint}>Will be saved as: {previewCollectionName}</Text>
+              )}
+              {collectionMembers.some((m) => !m.discNumbers.trim()) && (
+                <Text style={styles.hint}>
+                  Some titles were matched automatically from the collection name - tap Edit on each to tick which disc(s) it&apos;s on (set the Total Disc Count above first).
+                </Text>
+              )}
+              {collectionMembers.map((m) => (
+                <View key={m.key} style={styles.section}>
+                  <TouchableOpacity
+                    style={styles.row}
+                    onPress={() => {
+                      setEditingMemberKey(m.key);
+                      setShowTitleSearchPicker(true);
+                    }}
+                  >
+                    {m.poster && <Image source={{ uri: m.poster }} style={styles.posterThumbInline} resizeMode="cover" />}
+                    <Text style={styles.body}>
+                      {m.title}
+                      {m.seasonNo ? ` - Season ${m.seasonNo}` : ""}
+                    </Text>
+                  </TouchableOpacity>
+                  <Text style={styles.hint}>
+                    {m.format}, disc{m.discNumbers.includes(",") ? "s" : ""} {m.discNumbers || "?"}
+                    {m.specialFeatures ? " (+ special features disc)" : ""}
+                  </Text>
+                  <View style={styles.row}>
+                    <TouchableOpacity style={styles.checkboxRow} onPress={() => toggleMemberWatchedDisc(m.key)}>
+                      <View style={[styles.checkbox, m.watchedDisc && styles.checkboxChecked]}>
+                        {m.watchedDisc && <Text style={styles.checkboxMark}>✓</Text>}
+                      </View>
+                      <Text style={styles.checkboxLabel}>Watched Disc</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.checkboxRow} onPress={() => toggleMemberWatched(m.key)}>
+                      <View style={[styles.checkbox, m.watched && styles.checkboxChecked]}>
+                        {m.watched && <Text style={styles.checkboxMark}>✓</Text>}
+                      </View>
+                      <Text style={styles.checkboxLabel}>Watched</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.row}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setEditingMemberKey(m.key);
+                        setShowTitleSearchPicker(true);
+                      }}
+                    >
+                      <Text style={styles.link}>Edit</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => removeCollectionMember(m.key)}>
+                      <Text style={styles.link}>Remove</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+              <TouchableOpacity
+                style={[styles.button, totalDiscCountNumber < 1 && { opacity: 0.4 }]}
                 onPress={() => {
-                  setEditingMemberKey(m.key);
+                  setEditingMemberKey(null);
                   setShowTitleSearchPicker(true);
                 }}
+                disabled={totalDiscCountNumber < 1}
               >
-                {m.poster && <Image source={{ uri: m.poster }} style={styles.posterThumbInline} resizeMode="cover" />}
-                <Text style={styles.body}>
-                  {m.title}
-                  {m.seasonNo ? ` - Season ${m.seasonNo}` : ""}
+                <Text style={styles.buttonText}>+ Add a title</Text>
+              </TouchableOpacity>
+              {totalDiscCountNumber < 1 && (
+                <Text style={styles.hint}>Enter the Total Disc Count above first, so each title can pick its disc(s).</Text>
+              )}
+              <Modal visible={showTitleSearchPicker} animationType="slide" onRequestClose={() => setShowTitleSearchPicker(false)}>
+                {/* Seeded from the previously-added title's own disc fields (if any exist yet),
+                    else the header's own shared-step values as a first guess - per the user's own
+                    real example, most/all titles in a box set often share the same disc pattern,
+                    so this cuts down on re-typing it for every title while still leaving each one
+                    fully editable. Special Features Disc Format is handled differently
+                    (discFormatLookup, 2026-09-23) - derived live from whatever's already known
+                    about each disc NUMBER across the header and every member, rather than just
+                    guessing from the previous title's own value regardless of which disc it was
+                    actually about. */}
+                <TitleSearchPicker
+                  editingMember={editingMemberKey ? collectionMembers.find((m) => m.key === editingMemberKey) ?? null : null}
+                  totalDiscCount={totalDiscCountNumber}
+                  onAdd={(member) => {
+                    userManagedMembersRef.current = true;
+                    setCollectionMembers((prev) =>
+                      prev.some((m) => m.key === member.key) ? prev.map((m) => (m.key === member.key ? member : m)) : [...prev, member]
+                    );
+                    setEditingMemberKey(null);
+                    setShowTitleSearchPicker(false);
+                  }}
+                  onCancel={() => {
+                    setEditingMemberKey(null);
+                    setShowTitleSearchPicker(false);
+                  }}
+                  initialFormat={collectionMembers.length > 0 ? collectionMembers[collectionMembers.length - 1].format : format}
+                  initialSpecialFeatures={
+                    collectionMembers.length > 0 ? collectionMembers[collectionMembers.length - 1].specialFeatures : false
+                  }
+                  initialSpecialFeaturesDiscNumbers={
+                    collectionMembers.length > 0 ? collectionMembers[collectionMembers.length - 1].specialFeaturesDiscNumbers ?? "" : ""
+                  }
+                  discFormatLookup={discFormatLookup}
+                  impliedWatched={watched}
+                  impliedWatchedDisc={watchedDisc}
+                />
+              </Modal>
+            </>
+          );
+          const collectionMissingNow = getMissingCollectionFields();
+          const collectionToggleRow = (key: string) => setOpenRow((prev) => (prev === key ? null : key));
+          const collectionSummaryNode = (
+            <>
+              <Text style={styles.hint}>Everything below is pre-filled. Tap a line to change it right here, or just Save.</Text>
+              <SummaryRow
+                label="Name & type"
+                value={`${manualTitle}${movieOrTv ? ` (${movieOrTv})` : ""}`}
+                missing={collectionMissingNow.includes("Name of Collection") || collectionMissingNow.includes("Movie or TV") || collectionMissingNow.includes("Rating")}
+                expanded={openRow === "name"}
+                onPress={() => collectionToggleRow("name")}
+              >
+                {collectionNameNode}
+              </SummaryRow>
+              <SummaryRow
+                label="Format, region & animation"
+                value={[format, [...diskRegions].join(" / "), steelbook ? "Steelbook" : ""].filter(Boolean).join(", ")}
+                missing={collectionMissingNow.includes("Format") || collectionMissingNow.includes("Disk Region")}
+                expanded={openRow === "format"}
+                onPress={() => collectionToggleRow("format")}
+              >
+                {collectionFormatNode}
+              </SummaryRow>
+              <SummaryRow
+                label="Discs"
+                value={`${collectionDiscCount || "?"} disc(s)` + (specialFeatures ? ", special features" : "")}
+                missing={
+                  collectionMissingNow.includes("Total Disc Count") ||
+                  collectionMissingNow.some((f) => f.startsWith("Which disc") || f.startsWith("Format of Special Features"))
+                }
+                // Worth a glance whenever the collection's OWN bonus disc isn't ticked
+                // (2026-09-24) - a box set's shared bonus disc is easy to forget, per the
+                // user's own request. Each member's own special features get the same
+                // treatment inside TitleSearchPicker's own review slide.
+                notable={!specialFeatures}
+                expanded={openRow === "discs"}
+                onPress={() => collectionToggleRow("discs")}
+              >
+                {collectionDiscsNode}
+              </SummaryRow>
+              <SummaryRow
+                label="Genre Location"
+                value={genreLocation + (isHistoryDocumentary && depictedEraLabel ? ` (${depictedEraLabel})` : "")}
+                missing={collectionMissingNow.includes("Genre Location") || collectionMissingNow.includes("Depicted Era")}
+                expanded={openRow === "location"}
+                onPress={() => collectionToggleRow("location")}
+              >
+                {collectionLocationNode}
+              </SummaryRow>
+              <SummaryRow
+                label="Release name & notes"
+                value={
+                  [collectionNameIsGeneric ? "" : releaseNameMatchesTitle ? "" : releaseName, releaseVariantNote, caseNotes]
+                    .filter((v) => v.trim())
+                    .join("; ") || "Same as name"
+                }
+                expanded={openRow === "release"}
+                onPress={() => collectionToggleRow("release")}
+              >
+                {collectionReleaseNode}
+              </SummaryRow>
+              <SummaryRow
+                label="Condition, watched & rental"
+                value={[discCondition, watchedDisc ? "watched this disc" : watched ? "watched" : "", isCurrentlyRentedOut ? "rented out" : ""].filter(Boolean).join(", ")}
+                missing={collectionMissingNow.includes("Disc Condition")}
+                notable={collectionAllMembersFamilyOrKids && discCondition === "None"}
+                expanded={openRow === "details"}
+                onPress={() => collectionToggleRow("details")}
+              >
+                {collectionDetailsNode}
+              </SummaryRow>
+              <SummaryRow
+                label="Titles in this set"
+                value={`${collectionMembers.length} title${collectionMembers.length === 1 ? "" : "s"}`}
+                missing={collectionMissingNow.some((f) => f.includes("titles in this collection") || f.startsWith("Disc(s) for") || f.startsWith("Format for"))}
+                onPress={() => {
+                  setSlideReturn("summary");
+                  setActiveSlide("titles");
+                }}
+              />
+              {error && <Text style={styles.error}>{error}</Text>}
+              <TouchableOpacity
+                style={styles.button}
+                onPress={handleConfirmCollectionPressed}
+                disabled={submitting || checkingCollectionDuplicates}
+              >
+                <Text style={styles.buttonText}>
+                  {checkingCollectionDuplicates ? "Checking your collection..." : submitting ? "Saving..." : "Confirm Collection"}
                 </Text>
               </TouchableOpacity>
-              <Text style={styles.hint}>
-                {m.format}, disc{m.discNumbers.includes(",") ? "s" : ""} {m.discNumbers || "?"}
-                {m.specialFeatures ? " (+ special features disc)" : ""}
-              </Text>
-              <View style={styles.row}>
-                <TouchableOpacity style={styles.checkboxRow} onPress={() => toggleMemberWatchedDisc(m.key)}>
-                  <View style={[styles.checkbox, m.watchedDisc && styles.checkboxChecked]}>
-                    {m.watchedDisc && <Text style={styles.checkboxMark}>✓</Text>}
-                  </View>
-                  <Text style={styles.checkboxLabel}>Watched Disc</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.checkboxRow} onPress={() => toggleMemberWatched(m.key)}>
-                  <View style={[styles.checkbox, m.watched && styles.checkboxChecked]}>
-                    {m.watched && <Text style={styles.checkboxMark}>✓</Text>}
-                  </View>
-                  <Text style={styles.checkboxLabel}>Watched</Text>
-                </TouchableOpacity>
-              </View>
-              <View style={styles.row}>
-                <TouchableOpacity
-                  onPress={() => {
-                    setEditingMemberKey(m.key);
-                    setShowTitleSearchPicker(true);
-                  }}
-                >
-                  <Text style={styles.link}>Edit</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => removeCollectionMember(m.key)}>
-                  <Text style={styles.link}>Remove</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ))}
-          <TouchableOpacity
-            style={[styles.button, totalDiscCountNumber < 1 && { opacity: 0.4 }]}
-            onPress={() => {
-              setEditingMemberKey(null);
-              setShowTitleSearchPicker(true);
-            }}
-            disabled={totalDiscCountNumber < 1}
-          >
-            <Text style={styles.buttonText}>+ Add a title</Text>
-          </TouchableOpacity>
-          {totalDiscCountNumber < 1 && (
-            <Text style={styles.hint}>Enter the Total Disc Count above first, so each title can pick its disc(s).</Text>
-          )}
-
-          {error && <Text style={styles.error}>{error}</Text>}
-          <TouchableOpacity
-            style={styles.button}
-            onPress={handleConfirmCollectionPressed}
-            disabled={submitting || checkingCollectionDuplicates}
-          >
-            <Text style={styles.buttonText}>
-              {checkingCollectionDuplicates ? "Checking your collection..." : submitting ? "Saving..." : "Confirm Collection"}
-            </Text>
-          </TouchableOpacity>
-          {(submitting || checkingCollectionDuplicates) && <IndeterminateBar />}
-          <TouchableOpacity onPress={handleDiscard} disabled={submitting || checkingCollectionDuplicates}>
-            <Text style={styles.link}>This was a stray scan - discard it</Text>
-          </TouchableOpacity>
-
-          <Modal visible={showTitleSearchPicker} animationType="slide" onRequestClose={() => setShowTitleSearchPicker(false)}>
-            {/* Seeded from the previously-added title's own disc fields (if any exist yet),
-                else the header's own shared-step values as a first guess - per the user's own
-                real example, most/all titles in a box set often share the same disc pattern,
-                so this cuts down on re-typing it for every title while still leaving each one
-                fully editable. */}
-            <TitleSearchPicker
-              editingMember={editingMemberKey ? collectionMembers.find((m) => m.key === editingMemberKey) ?? null : null}
-              totalDiscCount={totalDiscCountNumber}
-              onAdd={(member) => {
-                setCollectionMembers((prev) =>
-                  prev.some((m) => m.key === member.key) ? prev.map((m) => (m.key === member.key ? member : m)) : [...prev, member]
-                );
-                setEditingMemberKey(null);
-                setShowTitleSearchPicker(false);
+              {/* Determinate while genuinely submitting (a real estimate scaled to entry
+                  count - see performCreateCollection/ProgressBar's own comments), still
+                  indeterminate for the duplicate check just before it - a single, short,
+                  unknown-duration request with no meaningful "how much is left" figure. */}
+              {submitting ? <ProgressBar progress={submitProgress} /> : checkingCollectionDuplicates && <IndeterminateBar />}
+              <TouchableOpacity onPress={handleDiscard} disabled={submitting || checkingCollectionDuplicates}>
+                <Text style={styles.link}>This was a stray scan - discard it</Text>
+              </TouchableOpacity>
+            </>
+          );
+          return (
+            <SlideFlow
+              activeKey={activeSlide}
+              onChange={(key) => {
+                setSlideReturn(null);
+                setActiveSlide(key);
               }}
-              onCancel={() => {
-                setEditingMemberKey(null);
-                setShowTitleSearchPicker(false);
-              }}
-              initialFormat={collectionMembers.length > 0 ? collectionMembers[collectionMembers.length - 1].format : format}
-              initialSpecialFeatures={
-                collectionMembers.length > 0 ? collectionMembers[collectionMembers.length - 1].specialFeatures : false
-              }
-              initialSpecialFeaturesDiscCount={
-                collectionMembers.length > 0 ? collectionMembers[collectionMembers.length - 1].specialFeaturesDiscCount ?? "" : ""
-              }
-              initialSpecialFeaturesDiscFormat={
-                collectionMembers.length > 0 ? collectionMembers[collectionMembers.length - 1].specialFeaturesDiscFormat ?? "" : ""
-              }
-              impliedWatched={watched}
-              impliedWatchedDisc={watchedDisc}
+              returnKey={slideReturn}
+              slides={[
+                { key: "name", label: "Collection name & type", node: collectionNameNode },
+                { key: "format", label: "Format, region & animation", node: collectionFormatNode },
+                { key: "discs", label: "Discs & special features", node: collectionDiscsNode },
+                { key: "location", label: "Where does it go on the shelf?", node: collectionLocationNode },
+                { key: "release", label: "Release name & notes", node: collectionReleaseNode },
+                { key: "details", label: "Condition, watched & rental", node: collectionDetailsNode },
+                { key: "titles", label: `Titles in this set (${collectionMembers.length})`, node: collectionTitlesNode },
+                { key: "summary", label: "Review & save", node: collectionSummaryNode },
+              ]}
             />
-          </Modal>
-        </>
+          );
+        })()
       ) : needsTitleSearch ? (
         <View style={styles.section}>
           <Text style={styles.hint}>
@@ -2544,17 +2976,29 @@ export default function ConfirmScreen({
         const commonFormats = (fieldOptions?.format ?? []).filter((f) => /^(dvd|blu-?ray|4k uhd blu-?ray)$/i.test(f.trim()));
         const matchNode = (
           <>
-      {upcProduct?.imageUrl && (
+      {scannedImageSource && (
         <View style={styles.section}>
           <Text style={styles.label}>Your scanned item</Text>
           <Image
-            source={{ uri: upcProduct.imageUrl }}
+            source={scannedImageSource}
             style={[styles.scannedItemImage, { aspectRatio: scannedImageAspectRatio }]}
             resizeMode="contain"
           />
           <Text style={styles.hint}>
             Compare this against the candidates below - it's a photo of the actual listing, not a
-            generic poster, so it's the best way to confirm the specific release.
+            generic poster, so it's the best way to confirm the specific release. Shown auto-cropped
+            (same crop that gets saved) - if it's cropped wrong, that's worth flagging.
+          </Text>
+        </View>
+      )}
+      {listingTextExtraction && (listingTextExtraction.title || listingTextExtraction.actors.length > 0) && (
+        <View style={styles.section}>
+          <Text style={styles.label}>AI-parsed from listing text</Text>
+          <Text style={styles.hint}>
+            The plain listing text search found nothing, so this was pulled out by an AI model as a
+            fallback - shown for transparency, not treated as confirmed.
+            {listingTextExtraction.title ? `\nTitle: ${listingTextExtraction.title}` : ""}
+            {listingTextExtraction.actors.length > 0 ? `\nCast mentioned: ${listingTextExtraction.actors.join(", ")}` : ""}
           </Text>
         </View>
       )}
@@ -3101,6 +3545,35 @@ export default function ConfirmScreen({
       </TouchableOpacity>
           </>
         );
+        // Most-common ratings among titles already sharing this franchise (2026-09-27, per
+        // the user's request: "give me buttons for the most common ratings for that
+        // franchise... to make the most relevant ratings easier to click on") - a franchise's
+        // films are usually classified the same handful of ways (every mainline X-Men film is
+        // M or R13), so surfacing the real ratings already used for THIS franchise, ranked by
+        // how often each one appears, is far more useful than the full alphabetical list of
+        // every rating ever seen in the collection. Summed across every tag when the title
+        // carries more than one franchise. Top 4 only - a quick-tap shortcut, not a
+        // replacement for the full searchable list still available right below it. Also folds
+        // in a straight G/PG suggestion (deduplicated) whenever isFamilyOrKidsGenre and
+        // isAnimatedStyle both hold, ahead of the franchise-ranked ones - family/kids content
+        // that's actually animated is near-universally G or PG regardless of franchise data.
+        const franchiseCommonRatings = (() => {
+          const suggestions = isFamilyOrKidsGenre && isAnimatedStyle ? ["G", "PG"] : [];
+          const tags = franchise.split(",").map((f) => f.trim()).filter(Boolean);
+          const counts: Record<string, number> = {};
+          for (const tag of tags) {
+            const byRating = fieldOptions?.ratingsByFranchise?.[tag];
+            if (!byRating) continue;
+            for (const [ratingValue, count] of Object.entries(byRating)) {
+              counts[ratingValue] = (counts[ratingValue] ?? 0) + count;
+            }
+          }
+          const ranked = Object.entries(counts)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 4)
+            .map(([ratingValue]) => ratingValue);
+          return [...new Set([...suggestions, ...ranked])];
+        })();
         const needsCaseInfo = showTmdbOverrideField || showRatingField || showStudioField || showOriginalLanguageField;
         const neededNode = (
           <>
@@ -3139,6 +3612,12 @@ export default function ConfirmScreen({
           <Text style={styles.label}>
             Rating{singleSelectedImdbId ? " (not on TMDb - from the case)" : " (from the case)"}
           </Text>
+          {franchiseCommonRatings.length > 0 && (
+            <>
+              <Text style={styles.hint}>Common for {franchise.split(",")[0].trim()}:</Text>
+              <SingleSelectChips options={franchiseCommonRatings} value={rating} onChange={setRating} />
+            </>
+          )}
           <SearchableModalInput
             value={rating}
             onChangeText={setRating}
@@ -3212,6 +3691,9 @@ export default function ConfirmScreen({
               label="Discs"
               value={`${discCount || "1"} disc(s)` + (specialFeatures ? (showSpecialFeaturesDiscFields ? `, special features: ${specialFeaturesDiscCount || "?"} x ${specialFeaturesDiscFormat || "format?"}` : ", special features") : "")}
               missing={showSpecialFeaturesDiscFields && (!specialFeaturesDiscCount.trim() || !specialFeaturesDiscFormat.trim())}
+              // Worth a glance whenever Special Features is off (2026-09-24) - easy to forget
+              // to tick if the case genuinely has a bonus disc/menu, per the user's own request.
+              notable={!specialFeatures}
               expanded={openRow === "discs"}
               onPress={() => toggleRow("discs")}
             >
@@ -3226,7 +3708,18 @@ export default function ConfirmScreen({
             >
               {locationNode}
             </SummaryRow>
-            <SummaryRow label="Franchise" value={franchise} expanded={openRow === "franchise"} onPress={() => toggleRow("franchise")}>
+            <SummaryRow
+              label="Franchise"
+              value={franchise}
+              // Amber, not red (2026-09-24) - a blank Franchise is very often genuinely
+              // correct (most films aren't part of one), same reasoning
+              // getMissingRequiredFields's own comment gives for never hard-requiring it - but
+              // still worth a glance since it's easy to forget to check, per the user's own
+              // request.
+              notable={!franchise.trim()}
+              expanded={openRow === "franchise"}
+              onPress={() => toggleRow("franchise")}
+            >
               {franchiseNode}
             </SummaryRow>
             <SummaryRow
@@ -3241,6 +3734,7 @@ export default function ConfirmScreen({
               label="Condition & watched"
               value={[discCondition, watchedDisc ? "watched this disc" : watched ? "watched" : "", isCurrentlyRentedOut ? "rented out" : ""].filter(Boolean).join(", ")}
               missing={!discCondition.trim()}
+              notable={isFamilyRiskGenre && discCondition === "None"}
               expanded={openRow === "details"}
               onPress={() => toggleRow("details")}
             >

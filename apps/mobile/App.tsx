@@ -8,6 +8,7 @@ import SuccessScreen from "./src/screens/SuccessScreen";
 import OfflineQueueScreen from "./src/screens/OfflineQueueScreen";
 import { subscribeToReconnect } from "./src/lib/network";
 import { getQueuedSubmissions, trySyncOfflineQueue } from "./src/lib/offlineQueue";
+import { hydrateConfirmDrafts } from "./src/lib/confirmDrafts";
 
 // How long ScannerScreen remembers a barcode after queuing it, to avoid re-queuing the
 // same disc if you point back at it a few seconds or minutes later. Lives here rather
@@ -34,6 +35,17 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: "scanner" });
   const recentlyQueuedRef = useRef<Map<string, number>>(new Map());
   const [offlineQueueCount, setOfflineQueueCount] = useState(0);
+  // Confirm-screen drafts are cached in memory for fast synchronous reads (confirmDrafts.ts),
+  // but persisted to AsyncStorage so they survive the app actually closing/restarting, not
+  // just in-app navigation (2026-09-24, per the user's own real data-loss report - see that
+  // file's own header comment). Gates the screen switch below so a scan can never be opened
+  // before its saved draft, if any, has actually been loaded - in practice this resolves in a
+  // handful of milliseconds, well before the earliest possible tap into a scan (scanner ->
+  // pending -> select one, at least two taps away).
+  const [draftsReady, setDraftsReady] = useState(false);
+  useEffect(() => {
+    hydrateConfirmDrafts().then(() => setDraftsReady(true));
+  }, []);
 
   const refreshOfflineQueueCount = useCallback(async () => {
     setOfflineQueueCount((await getQueuedSubmissions()).length);
@@ -77,39 +89,43 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      {screen.name === "scanner" && (
-        <ScannerScreen
-          onGoToPending={() => setScreen({ name: "pending" })}
-          wasRecentlyQueued={wasRecentlyQueued}
-          markQueued={markQueued}
-        />
-      )}
-      {screen.name === "pending" && (
-        <PendingScansScreen
-          onSelect={(scan) => setScreen({ name: "confirm", scan })}
-          onBack={() => setScreen({ name: "scanner" })}
-          onDeleted={(barcodes) => barcodes.forEach(forgetQueued)}
-          onGoToOfflineQueue={() => setScreen({ name: "offlineQueue" })}
-          offlineQueueCount={offlineQueueCount}
-        />
-      )}
-      {screen.name === "offlineQueue" && <OfflineQueueScreen onBack={() => setScreen({ name: "pending" })} />}
-      {screen.name === "confirm" && (
-        <ConfirmScreen
-          scan={screen.scan}
-          onConfirmed={({ shelfLocation, linkedTitle }) =>
-            setScreen({ name: "success", shelfLocation, linkedTitle })
-          }
-          onBack={() => setScreen({ name: "pending" })}
-          onDiscarded={forgetQueued}
-        />
-      )}
-      {screen.name === "success" && (
-        <SuccessScreen
-          shelfLocation={screen.shelfLocation}
-          linkedTitle={screen.linkedTitle}
-          onDone={() => setScreen({ name: "scanner" })}
-        />
+      {!draftsReady ? null : (
+        <>
+          {screen.name === "scanner" && (
+            <ScannerScreen
+              onGoToPending={() => setScreen({ name: "pending" })}
+              wasRecentlyQueued={wasRecentlyQueued}
+              markQueued={markQueued}
+            />
+          )}
+          {screen.name === "pending" && (
+            <PendingScansScreen
+              onSelect={(scan) => setScreen({ name: "confirm", scan })}
+              onBack={() => setScreen({ name: "scanner" })}
+              onDeleted={(barcodes) => barcodes.forEach(forgetQueued)}
+              onGoToOfflineQueue={() => setScreen({ name: "offlineQueue" })}
+              offlineQueueCount={offlineQueueCount}
+            />
+          )}
+          {screen.name === "offlineQueue" && <OfflineQueueScreen onBack={() => setScreen({ name: "pending" })} />}
+          {screen.name === "confirm" && (
+            <ConfirmScreen
+              scan={screen.scan}
+              onConfirmed={({ shelfLocation, linkedTitle }) =>
+                setScreen({ name: "success", shelfLocation, linkedTitle })
+              }
+              onBack={() => setScreen({ name: "pending" })}
+              onDiscarded={forgetQueued}
+            />
+          )}
+          {screen.name === "success" && (
+            <SuccessScreen
+              shelfLocation={screen.shelfLocation}
+              linkedTitle={screen.linkedTitle}
+              onDone={() => setScreen({ name: "scanner" })}
+            />
+          )}
+        </>
       )}
       <StatusBar style="light" />
     </SafeAreaProvider>

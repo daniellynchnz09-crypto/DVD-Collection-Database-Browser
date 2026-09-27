@@ -68,11 +68,22 @@ export interface Title {
   case_image_url: string | null;
   // Storage path in the `case-images` bucket (0026_add_case_image_path.sql) - the real,
   // Supabase-hosted product/case photo for the future web app's DVD Pages, distinct from
-  // `case_image_url` above (a raw external URL, never cached) and from `poster_image_path`
-  // below (the OMDB/TMDb movie poster, used on Movie/TV Pages - the two are never in
-  // competition, both kept for their own separate page types). Resolved to a signed URL
-  // server-side on demand, same convention as poster_image_path.
+  // `case_image_url` above (a raw external URL, never cached), from `poster_image_path`
+  // below (the private-only Estimated Value feature's own lazily-populated poster cache),
+  // and from `movie_poster_path` (the general-purpose poster cache below) - none of these
+  // are in competition, each is kept for its own separate purpose. Resolved to a signed URL
+  // server-side on demand, same convention as the other two.
   case_image_path: string | null;
+  // Storage path in the `poster-images` bucket (0036_add_movie_poster_path.sql) - a
+  // general-purpose cache of this film's official OMDB/TMDb poster, populated unconditionally
+  // at scan-confirm time whenever a real OMDB/TMDb candidate was picked and this isn't
+  // already set (added 2026-09-25, per the user's own request: "I would prefer if we had
+  // both a poster image and a case image ... for each title in the database"). Distinct from
+  // `poster_image_path` below, which is private-only and populated only as a side effect of
+  // the Estimated Value feature - this one works the same in both builds and is what the
+  // scan resolver's "best match" step and any future Movie/TV Pages should read first,
+  // before ever falling back to a live OMDB/TMDb lookup.
+  movie_poster_path: string | null;
   genre_location: string | null;
   steelbook: boolean;
   release_name: string | null;
@@ -84,6 +95,14 @@ export interface Title {
   // total disc count needs the count of DISTINCT disc numbers across every member, not a naive
   // sum of each member's own disc_count, which double-counts a disc two titles share).
   disc_number_in_set: string | null;
+  // 0031_add_special_features_disc_number_in_set.sql - which of the set's own numbered discs
+  // actually hold this title's special features (e.g. "3", or "1,3" for more than one). Same
+  // free-text/comma-list shape as disc_number_in_set above, and deliberately a separate column
+  // from it - a title's bonus features don't always live on the same disc(s) as its own movie
+  // (a shared bonus disc used by several titles is a real case), so folding them together
+  // would conflate two different facts on the same row. special_features_disc_count above is
+  // now derived from however many discs are ticked here, not typed by hand.
+  special_features_disc_number_in_set: string | null;
   tmdb_id: number | null;
   // 0028_add_tmdb_media_type.sql - "movie" or "tv", since TMDb ids for each are separate
   // number spaces. Backfilled to "movie" for every row that predates TV scanning support.

@@ -81,6 +81,11 @@ export const HEADER_ALIASES: Record<string, string> = {
   // Added 0030_add_disc_number_in_set.sql - see database-design.md and
   // barcode-scanning-pipeline.md's Collections section.
   "disc number in set": "disc_number_in_set",
+  // Added 0031_add_special_features_disc_number_in_set.sql - which of the set's own numbered
+  // discs hold a Collection member's special features (can genuinely differ from the movie's
+  // own disc number(s) above - a shared bonus disc used by several titles). See
+  // barcode-scanning-pipeline.md's Collections section.
+  "special features disc number in set": "special_features_disc_number_in_set",
 };
 
 // Columns the sync script/webhook will add to the Sheet itself if missing, per
@@ -106,6 +111,7 @@ export const AUTO_CREATE_COLUMNS: { field: string; headerText: string }[] = [
   { field: "date_rented", headerText: "Date Rented" },
   { field: "original_language", headerText: "Original Language" },
   { field: "disc_number_in_set", headerText: "Disc Number In Set" },
+  { field: "special_features_disc_number_in_set", headerText: "Special Features Disc Number In Set" },
 ];
 
 // Cuts/versions the user names inline within a box set (e.g. "Blade Runner Final Cut")
@@ -830,6 +836,7 @@ export function parseSheetRowToTitle(
     steelbook: toBoolean(row[columnIndexes["steelbook"]]),
     release_name: cleanCell(row[columnIndexes["release_name"]]),
     disc_number_in_set: cleanCell(row[columnIndexes["disc_number_in_set"]]),
+    special_features_disc_number_in_set: cleanCell(row[columnIndexes["special_features_disc_number_in_set"]]),
     tmdb_page: cleanCell(row[columnIndexes["tmdb_page"]]),
     release_variant_note: cleanCell(row[columnIndexes["release_variant_note"]]),
     disc_condition: normalizeDiscCondition(row[columnIndexes["disc_condition"]]),

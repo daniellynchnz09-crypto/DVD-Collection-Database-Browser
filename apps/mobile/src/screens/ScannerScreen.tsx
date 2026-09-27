@@ -1,32 +1,66 @@
 import { useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { queueScan } from "../lib/scanApi";
+import { cancelScanSession, finishScanSession, uploadCoverPhoto } from "../lib/scanApi";
+import { clearConfirmDraft } from "../lib/confirmDrafts";
+import { createScanSessionId } from "../lib/scanSession";
+import { computeCoverCropRegion } from "../lib/coverGuide";
+import CoverCaptureGuide from "../components/CoverCaptureGuide";
 import OfflineBanner from "../components/OfflineBanner";
 
-// How long a gap in sightings of the same barcode means "you moved away and came back"
-// rather than "still holding it in frame." Comfortably longer than the ~1s interval
-// CameraView re-fires at, short enough that deliberately rescanning the same disc later
-// still works normally.
-const SIGHTING_GAP_MS = 2000;
+// Manual-tap countdown before a cover photo is actually captured - visually the same "3...2...1"
+// style the barcode scanner used to show automatically, but triggered by a deliberate "Capture"
+// tap here rather than a hold-steady detector, since there's no automatic "aligned" signal to
+// key off (see this screen's own header comment).
+const COVER_COUNTDOWN_SECONDS = 3;
 
-// How long the same barcode must be held continuously in frame before it's actually
-// queued - a brief accidental glimpse (lining up the shot, a neighbouring disc's barcode
-// passing through frame) no longer queues instantly; only a barcode the user is
-// deliberately holding steady does.
-const COUNTDOWN_MS = 3000;
+interface ScanSession {
+  sessionId: string;
+  barcode: string | null;
+  stagedCoverPaths: string[];
+}
+
+function freshSession(): ScanSession {
+  return { sessionId: createScanSessionId(), barcode: null, stagedCoverPaths: [] };
+}
+
+type CaptureMode = "scanning" | "positioningCover" | "coverCountdown";
 
 /**
- * Scan-then-resolve-later (Claude/TECH STACK AND ARCHITECTURE.md): this screen only
- * ever records the barcode and returns to scanning immediately - no network wait, no
- * per-scan lookup, so a free API's daily limit never gates how fast you can physically
- * scan a shelf. Review/confirm happens later in PendingScansScreen.
+ * Cover-photo scanning (2026-09-28) turned this screen from "instantly queue whatever barcode
+ * you're pointing at" into "accumulate one scan session - a barcode and/or staged cover photos -
+ * until you tap Done." Barcode capture became manual-tap too in the same change: since cover
+ * capture already needs a deliberate "Capture" tap (there's no automatic way to know a cover
+ * photo is well-aligned), the barcode side adopts the same interaction rather than running two
+ * different capture paradigms side by side. The previous hold-steady countdown (guarding against
+ * a brief accidental glimpse of a neighbouring disc's barcode while lining up a shot) is gone
+ * entirely - `onBarcodeScanned` is now just a live "Detected: <code>" readout, and a manual
+ * "Capture Barcode" button commits it instantly. There's no motion-blur/exposure concern here
+ * the way there is for a real photo, so no countdown is needed on this side.
+ *
+ * Cover capture ("Scan Cover") is a repeatable mini-flow within the same session - tap it once
+ * for the front, once for the back, in either order, as many times as needed: `captureMode`
+ * swaps the whole bottom overlay to a static alignment guide (CoverCaptureGuide.tsx) + a manual
+ * "Capture" button; tapping it starts a plain timer countdown, then takes the photo, crops it to
+ * the guide's own fixed rectangle (coverGuide.ts - deterministic, content-blind, not a smart
+ * crop), and uploads it to temporary staging (uploadCoverPhoto). The screen never asks which
+ * side was just photographed - front/back classification happens automatically, server-side,
+ * during resolution (coverVision.ts), never at capture time. While `captureMode !== "scanning"`,
+ * `handleBarcodeScanned` short-circuits so the two capture modes never race on the same
+ * CameraView instance.
+ *
+ * "Done" (enabled once a barcode or any staged cover exists) finishes the whole session in one
+ * call (finishScanSession) and resets session state. "Cancel Session" explicitly cleans up any
+ * staged photos for a session abandoned without finishing.
  *
  * `wasRecentlyQueued`/`markQueued` implement the "don't re-queue the same barcode within
  * 5 minutes" rule - they're owned by App.tsx rather than local state here because this
  * screen unmounts every time you navigate to Pending Scans and back, which would
- * otherwise silently reset the cooldown on every trip to review scans.
+ * otherwise silently reset the cooldown on every trip to review scans. The check now runs
+ * at "Capture Barcode" tap time rather than at Done, since it's about the same barcode being
+ * re-captured within a manual gesture, not about session completion.
  */
 export default function ScannerScreen({
   onGoToPending,
@@ -39,44 +73,28 @@ export default function ScannerScreen({
 }) {
   const insets = useSafeAreaInsets();
   const [permission, requestPermission] = useCameraPermissions();
+  const cameraRef = useRef<CameraView>(null);
+  const [session, setSession] = useState<ScanSession>(freshSession);
+  const [detectedBarcode, setDetectedBarcode] = useState<string | null>(null);
   const [lastMessage, setLastMessage] = useState<string | null>(null);
-  const [countdown, setCountdown] = useState<{ code: string; secondsLeft: number } | null>(null);
+  const [captureMode, setCaptureMode] = useState<CaptureMode>("scanning");
+  const [coverCountdown, setCoverCountdown] = useState(COVER_COUNTDOWN_SECONDS);
+  const [coverBusy, setCoverBusy] = useState(false);
   const busyRef = useRef(false);
-  // Tracks the barcode currently held in view - CameraView fires onBarcodeScanned
-  // repeatedly (roughly every frame) for as long as the same code stays in shot.
-  // `firstSeenAt` drives the hold-steady countdown below; `lastSeenAt` (refreshed every
-  // frame) is what decides whether a new sighting is "still the same hold" or "you looked
-  // away and came back" (gap since last sighting exceeds SIGHTING_GAP_MS) - a brief gap
-  // between frames doesn't reset the countdown, but actually pointing elsewhere does.
-  // `queued` stops the countdown from re-firing on every subsequent frame once this
-  // exact hold has already been queued.
-  const pendingBarcodeRef = useRef<{
-    code: string;
-    firstSeenAt: number;
-    lastSeenAt: number;
-    queued: boolean;
-  } | null>(null);
 
-  // onBarcodeScanned only fires while a barcode is actually detected in frame - moving the
-  // camera away from it doesn't fire any "lost sight of it" event, it just stops firing
-  // entirely. Without this, pendingBarcodeRef/the on-screen countdown were only ever
-  // updated reactively from a sighting, so moving away mid-countdown left the "hold
-  // steady... N" text frozen on whatever number it last showed, forever (or until the next
-  // barcode sighting incidentally overwrote it). This polls independently of sightings so a
-  // stale hold actually gets noticed and cleared - reuses SIGHTING_GAP_MS as the same "you
-  // looked away" threshold already used the other direction (deciding whether a *new*
-  // sighting continues this hold), rather than a second, different cutoff that could
-  // disagree with it.
+  // Ticks the cover-capture countdown down once a second, then actually takes the photo once
+  // it reaches zero. A plain timer, not tied to any live "is it aligned" signal - see this
+  // screen's own header comment on why there's no automatic detection to key off here.
   useEffect(() => {
-    const interval = setInterval(() => {
-      const pending = pendingBarcodeRef.current;
-      if (pending && !pending.queued && Date.now() - pending.lastSeenAt >= SIGHTING_GAP_MS) {
-        pendingBarcodeRef.current = null;
-        setCountdown(null);
-      }
-    }, 250);
-    return () => clearInterval(interval);
-  }, []);
+    if (captureMode !== "coverCountdown") return;
+    if (coverCountdown <= 0) {
+      handleCaptureCoverPhoto();
+      return;
+    }
+    const timeout = setTimeout(() => setCoverCountdown((n) => n - 1), 1000);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captureMode, coverCountdown]);
 
   if (!permission) {
     return <View style={styles.container} />;
@@ -93,59 +111,105 @@ export default function ScannerScreen({
     );
   }
 
-  async function handleBarcodeScanned(result: BarcodeScanningResult) {
-    const barcode = result.data;
-    const now = Date.now();
+  function handleBarcodeScanned(result: BarcodeScanningResult) {
+    if (captureMode !== "scanning") return;
+    setDetectedBarcode(result.data);
+  }
 
-    const pending = pendingBarcodeRef.current;
-    const continuingSameHold =
-      pending?.code === barcode && now - pending.lastSeenAt < SIGHTING_GAP_MS;
-
-    if (continuingSameHold) {
-      pending.lastSeenAt = now;
-    } else {
-      // A genuinely new code, or the same code seen again after too long a gap (you
-      // pointed away and came back) - either way this is a fresh hold, so the countdown
-      // starts over rather than picking up wherever the last one left off.
-      pendingBarcodeRef.current = { code: barcode, firstSeenAt: now, lastSeenAt: now, queued: false };
-    }
-    const current = pendingBarcodeRef.current!;
-
-    if (current.queued) return;
-
-    const elapsed = now - current.firstSeenAt;
-    if (elapsed < COUNTDOWN_MS) {
-      setCountdown({ code: barcode, secondsLeft: Math.ceil((COUNTDOWN_MS - elapsed) / 1000) });
+  function handleCaptureBarcode() {
+    if (!detectedBarcode) return;
+    if (wasRecentlyQueued(detectedBarcode)) {
+      setLastMessage(`Already queued ${detectedBarcode} recently - skipped duplicate scan.`);
       return;
     }
+    setSession((prev) => ({ ...prev, barcode: detectedBarcode }));
+    setLastMessage(`Captured barcode ${detectedBarcode}.`);
+  }
 
-    current.queued = true;
-    setCountdown(null);
+  function handleStartCoverCapture() {
+    setCaptureMode("positioningCover");
+  }
 
-    if (wasRecentlyQueued(barcode)) {
-      setLastMessage(`Already queued ${barcode} recently - skipped duplicate scan.`);
+  function handleCancelCoverCapture() {
+    setCaptureMode("scanning");
+    setCoverCountdown(COVER_COUNTDOWN_SECONDS);
+  }
+
+  function handleStartCoverCountdown() {
+    setCoverCountdown(COVER_COUNTDOWN_SECONDS);
+    setCaptureMode("coverCountdown");
+  }
+
+  async function handleCaptureCoverPhoto() {
+    if (!cameraRef.current) {
+      setCaptureMode("scanning");
       return;
     }
+    setCoverBusy(true);
+    try {
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.9 });
+      if (!photo) throw new Error("No photo returned");
 
+      const region = computeCoverCropRegion(photo.width, photo.height);
+      const cropped = await manipulateAsync(photo.uri, [{ crop: region }], {
+        compress: 0.85,
+        format: SaveFormat.JPEG,
+        base64: true,
+      });
+      if (!cropped.base64) throw new Error("Crop produced no image data");
+
+      const { stagedPath } = await uploadCoverPhoto(session.sessionId, cropped.base64, "image/jpeg");
+      setSession((prev) => ({ ...prev, stagedCoverPaths: [...prev.stagedCoverPaths, stagedPath] }));
+      setLastMessage(`Cover photo captured (${session.stagedCoverPaths.length + 1} this session).`);
+    } catch (err) {
+      setLastMessage(`Failed to capture cover photo: ${(err as Error).message}`);
+    } finally {
+      setCoverBusy(false);
+      setCaptureMode("scanning");
+    }
+  }
+
+  async function handleDone() {
+    if (!session.barcode && session.stagedCoverPaths.length === 0) return;
     if (busyRef.current) return;
     busyRef.current = true;
 
     try {
-      await queueScan(barcode);
-      markQueued(barcode);
-      setLastMessage(`Scanned ${barcode} - queued for lookup.`);
+      const { replacedIds } = await finishScanSession(session.barcode, session.stagedCoverPaths);
+      // Any old, still-unfinished pending scan for this same barcode was just deleted
+      // server-side in favor of this fresh one - its local autosaved draft, if any, can
+      // never be reopened again, so it must be cleared here too, not just left orphaned.
+      replacedIds.forEach(clearConfirmDraft);
+      if (session.barcode) markQueued(session.barcode);
+      setLastMessage("Scan session finished - queued for lookup.");
+      setSession(freshSession());
+      setDetectedBarcode(null);
     } catch (err) {
-      setLastMessage(`Failed to queue ${barcode}: ${(err as Error).message}`);
+      setLastMessage(`Failed to finish scan session: ${(err as Error).message}`);
     } finally {
-      setTimeout(() => {
-        busyRef.current = false;
-      }, 800);
+      busyRef.current = false;
     }
   }
+
+  async function handleCancelSession() {
+    const { sessionId } = session;
+    setSession(freshSession());
+    setDetectedBarcode(null);
+    setLastMessage("Scan session cancelled.");
+    try {
+      await cancelScanSession(sessionId);
+    } catch {
+      // Best-effort - see cover-photo/route.ts's DELETE handler comment. A leaked staging
+      // file is recoverable; not letting the user start a fresh session isn't worth blocking on.
+    }
+  }
+
+  const hasCapture = Boolean(session.barcode) || session.stagedCoverPaths.length > 0;
 
   return (
     <View style={styles.container}>
       <CameraView
+        ref={cameraRef}
         style={styles.camera}
         facing="back"
         barcodeScannerSettings={{ barcodeTypes: ["ean13", "upc_a", "upc_e"] }}
@@ -154,19 +218,78 @@ export default function ScannerScreen({
       <View style={[styles.topOverlay, { top: insets.top }]}>
         <OfflineBanner />
       </View>
-      <View style={[styles.overlay, { paddingBottom: 20 + insets.bottom }]}>
-        <Text style={styles.hint}>Point the camera at the disc case's barcode</Text>
-        {countdown ? (
-          <Text style={styles.countdown}>
-            Barcode detected - hold steady... {countdown.secondsLeft}
-          </Text>
-        ) : (
-          lastMessage && <Text style={styles.message}>{lastMessage}</Text>
-        )}
-        <TouchableOpacity style={styles.button} onPress={onGoToPending}>
-          <Text style={styles.buttonText}>Review Pending Scans</Text>
-        </TouchableOpacity>
-      </View>
+
+      {captureMode === "scanning" ? (
+        <View style={[styles.overlay, { paddingBottom: 20 + insets.bottom }]}>
+          <Text style={styles.hint}>Point the camera at the disc case's barcode</Text>
+          {detectedBarcode && <Text style={styles.message}>Detected: {detectedBarcode}</Text>}
+          {session.barcode && <Text style={styles.captured}>Barcode captured: {session.barcode}</Text>}
+          {session.stagedCoverPaths.length > 0 && (
+            <Text style={styles.captured}>
+              Cover photos captured: {session.stagedCoverPaths.length}
+            </Text>
+          )}
+          {lastMessage && <Text style={styles.message}>{lastMessage}</Text>}
+
+          <View style={styles.row}>
+            <TouchableOpacity
+              style={[styles.button, styles.rowButton, !detectedBarcode && styles.buttonDisabled]}
+              onPress={handleCaptureBarcode}
+              disabled={!detectedBarcode}
+            >
+              <Text style={styles.buttonText}>Capture Barcode</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.button, styles.rowButton, styles.coverButton]}
+              onPress={handleStartCoverCapture}
+            >
+              <Text style={styles.buttonText}>Scan Cover</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.row}>
+            <TouchableOpacity
+              style={[styles.button, styles.doneButton, !hasCapture && styles.buttonDisabled]}
+              onPress={handleDone}
+              disabled={!hasCapture}
+            >
+              <Text style={styles.buttonText}>Done</Text>
+            </TouchableOpacity>
+            {hasCapture && (
+              <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={handleCancelSession}>
+                <Text style={styles.buttonText}>Cancel Session</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <TouchableOpacity style={styles.button} onPress={onGoToPending}>
+            <Text style={styles.buttonText}>Review Pending Scans</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <>
+          <CoverCaptureGuide />
+          <View style={[styles.overlay, { paddingBottom: 20 + insets.bottom }]}>
+            {captureMode === "positioningCover" ? (
+              <>
+                <Text style={styles.hint}>
+                  Line up the front or back cover within the guide, then tap Capture
+                </Text>
+                <TouchableOpacity style={styles.button} onPress={handleStartCoverCountdown}>
+                  <Text style={styles.buttonText}>Capture</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={handleCancelCoverCapture}>
+                  <Text style={styles.buttonText}>Back</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <Text style={styles.countdown}>
+                {coverBusy ? "Capturing..." : `Hold steady... ${coverCountdown}`}
+              </Text>
+            )}
+          </View>
+        </>
+      )}
     </View>
   );
 }
@@ -194,12 +317,19 @@ const styles = StyleSheet.create({
   },
   hint: { color: "#e4e4e7", textAlign: "center" },
   message: { color: "#38bdf8", textAlign: "center" },
+  captured: { color: "#4ade80", textAlign: "center", fontWeight: "600" },
   countdown: { color: "#fbbf24", textAlign: "center", fontSize: 16, fontWeight: "700" },
+  row: { flexDirection: "row", gap: 10 },
+  rowButton: { flex: 1 },
   button: {
     backgroundColor: "#0284c7",
     paddingVertical: 12,
     borderRadius: 8,
     alignItems: "center",
   },
+  buttonDisabled: { opacity: 0.4 },
+  coverButton: { backgroundColor: "#7c3aed" },
+  doneButton: { flex: 1, backgroundColor: "#16a34a" },
+  cancelButton: { flex: 1, backgroundColor: "#dc2626" },
   buttonText: { color: "#fff", fontWeight: "600" },
 });

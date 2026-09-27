@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { requireScanSecret } from "@/lib/scanAuth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { logScanEvent } from "@/lib/scanLog";
 import { appendRowToSheet, getSheetHeaderAndColumns, updateSheetFieldsByUniqueId } from "@/lib/googleSheets";
 import { canonicalizeValue } from "@/lib/canonicalizeValue";
 import {
@@ -21,7 +22,19 @@ import {
   parseOmdbReleaseDate,
   parseOmdbRuntimeMins,
 } from "@danflix/shared";
-import { fetchTmdbFieldsById, lookupRottenTomatoesPage, lookupTmdbFields, uploadCaseImage, type TmdbFields, type TmdbMediaType } from "@danflix/backend";
+import {
+  deleteStagedCoverPhotos,
+  fetchTmdbFieldsById,
+  lookupRottenTomatoesPage,
+  lookupTmdbFields,
+  pickFrontCoverPath,
+  promoteStagedCoverToCaseImage,
+  uploadCaseImage,
+  uploadPosterImage,
+  type StagedCoverAnalysis,
+  type TmdbFields,
+  type TmdbMediaType,
+} from "@danflix/backend";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 function asString(value: unknown): string | undefined {
@@ -224,13 +237,59 @@ export async function POST(request: Request) {
 
   const supabase = getSupabaseServerClient();
 
+  // Read once, up front, purely for the scan log below - every other branch already gets its
+  // own data from `entries` (ConfirmScreen resolves everything client-side), so this row is
+  // otherwise unused here. Read before discard/dismiss touch the row, since discard deletes it
+  // outright. A read failure just means a null snapshot in the log, never blocks the real work.
+  const { data: pendingScanRow } = await supabase
+    .from("pending_scans")
+    .select("barcode, resolved_candidates, staged_cover_photos")
+    .eq("id", pendingScanId)
+    .maybeSingle();
+  const stagedCoverPaths: string[] = (pendingScanRow?.staged_cover_photos as string[] | null) ?? [];
+  const coverAnalysis: StagedCoverAnalysis[] =
+    (pendingScanRow?.resolved_candidates as { coverAnalysis?: StagedCoverAnalysis[] } | null)?.coverAnalysis ?? [];
+
   if (body?.discard === true) {
     await supabase.from("pending_scans").delete().eq("id", pendingScanId);
+    // A stray/junk read was never meant to be catalogued - every staged cover photo captured
+    // alongside it (front, back, or both) is cleaned up too, not just the barcode.
+    await deleteStagedCoverPhotos(supabase, stagedCoverPaths);
+    logScanEvent({
+      outcome: "discarded",
+      pendingScanId,
+      barcode: pendingScanRow?.barcode ?? null,
+      resolvedCandidates: pendingScanRow?.resolved_candidates ?? null,
+    });
     return NextResponse.json({ success: true, createdTitleIds: [], shelfLocation: null });
   }
 
   if (body?.dismiss === true) {
+    // Re-scan case: the resolver already found this exact disc already catalogued
+    // (existingMatch) and there's nothing new to write - but a fresh cover photo may still
+    // have been captured in the same session (any combination of barcode/front/back is valid).
+    // Per decision 8 (Claude/TECH STACK AND ARCHITECTURE/barcode-scanning-pipeline.md), that
+    // photo updates the already-catalogued title's stored product image rather than being
+    // discarded outright - `existingMatchTitleId` is the client's own already-resolved
+    // existingMatch.unique_id (ConfirmScreen holds it client-side already), since this route
+    // has no barcode_id-based way to look the row back up here without it.
+    const existingMatchTitleId = typeof body?.existingMatchTitleId === "string" ? body.existingMatchTitleId : null;
+    const frontCoverPath = pickFrontCoverPath(coverAnalysis);
+    if (existingMatchTitleId && frontCoverPath) {
+      const promotedPath = await promoteStagedCoverToCaseImage(supabase, frontCoverPath, existingMatchTitleId);
+      if (promotedPath) {
+        await supabase.from("titles").update({ case_image_path: promotedPath }).eq("unique_id", existingMatchTitleId);
+      }
+    }
+    await deleteStagedCoverPhotos(supabase, stagedCoverPaths);
+
     await supabase.from("pending_scans").update({ status: "confirmed" }).eq("id", pendingScanId);
+    logScanEvent({
+      outcome: "dismissed",
+      pendingScanId,
+      barcode: pendingScanRow?.barcode ?? null,
+      resolvedCandidates: pendingScanRow?.resolved_candidates ?? null,
+    });
     return NextResponse.json({ success: true, createdTitleIds: [], shelfLocation: null });
   }
 
@@ -370,6 +429,9 @@ export async function POST(request: Request) {
           director: creatorOrDirectorText?.split(",").map((d) => d.trim()).filter(Boolean) ?? [],
           rating: detail.Rated !== "N/A" ? detail.Rated : null,
           imdb_page: `https://www.imdb.com/title/${showLevelDetail.imdbID}/`,
+          // Reuses this same OMDB detail response already fetched above - no extra API call.
+          // Feeds movie_poster_path below (0036_add_movie_poster_path.sql).
+          posterUrl: detail.Poster && detail.Poster !== "N/A" ? detail.Poster : null,
         };
 
         // Only bother looking Rotten Tomatoes up at all once OMDB's own Ratings array has
@@ -452,17 +514,38 @@ export async function POST(request: Request) {
     // has neither yet, which is exactly why they stay null below in that case).
     let existingPersonalRating: number | null = null;
     let existingLastWatchedDate: string | null = null;
+    let existingMoviePosterPath: string | null = null;
     if (entry.overwriteUniqueId) {
       const { data: existingWatchedRow } = await supabase
         .from("titles")
-        .select("watched, watched_disc, personal_rating, last_watched_date")
+        .select("watched, watched_disc, personal_rating, last_watched_date, movie_poster_path")
         .eq("unique_id", entry.overwriteUniqueId)
         .maybeSingle();
       existingWatched = existingWatchedRow?.watched === true;
       existingWatchedDisc = existingWatchedRow?.watched_disc === true;
       existingPersonalRating = existingWatchedRow?.personal_rating ?? null;
       existingLastWatchedDate = existingWatchedRow?.last_watched_date ?? null;
+      existingMoviePosterPath = existingWatchedRow?.movie_poster_path ?? null;
     }
+    // Caches this film's official OMDB poster into Storage (0036_add_movie_poster_path.sql) -
+    // added 2026-09-25 per the user's own request for every confirmed title to end up with
+    // both a case photo and a poster on file, so the app never has to re-fetch one from OMDB
+    // later (e.g. the scan resolver's "best match" step on a rescan). Unlike case_image_path
+    // just below, this is skipped once already cached rather than always refreshed - a film's
+    // official poster doesn't change the way a user's own physical case photo can (a
+    // different edition/printing). Same "a cache miss is fine, a bad write isn't" convention:
+    // never included in `title` below when there's nothing to cache or the upload fails.
+    const moviePosterPath =
+      !existingMoviePosterPath && omdbFields.posterUrl
+        ? await uploadPosterImage(supabase, `titles/${uniqueId}/poster.jpg`, omdbFields.posterUrl as string)
+        : null;
+    // Caches the barcode listing's own product photo into Storage for the future web app's
+    // DVD Pages (0026_add_case_image_path.sql) - unconditional on every confirm (including an
+    // Overwrite), since a fresh photo of the user's actual physical copy is always
+    // authoritative over whatever was there before. Deliberately NOT included in `title` below
+    // when the upload fails (transient fetch/network error) rather than writing `null` - an
+    // Overwrite must never silently erase a previously-good case image just because this one
+    // re-fetch attempt didn't work.
     // Caches the barcode listing's own product photo into Storage for the future web app's
     // DVD Pages (0026_add_case_image_path.sql) - unconditional on every confirm (including an
     // Overwrite), since a fresh photo of the user's actual physical copy is always
@@ -501,6 +584,12 @@ export async function POST(request: Request) {
       special_features: manual.special_features ?? false,
       special_features_disc_count: manual.special_features_disc_count ?? null,
       special_features_disc_format: normalizeFormat(asString(manual.special_features_disc_format)),
+      // Which of the set's own numbered discs actually hold the special features (0031) -
+      // added 2026-09-23, per the user's own correction that a title's bonus features don't
+      // always live on a separate, uncounted disc: they can be on the title's own movie disc,
+      // or a disc shared with other titles' bonus features. Free text/comma list, same shape
+      // as disc_number_in_set below, for the same reason (can hold more than one disc number).
+      special_features_disc_number_in_set: cleanFreeText(asString(manual.special_features_disc_number_in_set)),
       animation_or_live_action:
         normalizeAnimationOrLiveAction(asString(manual.animation_or_live_action)) ??
         // No style was given (a collection member, or a scan where it wasn't asked): trust TMDb's
@@ -538,6 +627,7 @@ export async function POST(request: Request) {
       barcode_id: entry.barcodeId ?? null,
       case_image_url: manual.case_image_url ?? null,
       ...(caseImagePath ? { case_image_path: caseImagePath } : {}),
+      ...(moviePosterPath ? { movie_poster_path: moviePosterPath } : {}),
       genre_location: cleanGenreLocation,
       release_name: cleanFreeText(asString(manual.release_name)),
       disc_number_in_set: cleanFreeText(asString(manual.disc_number_in_set)),
@@ -712,10 +802,41 @@ export async function POST(request: Request) {
     }
   }
 
+  // Front-cover promotion (decision 4) - once per session, not per entry, since a multi-title
+  // collection submission still has just one set of staged photos for the one physical case
+  // that was actually photographed. Targets createdIds[0] (the primary/first entry - a
+  // collection scan's own header, or the single title on an ordinary scan), the same row
+  // computeShelfLocation above already treats as this session's primary. Overwrites whatever
+  // case_image_path that entry's own insert/update just wrote from a UPC listing photo - a
+  // captured front cover always wins over the barcode listing's own product photo. Falls
+  // through to that existing case_image_path untouched when there's no usable staged cover
+  // (no front-classified photo, and more than one ambiguous "unclear" candidate - see
+  // pickFrontCoverPath's own comment for why that's left alone rather than guessed).
+  const frontCoverPath = pickFrontCoverPath(coverAnalysis);
+  if (frontCoverPath && createdIds[0]) {
+    const promotedPath = await promoteStagedCoverToCaseImage(supabase, frontCoverPath, createdIds[0]);
+    if (promotedPath) {
+      await supabase.from("titles").update({ case_image_path: promotedPath }).eq("unique_id", createdIds[0]);
+    }
+  }
+  // Back cover photos are never a stored product image (decision 5) - whether or not a front
+  // cover was found/promoted above, every staged photo for this session is cleaned up now that
+  // the pending scan has reached its terminal "confirmed" state.
+  await deleteStagedCoverPhotos(supabase, stagedCoverPaths);
+
   await supabase
     .from("pending_scans")
     .update({ status: "confirmed", resolved_title_id: createdIds[0] })
     .eq("id", pendingScanId);
+
+  logScanEvent({
+    outcome: "confirmed",
+    pendingScanId,
+    barcode: pendingScanRow?.barcode ?? null,
+    resolvedCandidates: pendingScanRow?.resolved_candidates ?? null,
+    submittedEntries: entries.map((e) => ({ manualFields: e.manualFields, overwriteUniqueId: e.overwriteUniqueId })),
+    createdTitleIds: createdIds,
+  });
 
 
   return NextResponse.json({

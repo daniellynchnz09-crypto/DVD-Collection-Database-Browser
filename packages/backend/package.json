@@ -12,6 +12,7 @@
     "@jimp/core": "^1.6.1",
     "@jimp/js-jpeg": "^1.6.1",
     "@jimp/js-png": "^1.6.1",
+    "@jimp/plugin-crop": "^1.6.1",
     "@jimp/plugin-hash": "^1.6.1",
     "@supabase/supabase-js": "^2.45.0",
     "cheerio": "^1.0.0",

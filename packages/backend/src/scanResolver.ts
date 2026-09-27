@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   cleanProductTitleForSearch,
   extractFormatHint,
+  extractImdbIdFromPage,
   extractListingMetaText,
   extractProductYear,
   filterCandidatesByMaxYear,
@@ -17,7 +18,12 @@ import {
 } from "@danflix/shared";
 import { matchPosterToCandidates } from "./posterMatch";
 import { detectFormatFromImage } from "./formatVision";
+import { extractListingTextFields, type ListingTextExtraction } from "./listingTextExtract";
 import { recordUpcRateLimit } from "./upcQuota";
+import { getSignedPosterImageUrl } from "./posterImageStorage";
+import { downloadStagedCoverPhoto } from "./coverStagingStorage";
+import { detectCoverFromImage, type StagedCoverAnalysis } from "./coverVision";
+import { searchTitleCandidates } from "./titleTextSearch";
 
 /**
  * One combined pass over an already year-filtered OMDB candidate list that (a) narrows it
@@ -44,11 +50,17 @@ import { recordUpcRateLimit } from "./upcQuota";
  */
 async function enrichAndNarrowCandidates(
   candidates: OmdbSearchCandidate[],
-  listingTitle: string
+  listingTitle: string,
+  // Cast names the LLM fallback pulled out of a listing with no "|" delimiter (e.g. names
+  // glued straight onto the title with a bare hyphen) - extractListingMetaText can't find
+  // these at all, since it only knows how to split on "|". Only ever set when the LLM
+  // fallback actually ran (see resolvePendingScansBatch below), so the common case (regex
+  // cleanup already found candidates) is unaffected.
+  llmActors?: string[]
 ): Promise<OmdbSearchCandidate[]> {
   if (candidates.length <= 1 || candidates.length > 10) return candidates;
 
-  const metaText = extractListingMetaText(listingTitle);
+  const metaText = extractListingMetaText(listingTitle) ?? (llmActors && llmActors.length > 0 ? llmActors.join(" ") : null);
   const duplicateIds = findDuplicateTitleYearIds(candidates);
   const idsNeedingDetail = metaText
     ? new Set(candidates.map((c) => c.imdbID))
@@ -95,13 +107,83 @@ async function enrichAndNarrowCandidates(
  * *see* belongs here instead, not there - see posterMatch.ts's own comment for the exact
  * failure this avoids.
  */
+/** An `existing` (barcode-matched `titles` row) with `case_image_url` unset has no image
+ * ConfirmScreen.tsx's synthesized candidate can show at all - found live 2026-09-25, a real
+ * rescan of an already-cataloged title whose own case photo was never captured showed no
+ * poster on the "best match" step, even though the title genuinely does have a real OMDB
+ * poster (it was found via a manual title search when first catalogued, well before any
+ * `existingMatch` fast path existed to skip that search on a later rescan).
+ *
+ * Three-tier fallback, cheapest/most-authoritative first: `case_image_url` (the user's own
+ * physical case photo, when captured) - else `movie_poster_path` (0036_add_movie_poster_path.
+ * sql, a signed URL minted from the already-cached poster - added 2026-09-25 per the user's
+ * own follow-up question: "why doesn't the app just save time and use the poster from the
+ * database... instead of searching the internet again", once it was clear every confirm now
+ * caches one) - else a live OMDB lookup by the imdb_id recovered from imdb_page, purely as a
+ * last resort for a title confirmed before movie_poster_path existed, or where that upload
+ * happened to fail. This still mirrors find-existing/route.ts's own `posterUrl` fallback (so
+ * the two "already have this" surfaces never disagree about whether a poster exists), just
+ * with the cached-poster tier inserted ahead of the live lookup. Returns `existing` unchanged
+ * when there's nothing to add - the extra `resolvedPosterUrl` key is additive, never
+ * required. */
+async function withResolvedPoster<
+  T extends { case_image_url: string | null; imdb_page: string | null; movie_poster_path?: string | null } | null
+>(supabase: SupabaseClient, existing: T): Promise<(T & { resolvedPosterUrl?: string }) | undefined> {
+  if (!existing) return undefined;
+  if (existing.case_image_url) return existing;
+  if (existing.movie_poster_path) {
+    const signedUrl = await getSignedPosterImageUrl(supabase, existing.movie_poster_path);
+    if (signedUrl) return { ...existing, resolvedPosterUrl: signedUrl };
+  }
+  const imdbId = extractImdbIdFromPage(existing.imdb_page);
+  if (!imdbId) return existing;
+  const detail = await omdbGetById(imdbId);
+  if (detail?.Poster && detail.Poster !== "N/A") {
+    return { ...existing, resolvedPosterUrl: detail.Poster };
+  }
+  return existing;
+}
+
+/** Downloads and reads every staged cover photo on a scan (cover-photo scanning, added
+ * 2026-09-28 - see Claude/TECH STACK AND ARCHITECTURE/barcode-scanning-pipeline.md), front
+ * and/or back, in whatever order they were captured. A photo that fails to download or that
+ * the model can't read anything from is simply skipped - one bad read never blocks the rest
+ * of this scan's resolution, same "a cache miss is fine, a bad write isn't" posture as every
+ * other vision/lookup call in this pipeline. */
+async function analyzeStagedCoverPhotos(
+  supabase: SupabaseClient,
+  stagedPaths: string[]
+): Promise<StagedCoverAnalysis[]> {
+  const analyses: StagedCoverAnalysis[] = [];
+  for (const stagedPath of stagedPaths) {
+    const staged = await downloadStagedCoverPhoto(supabase, stagedPath);
+    if (!staged) continue;
+    const analysis = await detectCoverFromImage(staged.bytes, staged.contentType);
+    if (analysis) analyses.push({ stagedPath, analysis });
+  }
+  return analyses;
+}
+
+/** The title to drive a cover-derived candidate search with, when one exists: the
+ * front-classified photo's title takes priority (it's the one actually meant to carry the
+ * release's own title treatment), falling back to any other legible title an "unclear" or
+ * back-classified photo happened to also carry (a back cover's spec block often repeats the
+ * title too). Null when no staged photo yielded a legible title at all. */
+function pickCoverDerivedTitle(analyses: StagedCoverAnalysis[]): string | null {
+  return (
+    analyses.find((a) => a.analysis.side === "front" && a.analysis.title)?.analysis.title ??
+    analyses.find((a) => a.analysis.title)?.analysis.title ??
+    null
+  );
+}
+
 export async function resolvePendingScansBatch(
   supabase: SupabaseClient,
   limit: number
 ): Promise<{ processed: number; resolved: number; needsManual: number }> {
   const { data: pending, error: fetchError } = await supabase
     .from("pending_scans")
-    .select("id, barcode")
+    .select("id, barcode, staged_cover_photos")
     .eq("status", "pending")
     .order("scanned_at", { ascending: true })
     .limit(limit);
@@ -112,6 +194,30 @@ export async function resolvePendingScansBatch(
   let needsManual = 0;
 
   for (const scan of pending ?? []) {
+    const stagedCoverPaths: string[] = (scan.staged_cover_photos as string[] | null) ?? [];
+    const coverAnalysis = await analyzeStagedCoverPhotos(supabase, stagedCoverPaths);
+    const coverDerivedTitle = pickCoverDerivedTitle(coverAnalysis);
+
+    // Cover-only session (no barcode at all - decision 6 in the plan this implements): none
+    // of the UPC/existing-title lookup below applies, since there's no barcode to look either
+    // up by. The cover-derived title (when the vision read found one) drives the exact same
+    // best-match search a typed title would, via searchTitleCandidates - this is the direct
+    // "cover photo replaces typing a title" path the feature exists for.
+    if (!scan.barcode) {
+      const omdbCandidates = coverDerivedTitle ? await searchTitleCandidates(supabase, coverDerivedTitle) : [];
+      const status = omdbCandidates.length > 0 ? "resolved" : "needs_manual";
+      await supabase
+        .from("pending_scans")
+        .update({
+          status,
+          resolved_candidates: { coverAnalysis, omdbCandidates, existingMatch: null },
+        })
+        .eq("id", scan.id);
+      if (status === "resolved") resolved++;
+      else needsManual++;
+      continue;
+    }
+
     // Re-scan case: this exact disc was already logged (STEP BY STEP PROCESS AND
     // AUTOMATION.md's reason for having a barcode identifier at all). Per the user's own
     // "Overwrite" design (Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan"
@@ -140,14 +246,26 @@ export async function resolvePendingScansBatch(
     // failing must never stop the actual scan resolution below it.
     await recordUpcRateLimit(supabase, upcRateLimit).catch(() => {});
     if (!upcProduct) {
+      // No barcode listing at all, but a cover photo was also captured this session (any
+      // combination of barcode/front/back is valid - decision 6) - fall back to the same
+      // cover-derived search a cover-only session would use, rather than dead-ending straight
+      // into needs_manual when the resolver actually has a usable title in hand.
+      const omdbCandidates = coverDerivedTitle ? await searchTitleCandidates(supabase, coverDerivedTitle) : [];
+      const status = omdbCandidates.length > 0 ? "resolved" : "needs_manual";
       await supabase
         .from("pending_scans")
         .update({
-          status: "needs_manual",
-          resolved_candidates: { upcLookupFailed: true, existingMatch: existing ?? undefined },
+          status,
+          resolved_candidates: {
+            upcLookupFailed: true,
+            coverAnalysis,
+            omdbCandidates,
+            existingMatch: await withResolvedPoster(supabase, existing),
+          },
         })
         .eq("id", scan.id);
-      needsManual++;
+      if (status === "resolved") resolved++;
+      else needsManual++;
       continue;
     }
 
@@ -175,11 +293,21 @@ export async function resolvePendingScansBatch(
     // matches a real OMDB film entry anyway, so this both saves a wasted OMDB call and avoids
     // populating a candidate list ConfirmScreen's collection flow no longer reads from.
     let omdbCandidates: OmdbSearchCandidate[] = [];
+    // Only ever populated when the plain regex-cleaned search below finds nothing at all -
+    // see listingTextExtract.ts's own doc comment for why an LLM call is deliberately the
+    // fallback, not the first attempt.
+    let listingTextExtraction: ListingTextExtraction | null = null;
     if (!isCollection) {
       const { baseTitle: searchQuery } = splitCutVariantTitle(cleanProductTitleForSearch(upcProduct.title));
-      const rawCandidates = searchQuery ? await omdbSearch(searchQuery) : [];
+      let rawCandidates = searchQuery ? await omdbSearch(searchQuery) : [];
+      if (rawCandidates.length === 0) {
+        listingTextExtraction = await extractListingTextFields(upcProduct.title, upcProduct.description);
+        if (listingTextExtraction?.title) {
+          rawCandidates = await omdbSearch(listingTextExtraction.title);
+        }
+      }
       const yearFilteredCandidates = filterCandidatesByMaxYear(rawCandidates, productYear);
-      omdbCandidates = await enrichAndNarrowCandidates(yearFilteredCandidates, upcProduct.title);
+      omdbCandidates = await enrichAndNarrowCandidates(yearFilteredCandidates, upcProduct.title, listingTextExtraction?.actors);
     }
     const depictedEraStart = inferDepictedEraStart(upcProduct.title, upcProduct.description);
 
@@ -211,6 +339,18 @@ export async function resolvePendingScansBatch(
         ? await detectFormatFromImage(upcProduct.imageUrl)
         : null;
 
+    // Merge strategy for a session that captured both a barcode AND a cover photo (decision 6):
+    // the barcode/UPC path stays authoritative whenever it already found real candidates - the
+    // cover analysis rides along in resolved_candidates.coverAnalysis purely as a secondary
+    // cross-reference and format/disc-count pre-fill signal, the same way visionFormatGuess
+    // already works today, without touching omdbCandidates. It only takes over as the actual
+    // search when the barcode path itself found nothing, and never for a collection scan
+    // (isCollection deliberately never searches OMDB by title text at all - see that branch
+    // above).
+    if (omdbCandidates.length === 0 && !isCollection && coverDerivedTitle) {
+      omdbCandidates = await searchTitleCandidates(supabase, coverDerivedTitle);
+    }
+
     const status = omdbCandidates.length > 0 ? "resolved" : "needs_manual";
     await supabase
       .from("pending_scans")
@@ -224,7 +364,9 @@ export async function resolvePendingScansBatch(
           productYear,
           posterMatch,
           visionFormatGuess,
-          existingMatch: existing ?? undefined,
+          listingTextExtraction,
+          coverAnalysis,
+          existingMatch: await withResolvedPoster(supabase, existing),
         },
       })
       .eq("id", scan.id);

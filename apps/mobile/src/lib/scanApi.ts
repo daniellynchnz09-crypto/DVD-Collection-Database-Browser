@@ -12,8 +12,67 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return data as T;
 }
 
-export function queueScan(barcode: string) {
-  return post<{ pendingScanId: string }>("/api/scan/queue", { barcode });
+async function del(path: string): Promise<void> {
+  const res = await fetch(`${API_URL}${path}`, {
+    method: "DELETE",
+    headers: { "x-scan-secret": API_SECRET },
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.error ?? `Request to ${path} failed (${res.status})`);
+  }
+}
+
+/** Renamed from queueScan (2026-09-28), part of cover-photo scanning: finishes a whole scan
+ * session - a manually-captured barcode and/or any staged cover photos already uploaded via
+ * uploadCoverPhoto - rather than a single barcode. `barcode` is null for a cover-only session.
+ * `replacedIds` behaves exactly as before: any other still-open pending_scans rows for the same
+ * barcode that the server just deleted in favor of this fresh one - see session-finish/route.ts's
+ * own comment. The caller should clear any local confirmDrafts.ts entry for each, since those
+ * rows (and whatever the user had typed into them) can never be reopened again. */
+export function finishScanSession(barcode: string | null, stagedCoverPaths: string[]) {
+  return post<{ pendingScanId: string; replacedIds: string[] }>("/api/scan/session-finish", {
+    barcode,
+    stagedCoverPaths,
+  });
+}
+
+/** Uploads one freshly-captured, already-cropped cover photo's bytes to the temporary staging
+ * bucket for the given in-progress session - see cover-photo/route.ts. The returned staged path
+ * is kept in the session's stagedCoverPaths until "Done" (finishScanSession) or "Cancel Session"
+ * (cancelScanSession). */
+export function uploadCoverPhoto(sessionId: string, imageBase64: string, contentType = "image/jpeg") {
+  return post<{ stagedPath: string }>("/api/scan/cover-photo", { sessionId, imageBase64, contentType });
+}
+
+/** Cleans up every staged cover photo for a session the user abandons via "Cancel Session"
+ * before ever tapping "Done" - see cover-photo/route.ts's DELETE handler. */
+export function cancelScanSession(sessionId: string) {
+  return del(`/api/scan/cover-photo?sessionId=${encodeURIComponent(sessionId)}`);
+}
+
+/** Builds a React Native `<Image source={...}>` value that shows a live crop-preview of a UPC
+ * listing photo (added 2026-09-22, per the user's own follow-up right after the case-image
+ * auto-crop shipped: "that way if it is cropped wrong I can give you an early warning" - the
+ * review screen previously showed the raw, uncropped photo, so a bad crop would only ever be
+ * discovered after it was already saved). Points at `/api/scan/case-image-preview` (a GET
+ * pass-through, nothing cached/stored - see that route's own comment).
+ *
+ * The secret is passed BOTH ways: as a `secret` query param (the one that actually works) and
+ * as the `x-scan-secret` header (kept for parity with every other scan route, and free to keep
+ * even though it doesn't help here). Found live 2026-09-23: header-only auth silently broke this
+ * on-device - React Native's `<Image source={{uri, headers}}>` does not reliably attach custom
+ * headers to the real native image-fetch request (confirmed via the web server's own request
+ * log: the phone's request came back 401, while replaying the identical URL with the header set
+ * by hand succeeded), so the photo just never loaded and the dark placeholder box showed instead
+ * of a picture. The query param is the only channel a native `Image` tag can be trusted to
+ * actually deliver on both platforms - see the route's own comment for the full story. */
+export function getCroppedImageSource(imageUrl: string): { uri: string; headers: Record<string, string> } {
+  const params = new URLSearchParams({ url: imageUrl, secret: API_SECRET });
+  return {
+    uri: `${API_URL}/api/scan/case-image-preview?${params.toString()}`,
+    headers: { "x-scan-secret": API_SECRET },
+  };
 }
 
 export interface ManualPendingScan {
@@ -56,9 +115,17 @@ export function confirmScan(pendingScanId: string, entries: ConfirmEntry[]) {
   return post<ConfirmResult>("/api/scan/confirm", { pendingScanId, entries });
 }
 
-/** For the re-scan case: the resolver already found an existingMatch, nothing new to write. */
-export function dismissScan(pendingScanId: string) {
-  return post<ConfirmResult>("/api/scan/confirm", { pendingScanId, dismiss: true });
+/** For the re-scan case: the resolver already found an existingMatch, nothing new to write.
+ * `existingMatchTitleId` (the matched title's own unique_id, already known client-side from
+ * resolved_candidates.existingMatch) lets the server promote a fresh cover photo captured in
+ * the same session onto that already-catalogued title's stored product image, per decision 8
+ * in Claude/TECH STACK AND ARCHITECTURE/barcode-scanning-pipeline.md - see confirm/route.ts's
+ * own comment on its dismiss branch. Not currently called from ConfirmScreen (today's UI
+ * always routes an existingMatch through Overwrite/new-entry/Reject instead - see this
+ * screen's existingMatch hint text), but kept correct for when a genuine "nothing to add,
+ * just update the photo" action is exposed. */
+export function dismissScan(pendingScanId: string, existingMatchTitleId?: string) {
+  return post<ConfirmResult>("/api/scan/confirm", { pendingScanId, dismiss: true, existingMatchTitleId });
 }
 
 /** Deletes a stray/junk pending scan outright - e.g. a barcode glimpsed on a neighbouring

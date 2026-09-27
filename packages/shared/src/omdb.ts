@@ -161,7 +161,7 @@ const PACKAGING_EDITION_WORDS =
  * behind once the words between them are gone (a listing often uses " - " as its own field
  * separator, e.g. "Title - Format - Condition"). */
 export function cleanProductTitleForSearch(productTitle: string): string {
-  return productTitle
+  const cleaned = productTitle
     .split("|")[0]
     .replace(PACKAGING_EDITION_WORDS, "")
     .replace(
@@ -180,6 +180,42 @@ export function cleanProductTitleForSearch(productTitle: string): string {
     .replace(/^[-.\s]+|[-.\s]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
+  return stripTrailingTruncatedNoise(cleaned).replace(/\s+/g, " ").trim();
+}
+
+// Some listing sources (UPCitemdb-sourced reseller titles, found live via a real Newegg
+// listing) truncate their own title field at a fixed length, cutting a trailing marketing
+// suffix off mid-word rather than omitting it entirely - a real "Universal Classic Monsters"
+// listing came through as "... [blu-ray] [region B] [blu-ray] - Dvd - - Free Shi" (2026-09-22),
+// literally missing "pping", not the word "shipping" being absent. MARKETPLACE_NOISE_WORDS
+// above only matches a COMPLETE phrase (it already handles the un-truncated "Free Shipping." -
+// see the 2026-09-19 comment further up), so a cut-off fragment like this survived every
+// cleaning step untouched and ended up stuck onto the title text used for both display and the
+// OMDB search itself. Truncation only ever happens at the very end of the whole listing string
+// (the source just ran out of characters partway through its last word), so this only strips a
+// fragment that is both a genuine prefix of one of these known trailing phrases AND the literal
+// last thing left in the cleaned string - it can never eat real title text, since it requires
+// the phrase's leading word(s) to already be fully, exactly spelled out right before it.
+const TRAILING_TRUNCATION_PHRASES = ["free shipping", "fast dispatch", "fast shipping"];
+
+function trailingWordPrefixAlternation(word: string, minLength = 2): string {
+  const prefixes: string[] = [];
+  for (let len = word.length; len >= minLength; len--) prefixes.push(word.slice(0, len));
+  return prefixes.join("|"); // longest first, so the match is as full as possible
+}
+
+const TRAILING_TRUNCATION_PATTERNS = TRAILING_TRUNCATION_PHRASES.map((phrase) => {
+  const words = phrase.split(" ");
+  const lastWord = words.pop()!;
+  const leadingWords = words.length ? `${words.join("\\s+")}\\s+` : "";
+  return new RegExp(`[\\s|-]*\\b${leadingWords}(?:${trailingWordPrefixAlternation(lastWord)})\\.?$`, "i");
+});
+
+function stripTrailingTruncatedNoise(text: string): string {
+  for (const pattern of TRAILING_TRUNCATION_PATTERNS) {
+    if (pattern.test(text)) return text.replace(pattern, "").trim();
+  }
+  return text;
 }
 
 /** The part of a "|"-delimited UPC listing title after the movie title itself (cast names,

@@ -22,6 +22,14 @@ export interface FieldOptions {
   // franchiseCooccurrence[a][b] = number of titles tagged with both franchise a and franchise b -
   // powers the Franchise slide's "often go with this selection" picks.
   franchiseCooccurrence: Record<string, Record<string, number>>;
+  // ratingsByFranchise[franchise][rating] = number of titles tagged with that franchise that
+  // carry that rating - added 2026-09-27 per the user's request for quick-tap rating buttons
+  // on the Confirm screen ("give me buttons for the most common ratings for that franchise").
+  // Most box sets/series in a given franchise tend to carry the same handful of
+  // classifications (e.g. every mainline X-Men film is M or R13), so this lets the Rating
+  // field surface the actual, real ratings this collection already uses for the same
+  // franchise instead of the full alphabetical list of every rating ever seen.
+  ratingsByFranchise: Record<string, Record<string, number>>;
 }
 
 let cached: FieldOptions | null = null;
@@ -59,6 +67,27 @@ function buildCooccurrence(lists: (string[] | null)[]): Record<string, Record<st
         out[a] ??= {};
         out[a][b] = (out[a][b] ?? 0) + 1;
       }
+    }
+  }
+  return out;
+}
+
+/** Counts how many titles tagged with each franchise carry each rating - one title with
+ * multiple franchise tags contributes its rating to every one of them, same "count once per
+ * distinct tag on this row" convention buildCooccurrence uses. Blank ratings are skipped
+ * entirely (nothing useful to suggest from an unrated title). */
+function buildRatingsByFranchise(
+  franchiseLists: (string[] | null)[],
+  ratings: (string | null)[]
+): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {};
+  for (let i = 0; i < franchiseLists.length; i++) {
+    const rating = ratings[i]?.trim();
+    if (!rating) continue;
+    const tags = [...new Set((franchiseLists[i] ?? []).map((t) => t?.trim()).filter(Boolean))] as string[];
+    for (const tag of tags) {
+      out[tag] ??= {};
+      out[tag][rating] = (out[tag][rating] ?? 0) + 1;
     }
   }
   return out;
@@ -122,6 +151,10 @@ export async function loadFieldOptions(forceRefresh = false): Promise<FieldOptio
       originalLanguage: distinctSorted(rows.map((r) => r.original_language as string | null)),
       movieOrTv: distinctSorted(rows.map((r) => r.movie_or_tv as string | null)),
       franchiseCooccurrence: buildCooccurrence(rows.map((r) => r.franchise as string[] | null)),
+      ratingsByFranchise: buildRatingsByFranchise(
+        rows.map((r) => r.franchise as string[] | null),
+        rows.map((r) => r.rating as string | null)
+      ),
     };
     cached = options;
     inflight = null;

@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { Title } from "@danflix/shared";
 import { supabase } from "../lib/supabase";
 import { createManualPendingScan, discardScan, fetchUpcQuotaStatus, type UpcQuotaStatus } from "../lib/scanApi";
+import { clearConfirmDraft } from "../lib/confirmDrafts";
 
 export interface PendingScan {
   id: string;
@@ -22,8 +23,12 @@ export interface PendingScan {
   resolved_candidates: {
     // The full existing titles row when this barcode already belongs to a cataloged
     // entry - a rescan of a disc already in the collection (see ConfirmScreen's
-    // "already logged" handling), not just a display title.
-    existingMatch?: Title;
+    // "already logged" handling), not just a display title. `resolvedPosterUrl`
+    // (added 2026-09-25) is a server-fetched fallback poster (scanResolver.ts's
+    // `withResolvedPoster`) for when this entry's own `case_image_url` was never
+    // captured - without it, the "best match" step has no image to show at all for an
+    // already-cataloged title whose own case photo is missing.
+    existingMatch?: Title & { resolvedPosterUrl?: string };
     omdbCandidates?: { Title: string; Year: string }[];
     upcProduct?: { title: string; description?: string; imageUrl?: string; category?: string };
     upcLookupFailed?: boolean;
@@ -32,6 +37,17 @@ export interface PendingScan {
     // ever populated when the barcode listing's own text didn't already name the format, and
     // only ever a pre-fill suggestion on ConfirmScreen, never presented as confirmed fact.
     visionFormatGuess?: { format: string; steelbook: boolean; extraDiscs: "NONE" | "ONE_EXTRA" | "TWO_EXTRA" } | null;
+    // LLM-based listing-text parse (packages/backend/src/listingTextExtract.ts) - only ever
+    // populated when the plain regex-cleaned title search found zero OMDB candidates at all.
+    // Shown read-only on ConfirmScreen for transparency into why a second-attempt search/cast
+    // match came out the way it did; also feeds format/region pre-fill the same way
+    // visionFormatGuess does, when the text-hint extractors found nothing themselves.
+    listingTextExtraction?: {
+      title: string;
+      actors: string[];
+      format: "DVD" | "Blu-Ray" | "4K UHD Blu-Ray" | "VHS" | "CD Movie" | null;
+      region: string | null;
+    } | null;
   };
   scanned_at: string;
 }
@@ -178,7 +194,17 @@ export default function PendingScansScreen({
       .filter((b): b is string => b !== null);
     try {
       await Promise.all(idsToDelete.map((id) => discardScan(id)));
+      // A deleted pending scan can never be reopened - its local autosaved draft, if any,
+      // must go with it (same principle as the queue route's own replacedIds cleanup: a
+      // draft should only ever outlive the pending_scans row it belongs to).
+      idsToDelete.forEach(clearConfirmDraft);
       onDeleted?.(barcodes);
+    } catch (err) {
+      // Previously silent: a failed request (e.g. the scan API being unreachable) left the
+      // item sitting in the list with no explanation - found live 2026-09-24 after a power
+      // outage left apps/mobile/.env pointed at a stale LAN IP, so every delete failed but
+      // looked like nothing had happened at all.
+      Alert.alert("Couldn't delete", (err as Error).message);
     } finally {
       setDeleting(false);
       cancelSelecting();

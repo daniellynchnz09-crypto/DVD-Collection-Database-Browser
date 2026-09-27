@@ -27,6 +27,10 @@ build/
 .env.*.local
 !.env.example
 
+# scan log (apps/web/src/lib/scanLog.ts) - runtime data written locally by the backend, not
+# source, and not meant to be committed
+apps/web/scan-log/
+
 # misc
 .DS_Store
 *.pem

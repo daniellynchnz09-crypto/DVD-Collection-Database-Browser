@@ -1,0 +1,25 @@
+-- Adds a "which physical disc(s) in the set hold a Collection member's own special features"
+-- field - added 2026-09-23, per the user's own correction: a title's special features don't
+-- always live on a separate, uncounted bonus disc - they can be on the title's own movie
+-- disc, or on a disc shared with other titles' bonus features, anywhere within the set's own
+-- numbered discs (1..Total Disc Count). Mirrors disc_number_in_set (0030) exactly - free text,
+-- comma-separated (e.g. "3" or "1,3") rather than a plain integer, for the same reason: it can
+-- hold more than one disc number.
+--
+-- Deliberately a NEW column rather than reusing disc_number_in_set - that column already means
+-- "which disc(s) hold this title's own MOVIE" for a member row (and, separately, for a
+-- collection HEADER row with no movie of its own, its own bonus disc(s) - see
+-- ConfirmScreen.tsx's own comment on that reuse). A member's bonus-features disc number(s) can
+-- genuinely differ from its movie disc number(s) - a shared bonus disc used by several titles
+-- is the exact real case the user described - so folding them into the same column would
+-- conflate two different facts on the same row.
+--
+-- special_features_disc_count (existing) is still the count, now derived from however many
+-- discs are ticked here rather than typed by hand. special_features_disc_format (existing) is
+-- still separately typed/picked, since the user confirmed a bonus disc's format can genuinely
+-- differ from the title's own disc(s) - e.g. a Blu-ray bonus disc bundled into an otherwise 4K
+-- UHD set.
+--
+-- Not private-project-only - applies to both live Supabase projects, same as disc_number_in_set.
+
+alter table titles add column if not exists special_features_disc_number_in_set text;

@@ -55,7 +55,7 @@ TMDb attribution: once the actual browsable web app (Phase 2+) displays Rating/S
 Order of work. The user does the testing and critique at each "user" step; Claude fixes what they report:
 
 1. User bug-fixes and critiques the single-title SLIDES design until it is right and fast to use (built 2026-09-19: match page first, Review last with expanding rows, big-button slides, FranchiseEditor; see Prompt Journal).
-2. Move the slides format to COLLECTIONS (the Collection flow in ConfirmScreen is still the old long form).
+2. ~~Move the slides format to COLLECTIONS~~ Done 2026-09-22 - both the Collection header (`ConfirmScreen.tsx`'s `isCollectionOverride` branch) and the per-member "add/edit a title" form (`TitleSearchPicker.tsx`) are now `SlideFlow`-based, matching the single-title flow's own shape/look (BigChoice/SummaryRow reused throughout). Not yet tested on the phone - see the matching Prompt Journal entry for the exact slide breakdown.
 3. User bug-fixes, tests and critiques the collection slides.
 4. User stress-tests the system with a very complex Doctor Who title (many stories/discs/seasons, lots of extras).
 5. Integrate the FRONT-of-case cover scan (approved plan: photo slide, migration `case_photo_path`, Gemini reads the photo, web image priority = scan photo > UPC image > Estimated Value image; plan file was `C:\Users\OEM\.claude\plans\compiled-singing-ocean.md`, Phase 2 - not started).
