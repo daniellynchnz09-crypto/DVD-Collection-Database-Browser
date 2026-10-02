@@ -34,17 +34,30 @@ export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
   // next dev's Fast Refresh can re-run this module without restarting the process -
-  // guard against stacking a second interval on top of an existing one.
+  // guard against stacking a second loop on top of an existing one.
   const globalForResolver = globalThis as unknown as {
-    __scanAutoResolveInterval?: NodeJS.Timeout;
-    __tmdbRefreshInterval?: NodeJS.Timeout;
+    __scanAutoResolveStarted?: boolean;
+    __tmdbRefreshStarted?: boolean;
   };
-  if (globalForResolver.__scanAutoResolveInterval) return;
+  if (globalForResolver.__scanAutoResolveStarted) return;
+  globalForResolver.__scanAutoResolveStarted = true;
 
   const { resolvePendingScansBatch, refreshTmdbFields } = await import("@danflix/backend");
   const { getSupabaseServerClient } = await import("@/lib/supabaseServer");
 
-  globalForResolver.__scanAutoResolveInterval = setInterval(async () => {
+  // Self-rescheduling (setTimeout-after-completion), NOT setInterval - found live 2026-09-30
+  // after a real scan's UPCitemdb quota jumped from 6 to 9 lookups for one single barcode
+  // scan. Root cause: a plain `setInterval` fires unconditionally every RESOLVE_INTERVAL_MS
+  // regardless of whether the previous tick's async work has finished, and a cover-photo
+  // scan's own resolution (rotate + bounding-box + text-read Gemini calls per staged photo,
+  // sequential, plus the UPC lookup and OMDB/TMDb search) can easily take longer than 15s -
+  // the row hasn't had its `status` flipped away from "pending" yet, so the NEXT tick's own
+  // `status = "pending"` query happily picks up the exact same row and reprocesses it,
+  // spending a second real UPC lookup (and repeating every other API call in that scan's
+  // resolution) - repeatedly, for as many overlapping ticks as it takes for one pass to
+  // finally finish. Scheduling the next run only from inside `finally`, after the current
+  // one has fully settled, makes two runs overlapping the same row impossible.
+  async function runAutoResolve() {
     try {
       const result = await resolvePendingScansBatch(getSupabaseServerClient(), RESOLVE_BATCH_LIMIT);
       if (result.processed > 0) {
@@ -54,11 +67,18 @@ export async function register() {
       }
     } catch (err) {
       console.error("[auto-resolve] Failed:", err);
+    } finally {
+      setTimeout(runAutoResolve, RESOLVE_INTERVAL_MS);
     }
-  }, RESOLVE_INTERVAL_MS);
+  }
+  setTimeout(runAutoResolve, RESOLVE_INTERVAL_MS);
 
   console.log(`[auto-resolve] Watching pending_scans every ${RESOLVE_INTERVAL_MS / 1000}s.`);
 
+  // Same self-rescheduling fix applied to the other two loops below, for the same reason -
+  // neither has actually been observed overlapping (much longer intervals, lighter batches),
+  // but the underlying setInterval hazard is identical, so there's no reason to leave two
+  // known-vulnerable copies of it in place once the real cause was found.
   async function runTmdbRefresh() {
     try {
       const result = await refreshTmdbFields(getSupabaseServerClient(), TMDB_REFRESH_BATCH_LIMIT);
@@ -67,11 +87,15 @@ export async function register() {
       }
     } catch (err) {
       console.error("[tmdb-refresh] Failed:", err);
+    } finally {
+      setTimeout(runTmdbRefresh, TMDB_REFRESH_INTERVAL_MS);
     }
   }
 
-  void runTmdbRefresh();
-  globalForResolver.__tmdbRefreshInterval = setInterval(runTmdbRefresh, TMDB_REFRESH_INTERVAL_MS);
+  if (!globalForResolver.__tmdbRefreshStarted) {
+    globalForResolver.__tmdbRefreshStarted = true;
+    void runTmdbRefresh();
+  }
   console.log(`[tmdb-refresh] Watching overdue TMDb-sourced titles every ${TMDB_REFRESH_INTERVAL_MS / 1000}s.`);
 
 }

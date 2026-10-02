@@ -156,6 +156,12 @@ export function getConfirmDraft(pendingScanId: string): ConfirmDraft | undefined
   return drafts.get(pendingScanId);
 }
 
+/** Every saved draft across all pending scans - fieldOptions.ts reads this so a brand-new
+ * Franchise/Genre/etc. typed into one unsubmitted scan is offered on the others too. */
+export function getAllConfirmDrafts(): ConfirmDraft[] {
+  return [...drafts.values()];
+}
+
 export function saveConfirmDraft(pendingScanId: string, draft: ConfirmDraft): void {
   drafts.set(pendingScanId, draft);
   persistDrafts();

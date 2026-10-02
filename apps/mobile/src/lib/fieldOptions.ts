@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { getAllConfirmDrafts } from "./confirmDrafts";
 
 export interface FieldOptions {
   format: string[];
@@ -117,6 +118,62 @@ const PAGE_SIZE = 1000;
  * past the first 1000 rows.
  */
 export async function loadFieldOptions(forceRefresh = false): Promise<FieldOptions> {
+  return withDraftValues(await loadSavedFieldOptions(forceRefresh));
+}
+
+function splitTagList(value: string | undefined): string[] {
+  return (value ?? "").split(",").map((t) => t.trim()).filter(Boolean);
+}
+
+function mergeSorted(base: string[], extra: (string | undefined | null)[]): string[] {
+  const set = new Set(base);
+  let changed = false;
+  for (const value of extra) {
+    const trimmed = value?.trim();
+    if (trimmed && !set.has(trimmed)) {
+      set.add(trimmed);
+      changed = true;
+    }
+  }
+  return changed ? [...set].sort((a, b) => a.localeCompare(b)) : base;
+}
+
+/**
+ * Folds every value typed into ANY still-unsubmitted pending scan's saved draft
+ * (confirmDrafts.ts) into the option lists - added 2026-10-03 per the user's own request: a
+ * brand-new Franchise/Genre/Genre Location/etc. created on one pending scan should be offered
+ * on the next pending scan straight away, not only once the first one is finally submitted
+ * and lands in `titles` (the only place loadSavedFieldOptions reads from). Recomputed on every
+ * call rather than cached, since drafts change constantly and reading them is just an
+ * in-memory Map walk - the `cached` DB snapshot itself is left untouched, so a draft that's
+ * later discarded simply stops contributing its values instead of lingering in the cache.
+ */
+function withDraftValues(options: FieldOptions): FieldOptions {
+  const drafts = getAllConfirmDrafts();
+  if (drafts.length === 0) return options;
+  const members = drafts.flatMap((d) => d.collectionMembers ?? []);
+  return {
+    ...options,
+    format: mergeSorted(options.format, [
+      ...drafts.flatMap((d) => [d.format, d.specialFeaturesDiscFormat]),
+      ...members.flatMap((m) => [m.format, m.specialFeaturesDiscFormat]),
+    ]),
+    diskRegion: mergeSorted(options.diskRegion, drafts.flatMap((d) => d.diskRegions ?? [])),
+    genreLocation: mergeSorted(options.genreLocation, drafts.map((d) => d.genreLocation)),
+    rating: mergeSorted(options.rating, [...drafts.map((d) => d.rating), ...members.map((m) => m.rating)]),
+    studio: mergeSorted(options.studio, drafts.map((d) => d.studio)),
+    animationOrLiveAction: mergeSorted(options.animationOrLiveAction, drafts.map((d) => d.animationOrLiveAction)),
+    genre: mergeSorted(options.genre, drafts.flatMap((d) => splitTagList(d.genre))),
+    franchise: mergeSorted(options.franchise, [
+      ...drafts.flatMap((d) => splitTagList(d.franchise)),
+      ...members.flatMap((m) => splitTagList(m.franchise)),
+    ]),
+    rentedByWho: mergeSorted(options.rentedByWho, drafts.map((d) => d.rentedByWho)),
+    originalLanguage: mergeSorted(options.originalLanguage, drafts.map((d) => d.originalLanguage)),
+  };
+}
+
+async function loadSavedFieldOptions(forceRefresh: boolean): Promise<FieldOptions> {
   if (cached && !forceRefresh) return cached;
   if (inflight) return inflight;
 

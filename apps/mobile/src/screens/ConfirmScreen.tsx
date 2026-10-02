@@ -40,6 +40,7 @@ import {
   discardScan,
   findExistingTitle,
   getCroppedImageSource,
+  getStagedCoverImageSource,
   previewTmdbFields,
   searchTitleOnOmdb,
   type ConfirmEntry,
@@ -52,6 +53,7 @@ import { clearConfirmDraft, getConfirmDraft, saveConfirmDraft } from "../lib/con
 import { createScrollIntoViewHandler } from "../lib/scrollIntoView";
 import { getIsOnline } from "../lib/network";
 import { queueSubmissionOffline } from "../lib/offlineQueue";
+import { getSubmissionError, startBackgroundSubmission } from "../lib/backgroundSubmissions";
 import SearchableModalInput from "../components/SearchableModalInput";
 import TagSearchableModalInput from "../components/TagSearchableModalInput";
 import IndeterminateBar from "../components/IndeterminateBar";
@@ -79,6 +81,10 @@ interface OmdbCandidate {
   // enrichAndNarrowCandidates. Shown next to Year as a physical, human-checkable
   // distinguisher for cases cast/year/poster can't tell apart at all.
   Runtime?: string;
+  // Only populated for a classic-era Doctor Who serial resolved via matchClassicWhoSerial
+  // (packages/backend/src/classicWhoSerials.ts) - see guessMovieOrTvFromType below and the
+  // season/episode-count/Animation prefill effect near singleSelectedImdbId.
+  classicWhoSerial?: { season: number; episodeCount: number; missingEpisodeCount: number };
 }
 
 interface PosterMatch {
@@ -87,7 +93,6 @@ interface PosterMatch {
   confident: boolean;
 }
 
-type ShelfLocation = { before: string | null; after: string | null } | null;
 type MatchCheck = Extract<FindExistingResult, { status: "auto" | "ambiguous" }>;
 
 /** Parses/formats a plain "YYYY-MM-DD" date string entirely in local calendar terms (no
@@ -189,8 +194,13 @@ const SEASON_FIELDS_MOVIE_OR_TV_VALUES = new Set(["TV Series", "TV Mini-Series",
  * Special/TV Movie, so this is deliberately coarse; the SelectInput chips are always visible
  * and editable specifically because this guess will often need correcting (see barcode-
  * review-screen-fields.md's TV Scanning section - IMDb's own finer classification isn't
- * reachable, its robots.txt disallows scraping title pages). */
-function guessMovieOrTvFromType(type: string | undefined): string {
+ * reachable, its robots.txt disallows scraping title pages). `classicWhoSerial` (only ever
+ * set for a candidate resolved via matchClassicWhoSerial) overrides the generic Type-based
+ * guess to "TV Series" - a classic Doctor Who serial is "a selection of TV episodes", per the
+ * user's own words, not a single one, so the ordinary "episode"-Type -> "TV Episode" guess is
+ * wrong specifically for this one show's classic era. */
+function guessMovieOrTvFromType(type: string | undefined, isClassicWhoSerial: boolean): string {
+  if (isClassicWhoSerial) return "TV Series";
   if (type === "series") return "TV Series";
   if (type === "episode") return "TV Episode";
   return "Movie";
@@ -221,6 +231,52 @@ function filterGenreLocationOptions(options: string[], isCollectionEntry: boolea
   );
 }
 
+// Hand-mapped synonyms between this collection's own genre_location words and TMDb's genre
+// vocabulary (TMDb doesn't use OMDB's exact wording for everything - e.g. "Science Fiction"
+// rather than "Sci-Fi") - only needed for the words where a direct case-insensitive match
+// against TMDb's own genre list isn't enough. Every other genre_location word (Horror,
+// Family, Western, Comedy, ...) already matches TMDb's own identical spelling with no
+// mapping needed at all. Keyed by the bare genre_location word (lowercased, any TV /
+// COLLECTION / BOX prefix already stripped) -> TMDb genre words (lowercased) that should
+// count as a real match for it. Add to this, not a whole new matching scheme, for any future
+// genre_location word TMDb has no identically-spelled genre for.
+const GENRE_LOCATION_SYNONYMS: Record<string, string[]> = {
+  "sci-fi": ["science fiction"],
+  musical: ["music"],
+  biography: ["history", "documentary"],
+  monster: ["horror"],
+  superhero: ["action", "adventure", "fantasy", "science fiction"],
+};
+
+function genreLocationMatchScore(option: string, genreSignalLower: string[]): number {
+  const bare = option.replace(/^(TV |BOX COLLECTION |COLLECTION |BOX TV )/, "").toLowerCase();
+  if (genreSignalLower.includes(bare)) return 2;
+  if (GENRE_LOCATION_SYNONYMS[bare]?.some((syn) => genreSignalLower.includes(syn))) return 1;
+  return 0;
+}
+
+/** Caps the big tappable Genre Location buttons at `maxButtons` (added 2026-10-02, per the
+ * user's own instruction: with this collection's real genre_location list already past a
+ * dozen entries and only growing, showing every single one as its own button was "becoming
+ * too numerous"). Ranks by how well each option's own bare genre word matches `genreSignal`
+ * (see genreSignalForLocationRanking's own comment for where that comes from) and keeps only
+ * the top `maxButtons`; every option NOT shown as a button stays fully reachable through the
+ * "Not listed? Type a new one here" SearchableModalInput right below the buttons at both call
+ * sites, which always gets the full, unranked list - this function only ever trims the
+ * big-button row, never what the user can actually search, select, or type as a new entry. A
+ * stable sort (explicit index tie-break, not just relying on the engine's own sort stability)
+ * means that with no genre signal at all (e.g. a fully-manual entry with no Genre typed in
+ * yet), every option scores 0 and the first `maxButtons` come back in their original
+ * (alphabetical) order - a sane, boring default rather than an arbitrary reshuffle. */
+function rankGenreLocationOptions(options: string[], genreSignal: string[], maxButtons: number): string[] {
+  const genreSignalLower = genreSignal.map((g) => g.toLowerCase());
+  return options
+    .map((option, index) => ({ option, index, score: genreLocationMatchScore(option, genreSignalLower) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, maxButtons)
+    .map((o) => o.option);
+}
+
 function formatDateOnly(date: Date): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -247,7 +303,9 @@ export default function ConfirmScreen({
   onDiscarded,
 }: {
   scan: PendingScan;
-  onConfirmed: (result: { shelfLocation: ShelfLocation; linkedTitle?: string }) => void;
+  /** Called the moment a save is handed off to the background (backgroundSubmissions.ts),
+   * not once it finishes - SuccessScreen tracks the outcome by `submissionId`. */
+  onConfirmed: (result: { submissionId: string }) => void;
   onBack: () => void;
   /** Called with the barcode when this scan is discarded, so the scanner's re-scan
    * cooldown can forget it - the user explicitly said they want to rescan it. */
@@ -303,11 +361,13 @@ export default function ConfirmScreen({
   const runningTimeMinsInputRef = useRef<TextInput>(null);
   const directorInputRef = useRef<TextInput>(null);
 
-  // Auto-detected purely from the UPC listing's own title text (packages/shared/src/omdb.ts's
-  // looksLikeCollection) - only ever used to seed isCollectionOverride below, never read
-  // directly again, since the keyword heuristic can misfire both ways (a non-collection title
-  // whose own name happens to contain "Trilogy"; a real box set whose listing text uses none
-  // of the trigger words) and the user needs to be able to correct either mistake.
+  // Auto-detected from either the UPC listing's own title text OR a scanned cover photo's own
+  // printed title (packages/shared/src/omdb.ts's looksLikeCollection, packages/backend/src/
+  // scanResolver.ts's coverLooksLikeCollection - added 2026-09-30) - only ever used to seed
+  // isCollectionOverride below, never read directly again, since the keyword heuristic can
+  // misfire both ways (a non-collection title whose own name happens to contain "Trilogy"; a
+  // real box set whose listing/cover text uses none of the trigger words) and the user needs to
+  // be able to correct either mistake.
   const autoDetectedCollection = Boolean(scan.resolved_candidates?.isCollection);
   const upcProduct = scan.resolved_candidates?.upcProduct;
   // Added 2026-09-19: UPCitemdb's own crowdsourced category string, checked for whether this
@@ -334,7 +394,26 @@ export default function ConfirmScreen({
   // original would size this box wrong and letterbox the cropped photo inside it.
   // `getSizeWithHeaders` (not plain `getSize`) since the preview URL is secret-gated, same as
   // every other scan route.
-  const scannedImageSource = upcProduct?.imageUrl ? getCroppedImageSource(upcProduct.imageUrl) : null;
+  //
+  // Front cover photo first, UPC listing photo second (added 2026-10-03) - a real "Pumping
+  // Iron" scan left an empty box here: its UPC listing's only image was Alibris's generic
+  // `no_image.gif` (a dead link), while the front cover the user photographed in the same
+  // session was never shown at all - even though that photo is exactly what Confirm saves as
+  // the case image (confirm/route.ts's front-cover promotion always wins over the listing
+  // photo), so it's the truer preview anyway. Same front-pick rule as the backend's
+  // pickFrontCoverPath (coverVision.ts). Each source that fails to load is skipped in turn,
+  // and the whole section hides if none load, rather than leaving a blank box behind.
+  const stagedCoverAnalyses = scan.resolved_candidates?.coverAnalysis ?? [];
+  const unclearCovers = stagedCoverAnalyses.filter((a) => a.analysis.side === "unclear");
+  const frontCoverStagedPath =
+    stagedCoverAnalyses.find((a) => a.analysis.side === "front")?.stagedPath ??
+    (unclearCovers.length === 1 ? unclearCovers[0].stagedPath : null);
+  const scannedImageSources = [
+    ...(frontCoverStagedPath ? [{ ...getStagedCoverImageSource(frontCoverStagedPath), isCoverPhoto: true }] : []),
+    ...(upcProduct?.imageUrl ? [{ ...getCroppedImageSource(upcProduct.imageUrl), isCoverPhoto: false }] : []),
+  ];
+  const [scannedImageSourceIndex, setScannedImageSourceIndex] = useState(0);
+  const scannedImageSource = scannedImageSources[scannedImageSourceIndex] ?? null;
   useEffect(() => {
     if (!scannedImageSource) return;
     Image.getSizeWithHeaders(
@@ -406,7 +485,19 @@ export default function ConfirmScreen({
   // results can populate it and hand off to all the same selection/poster/TMDb-preview
   // machinery below, unchanged.
   const [candidates, setCandidates] = useState<OmdbCandidate[]>(() => {
-    const base = draft?.candidates ?? ((scan.resolved_candidates?.omdbCandidates ?? []) as OmdbCandidate[]);
+    const freshCandidates = (scan.resolved_candidates?.omdbCandidates ?? []) as OmdbCandidate[];
+    // An empty draft must never permanently mask candidates the resolver has since found -
+    // the same class of bug the existingMatch synthesis below already had to work around (a
+    // draft saved before resolution finished can outlive whatever fix comes later). This
+    // happens for real: opening a cover-only scan's review before its 15s/5min auto-resolve
+    // has run yet finds zero candidates, and the draft-autosave effect further down persists
+    // that empty list immediately - reopening the same scan after it resolves would otherwise
+    // show that stale empty list (and the manual "Enter film name" search box) forever, even
+    // though the server now has real matches. An empty draft carries no real user selection
+    // worth preserving, so non-empty fresh server data always wins over it; a draft that does
+    // hold real candidates (from a manual search, or a resolved list seen on an earlier open)
+    // is left alone, same as before.
+    const base = draft?.candidates && draft.candidates.length > 0 ? draft.candidates : freshCandidates;
     // An exact-barcode match already tells us the real film with certainty - if the fresh
     // OMDB search this scan ran (or the UPC lookup that feeds it) didn't happen to surface
     // that same imdb_id as a candidate, synthesize one from the entry's own stored data so
@@ -477,6 +568,20 @@ export default function ConfirmScreen({
   // manually instead. (Or, if a draft exists - the user was already partway through this
   // scan and left - restores exactly what they'd chosen instead of these defaults.)
   const [showAllCandidates, setShowAllCandidates] = useState(draft?.showAllCandidates ?? !autoMatchedCandidate);
+  // A candidate's own Poster URL can be genuinely present (not "N/A") but still dead - found
+  // live 2026-10-01: OMDB returned a real-looking Amazon CDN poster URL for the classic Who
+  // serial "The Savages," but the URL itself 404s (image link rot, common for old IMDb/Amazon
+  // image links - not something specific to this candidate or to Doctor Who). `<Image>`'s own
+  // posterImage style has a dark `#18181b` background with no broken-image fallback UI, so a
+  // dead-but-present URL silently rendered as a plain near-black box with no indication
+  // anything was wrong. Tracked by imdbID (not per-render) so a failed load is remembered and
+  // the "No poster image found" placeholder takes over instead, the same as a genuinely
+  // missing "N/A" poster - never retried, since a dead CDN link isn't going to start working
+  // moments later.
+  const [posterLoadFailed, setPosterLoadFailed] = useState<Set<string>>(new Set());
+  function markPosterLoadFailed(imdbId: string) {
+    setPosterLoadFailed((prev) => (prev.has(imdbId) ? prev : new Set(prev).add(imdbId)));
+  }
   // Collapsed by default - see looksLikeExtraContent (packages/shared/src/omdb.ts) for what
   // lands here (making-of documentaries, special-screening/behind-the-scenes footage that
   // legitimately shares a big film's title in OMDB's search results). Never dropped from the
@@ -505,12 +610,23 @@ export default function ConfirmScreen({
   // presented as confirmed fact. Packaging/marketing words ("Special Edition") are already
   // stripped by cleanProductTitleForSearch since those never belong in a title per how this
   // collection is catalogued (see Claude/TECH STACK AND ARCHITECTURE.md's Collections note).
-  const [manualTitle, setManualTitle] = useState(
-    () =>
-      draft?.manualTitle ??
-      upcCutVariant?.baseTitle ??
-      (upcProduct?.title ? cleanProductTitleForSearch(upcProduct.title) : "")
-  );
+  const [manualTitle, setManualTitle] = useState(() => {
+    if (draft?.manualTitle) return draft.manualTitle;
+    if (upcCutVariant?.baseTitle) return upcCutVariant.baseTitle;
+    if (upcProduct?.title) return cleanProductTitleForSearch(upcProduct.title);
+    // Cover-photo fallback (added 2026-09-30, found live: a real collection scan with no UPC
+    // listing at all - upcLookupFailed - left this blank even though the cover photo had
+    // already read the real name, "Gidget Film Collection", perfectly fine). Same
+    // front-preferred, else-any precedence as scanResolver.ts's own pickCoverDerivedTitle -
+    // never run through cleanProductTitleForSearch, which strips marketplace-listing noise
+    // ("[Blu-ray] Free Shipping") a cover-photo read never has in the first place.
+    const coverAnalysisForTitle = scan.resolved_candidates?.coverAnalysis ?? [];
+    return (
+      coverAnalysisForTitle.find((a) => a.analysis.side === "front" && a.analysis.title)?.analysis.title ??
+      coverAnalysisForTitle.find((a) => a.analysis.title)?.analysis.title ??
+      ""
+    );
+  });
   const visionFormatGuess = scan.resolved_candidates?.visionFormatGuess ?? null;
   // Only ever non-null when visionFormatGuess itself is - see deriveDiscConfigFromExtraDiscs's
   // own comment for the disc-count/special-features/bonus-disc-format mapping this implies.
@@ -522,6 +638,63 @@ export default function ConfirmScreen({
   // shows the raw parse (title/actors/format/region) read-only, for transparency into why a
   // second-attempt search or cast-hint match came out the way it did.
   const listingTextExtraction = scan.resolved_candidates?.listingTextExtraction ?? null;
+  // Cover-photo vision reads (packages/backend/src/coverVision.ts) - only ever populated for
+  // a cover-only scan (no barcode, so none of visionFormatGuess/listingTextExtraction/
+  // upcProduct above exist for it either). One entry per staged photo; takes the first
+  // non-null value across all of them for each field, since a value is only ever reported
+  // when that specific photo actually had it legible - front vs. back doesn't matter here
+  // the way it does for pickFrontCoverPath's case-image choice, since a genuinely legible
+  // read is trustworthy regardless of which side happened to show it.
+  const coverAnalysis = scan.resolved_candidates?.coverAnalysis ?? [];
+  const coverFormatGuess = coverAnalysis.map((a) => a.analysis.format).find((f) => f != null) ?? null;
+  const coverDiscCountGuess = coverAnalysis.map((a) => a.analysis.discCount).find((c) => c != null) ?? null;
+  const coverRatingGuess = coverAnalysis.map((a) => a.analysis.rating).find((r) => r != null) ?? null;
+  // Added 2026-10-01 - a second, independent confirming signal (alongside the missing-episode
+  // data match below) for a classic Doctor Who serial's officially-released animated
+  // reconstruction, whose cover art looks visibly illustrated/drawn rather than photographic.
+  // Only ever acted on for a classic Who match - see the Animation/Live Action prefill effect
+  // near singleSelectedImdbId - not a general "drawn cover = animated film" rule, since an
+  // ordinary animated film's own TMDb genre already covers that case.
+  const coverLooksDrawn = coverAnalysis.some((a) => a.analysis.artStyle === "drawn");
+  // Banner-implied extra discs read directly off the user's own cover photo (added
+  // 2026-09-29, alongside coverVision.ts's own extraDiscs/specialFeaturesListed fields) -
+  // same derivation as visionDiscConfig below, just from a second possible source, since a
+  // barcode listing's own stock photo isn't always present or doesn't always show the banner
+  // clearly. `deriveDiscConfigFromExtraDiscs` returns null for "NONE" (the default when no
+  // analysis reported anything), so this is a no-op whenever there's nothing to derive.
+  // extraDiscs defaults to "NONE" (never null - see coverVision.ts), so "first non-null" would
+  // just lock onto whichever photo was analyzed first even if a LATER photo is the one that
+  // actually shows the banner - find the first one that reported real extras instead.
+  const coverExtraDiscsGuess = coverAnalysis.map((a) => a.analysis.extraDiscs).find((e) => e !== "NONE") ?? undefined;
+  const coverDiscConfig = deriveDiscConfigFromExtraDiscs(coverFormatGuess ?? "", coverExtraDiscsGuess);
+  // A back cover explicitly listing "Special Features"/"Bonus Features" is its own separate
+  // signal from a banner-implied bonus disc - the features can just be on the movie's own
+  // disc, with no dedicated extra disc at all (see coverVision.ts's own comment).
+  const coverSpecialFeaturesListed =
+    coverAnalysis.map((a) => a.analysis.specialFeaturesListed).find((s) => s != null) ?? null;
+  // Verbatim region text read off either the front or back cover photo (added 2026-09-29,
+  // per the user's own correction that region marks aren't front-cover-only) - resolved
+  // below via the same resolveDiskRegionText helper the LLM listing-text extraction's own
+  // "region" field already goes through.
+  const coverRegionGuess = coverAnalysis.map((a) => a.analysis.region).find((r) => r != null) ?? null;
+  // A distinct packaging/marketing edition name read off the cover (e.g. "Night Shift
+  // Edition") - added 2026-09-29 after the user pointed out a real "Five Nights at Freddy's:
+  // Night Shift Edition" case whose edition name went uncaught. This is the first automatic
+  // signal release_name has ever had (see its own comment below) - deliberately still just a
+  // pre-fill suggestion, never trusted outright, since a misread edition name is easy for the
+  // model to get subtly wrong (see releaseNameFromCoverVision below, which flags the review
+  // row amber for exactly this reason).
+  const coverReleaseNameGuess = coverAnalysis.map((a) => a.analysis.releaseName).find((r) => r != null) ?? null;
+  // A saved release_name always includes the film's own base title before the edition wording
+  // (per the user's own explicit standing convention, e.g. "Five Nights at Freddy's Night
+  // Shift Edition" - matching how every existing release_name in this collection is recorded,
+  // like the "Gladiator Special Edition" example in database-design.md), never just the bare
+  // edition suffix. coverVision.ts deliberately reports only that suffix (it already reports
+  // the base title separately as `title`/coverDerivedTitle in the same call) - composed here
+  // as plain app code against `manualTitle` (the title the user is actually confirming)
+  // instead of asked of the model, so the prefix can never drift from a subtly different
+  // spelling/apostrophe/capitalization the model might otherwise retype into a second field.
+  const composedCoverReleaseName = coverReleaseNameGuess ? `${manualTitle} ${coverReleaseNameGuess}`.trim() : null;
   const [format, setFormat] = useState(() => {
     if (draft?.format) return draft.format;
     const hint = upcProduct
@@ -535,10 +708,14 @@ export default function ConfirmScreen({
     // vision model at all (see its own comment) - a specific text hint always wins outright,
     // but "DVD" specifically gets cross-checked against a real product photo when one exists.
     if (hint && hint !== "DVD") return hint;
-    return visionFormatGuess?.format ?? listingTextExtraction?.format ?? hint ?? "DVD";
+    return visionFormatGuess?.format ?? listingTextExtraction?.format ?? coverFormatGuess ?? hint ?? "DVD";
   });
   const [discCount, setDiscCount] = useState(
-    draft?.discCount ?? visionDiscConfig?.discCount.toString() ?? "1"
+    draft?.discCount ??
+      visionDiscConfig?.discCount.toString() ??
+      coverDiscConfig?.discCount.toString() ??
+      coverDiscCountGuess?.toString() ??
+      "1"
   );
   // A fixed small set of codes (see getDiskRegionOptions), not free text - and some discs
   // are coded for more than one region at once (e.g. "2, 4"), so this is a toggleable set
@@ -548,10 +725,21 @@ export default function ConfirmScreen({
   // for the user to fill in by hand every time. Same draft-only precedence as every other
   // auto-filled field on this screen (see existingMatch's own 2026-09-24 comment above);
   // still fully editable either way.
+  //
+  // An EMPTY draft must never permanently mask a region guess the resolver has since found -
+  // same class of bug `candidates` above already had to work around, found live 2026-09-30: a
+  // scan whose cover analysis didn't have a region yet (or was still mid-reprocessing) caches
+  // an empty `diskRegions: []` draft the moment the screen is first opened, and since this
+  // in-memory draft cache outlives the server later finding/correcting the region, reopening
+  // the same scan afterward showed a blank Disk Region forever even once the cover-read region
+  // was genuinely available. An empty draft carries no real user selection worth preserving,
+  // so non-empty fresh data always wins over it; a draft that holds a real region choice is
+  // left alone, same as before.
+  const draftDiskRegions = draft?.diskRegions && draft.diskRegions.length > 0 ? draft.diskRegions : undefined;
   const [diskRegions, setDiskRegions] = useState<Set<string>>(
     () =>
       new Set(
-        draft?.diskRegions ??
+        draftDiskRegions ??
           (upcProduct
             ? extractDiskRegionHint(`${upcProduct.title} ${upcProduct.description ?? ""}`, format)
                 ?.split(",")
@@ -562,11 +750,12 @@ export default function ConfirmScreen({
           // real region code by itself - resolveDiskRegionText maps it to the actual
           // numeric/letter code that market uses for this format (see formatHints.ts).
           (listingTextExtraction?.region
-            ? (() => {
-                const resolved = resolveDiskRegionText(listingTextExtraction.region!, format);
-                return resolved ? [resolved] : null;
-              })()
+            ? resolveDiskRegionText(listingTextExtraction.region!, format)
             : null) ??
+          // The user's own cover photo (front OR back) showing a region mark that the
+          // listing text/LLM extraction above never had a chance to catch at all (no UPC
+          // listing, or a listing whose own text just doesn't mention it).
+          (coverRegionGuess ? resolveDiskRegionText(coverRegionGuess, format) : null) ??
           []
       )
   );
@@ -655,36 +844,59 @@ export default function ConfirmScreen({
   const [genre, setGenre] = useState(draft?.genre ?? "");
   const [runningTimeMins, setRunningTimeMins] = useState(draft?.runningTimeMins ?? "");
   const [director, setDirector] = useState(draft?.director ?? "");
-  // Manual-only, deliberately never auto-filled from OMDB's "Rated" field - that's a US
-  // MPAA-style value and often just "Not Rated" even for titles that do carry a real NZ/
-  // Oceania classification on the physical case, which is the authoritative source here.
-  const [rating, setRating] = useState(draft?.rating ?? "");
+  // Deliberately never auto-filled from OMDB's "Rated" field - that's a US MPAA-style value
+  // and often just "Not Rated" even for titles that do carry a real NZ/Oceania classification
+  // on the physical case, which is the authoritative source here. `coverRatingGuess` (added
+  // 2026-09-29) is exactly that authoritative source read directly - coverVision.ts only ever
+  // reports a genuine NZ/OFLC logo it actually saw on the case, never a translated foreign
+  // rating (see its own PROMPT) - so pre-filling from it doesn't reintroduce the problem this
+  // comment originally guarded against.
+  const [rating, setRating] = useState(draft?.rating ?? coverRatingGuess ?? "");
   const [studio, setStudio] = useState(draft?.studio ?? "");
   // Verbatim edition/PACKAGING title (e.g. "Gladiator Special Edition"), distinct from the
   // canonical `title` above - saved as null/"n/a" whenever releaseNameMatchesTitle is
   // checked, regardless of whatever's left in the text field (see Claude/TECH STACK AND
-  // ARCHITECTURE.md). Manual-only, deliberately NOT pre-filled from `upcCutVariant` (a brief
-  // 2026-09-17 experiment that did prefill it from a detected cut, reverted 2026-09-18 per
-  // the user's own explicit clarification): a specific CUT of a film ("the Final Cut,"
-  // "Director's Cut," ...) gets appended straight onto the catalogued `title` itself instead
-  // (see `cutSuffix` sent in the confirm payload below) - release_name is reserved purely for
+  // ARCHITECTURE.md). Deliberately NOT pre-filled from `upcCutVariant` (a brief 2026-09-17
+  // experiment that did prefill it from a detected cut, reverted 2026-09-18 per the user's
+  // own explicit clarification): a specific CUT of a film ("the Final Cut," "Director's
+  // Cut," ...) gets appended straight onto the catalogued `title` itself instead (see
+  // `cutSuffix` sent in the confirm payload below) - release_name is reserved purely for
   // genuine packaging/marketing special editions ("Special Edition," "Collector's Edition,"
-  // ...), a different, unrelated category this screen has no reliable automatic signal for.
-  const [releaseName, setReleaseName] = useState(draft?.releaseName ?? "");
+  // ...). This field's own original design note said there's "no reliable automatic signal"
+  // for this - true of UPC listing text specifically (still no auto-fill from that), but
+  // `coverReleaseNameGuess` (added 2026-09-29) reads it directly off the case photo instead,
+  // a genuinely different and more reliable source.
+  const [releaseName, setReleaseName] = useState(draft?.releaseName ?? composedCoverReleaseName ?? "");
   const [releaseNameMatchesTitle, setReleaseNameMatchesTitle] = useState(
-    draft?.releaseNameMatchesTitle ?? true
+    draft?.releaseNameMatchesTitle ?? !composedCoverReleaseName
   );
+  // True only while the field still holds the composed cover-vision guess verbatim and hasn't
+  // been unchecked - same "back off the moment it no longer holds the tool's own last
+  // suggestion" guard used elsewhere on this screen. Drives the amber "worth a look" highlight
+  // on the Release name summary row (SummaryRow's `notable` prop), per the user's own explicit
+  // request that a cover-derived release name be flagged for a manual check rather than
+  // trusted silently - a vision misread here is a real, disclosed risk (see coverVision.ts).
+  const releaseNameFromCoverVision =
+    Boolean(composedCoverReleaseName) && !releaseNameMatchesTitle && releaseName === composedCoverReleaseName;
   const [steelbook, setSteelbook] = useState(
     draft?.steelbook ?? visionFormatGuess?.steelbook ?? false
   );
+  // A banner-implied bonus disc (either source) or an explicit "Special Features"/"Bonus
+  // Features" list read straight off the back cover (coverSpecialFeaturesListed - added
+  // 2026-09-29) each independently imply real special features exist, even when only one of
+  // the two signals fired (a features list can sit on the movie's own disc with no separate
+  // bonus disc at all, and vice versa).
   const [specialFeatures, setSpecialFeatures] = useState(
-    draft?.specialFeatures ?? Boolean(visionDiscConfig)
+    draft?.specialFeatures ?? (Boolean(visionDiscConfig ?? coverDiscConfig) || coverSpecialFeaturesListed === true)
   );
   const [specialFeaturesDiscCount, setSpecialFeaturesDiscCount] = useState(
-    draft?.specialFeaturesDiscCount ?? visionDiscConfig?.specialFeaturesDiscCount.toString() ?? ""
+    draft?.specialFeaturesDiscCount ??
+      visionDiscConfig?.specialFeaturesDiscCount.toString() ??
+      coverDiscConfig?.specialFeaturesDiscCount.toString() ??
+      ""
   );
   const [specialFeaturesDiscFormat, setSpecialFeaturesDiscFormat] = useState(
-    draft?.specialFeaturesDiscFormat ?? visionDiscConfig?.specialFeaturesDiscFormat ?? ""
+    draft?.specialFeaturesDiscFormat ?? visionDiscConfig?.specialFeaturesDiscFormat ?? coverDiscConfig?.specialFeaturesDiscFormat ?? ""
   );
   const [fieldOptions, setFieldOptions] = useState<FieldOptions | null>(null);
   // "Would TMDb find anything for this specific title" - keeps the manual Rating/Studio
@@ -705,7 +917,13 @@ export default function ConfirmScreen({
   const [checkingExisting, setCheckingExisting] = useState(false);
   const [existingCheck, setExistingCheck] = useState<MatchCheck | null>(null);
   const [chosenExistingId, setChosenExistingId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Seeded with the last background save's failure, if any (2026-10-03) - a failed save
+  // drops this scan back into Pending Scans with its draft intact, and reopening it should
+  // say why rather than looking as if nothing happened.
+  const [error, setError] = useState<string | null>(() => {
+    const lastError = getSubmissionError(scan.id);
+    return lastError ? `The last save attempt failed: ${lastError}` : null;
+  });
 
   // Collection scanning flow (added 2026-09-20) - see Claude/TECH STACK AND ARCHITECTURE/
   // barcode-scanning-pipeline.md. A manual, editable toggle (per the user's own explicit
@@ -733,12 +951,36 @@ export default function ConfirmScreen({
   // overwritten again server-side by a naive sum - now it's a plain typed field, and each title
   // just ticks which numbered disc(s) it's on. Kept separate from `discCount` (the single-title
   // form's own field) so it starts blank instead of inheriting that field's "1" default.
-  const [collectionDiscCount, setCollectionDiscCount] = useState(draft?.collectionDiscCount ?? "");
+  // `coverDiscCountGuess` fallback added 2026-09-30, found live: a real "Gidget Film Collection"
+  // cover printed "2 DISC SET" in the bottom-right spec area, and coverVision.ts's discCount
+  // field genuinely read it (confirmed against the real resolved_candidates), but nothing wired
+  // it into this field at all - `discCount` (the single-title field, right above) already had
+  // this same fallback, this one just never got it. Still just a starting guess, same as every
+  // other cover-derived pre-fill on this screen - fully editable, never presented as confirmed.
+  const [collectionDiscCount, setCollectionDiscCount] = useState(
+    draft?.collectionDiscCount ?? coverDiscCountGuess?.toString() ?? ""
+  );
   const [bonusDiscs, setBonusDiscs] = useState<number[]>(draft?.bonusDiscs ?? []);
   // Key of the member currently open in the edit-title picker, or null when adding a new one.
   const [editingMemberKey, setEditingMemberKey] = useState<string | null>(null);
+  // Set when a cover-derived member-title suggestion chip is tapped (added 2026-09-30) - passed
+  // to TitleSearchPicker as initialQuery so it opens with that search already run, rather than
+  // auto-adding the cover's own read straight into the set (a vision misread should still be
+  // reviewed like any other title on this screen). Never set alongside editingMemberKey.
+  const [pendingSuggestionQuery, setPendingSuggestionQuery] = useState<string | null>(null);
   const [collectionMembers, setCollectionMembers] = useState<CollectionMember[]>(() =>
     (draft?.collectionMembers ?? []).map(sanitizeSpecialFeaturesDiscOverlap)
+  );
+  // The box set's own member titles, when a cover photo actually listed them (added
+  // 2026-09-30, per the user's own observation - see scanResolver.ts's coverMemberTitles for
+  // the full read). Filters out anything matching a title already added, so a suggestion chip
+  // doesn't linger once it's been used (or if the same name was independently typed by hand).
+  // Declared here, after collectionMembers, not up near autoDetectedCollection where it first
+  // lived - a real crash ("Cannot read property 'some' of undefined") found live 2026-09-30
+  // from referencing collectionMembers before its own useState declaration further down this
+  // same component.
+  const coverMemberTitleSuggestions: string[] = (scan.resolved_candidates?.coverMemberTitles ?? []).filter(
+    (t) => !collectionMembers.some((m) => m.title.trim().toLowerCase() === t.trim().toLowerCase())
   );
   // Extends the single-title flow's franchise-rating-buttons/family-genre Disc Condition
   // warning to the Collection header too, but only when every member agrees - added
@@ -1089,6 +1331,19 @@ export default function ConfirmScreen({
   useEffect(() => {
     if (showSpecialFeaturesDiscFields && !specialFeaturesDiscCount) setSpecialFeaturesDiscCount("1");
   }, [showSpecialFeaturesDiscFields]);
+  // Special features can never occupy every disc in the case - at least one disc has to be
+  // the main feature itself - so the count is capped at discCount - 1. Re-clamps whenever
+  // Disc Count itself goes down (e.g. 3 -> 2 after a miscount fix) so a stale higher value
+  // can't silently exceed the new cap. 0 is a valid, deliberately allowed value here (not
+  // clamped up to 1) - the user's own case: a multi-disc release where disc 1 has the main
+  // feature plus some special features, and disc 2 has the same movie again (e.g. a long
+  // film split across two discs) - there, no disc is "the" dedicated special-features disc.
+  useEffect(() => {
+    if (!showSpecialFeaturesDiscFields) return;
+    const max = Math.max(0, (parseInt(discCount, 10) || 1) - 1);
+    const current = parseInt(specialFeaturesDiscCount, 10) || 0;
+    if (current > max) setSpecialFeaturesDiscCount(String(max));
+  }, [discCount, showSpecialFeaturesDiscFields]);
   // toggleCandidate above never lets `selected` hold more than one id any more - the old
   // multi-select checklist this candidate list used to support only ever existed to serve
   // the collection flow, which now has its own entirely separate UI (isCollectionOverride)
@@ -1112,9 +1367,48 @@ export default function ConfirmScreen({
     if (draft?.movieOrTv) return;
     if (!singleSelectedImdbId) return;
     if (movieOrTv !== "" && movieOrTv !== lastAutoMovieOrTvRef.current) return;
-    const guessed = guessMovieOrTvFromType(candidates.find((c) => c.imdbID === singleSelectedImdbId)?.Type);
+    const selectedCandidate = candidates.find((c) => c.imdbID === singleSelectedImdbId);
+    const guessed = guessMovieOrTvFromType(selectedCandidate?.Type, !!selectedCandidate?.classicWhoSerial);
     lastAutoMovieOrTvRef.current = guessed;
     setMovieOrTv(guessed);
+  }, [singleSelectedImdbId]);
+
+  // Season No./Episode Count prefill for a classic Doctor Who serial (added 2026-09-30) -
+  // the matched serial's own season/episode-count is already known locally (the cached
+  // classic_who_serial_index, see classicWhoSerials.ts), so there's no need to make the user
+  // type in values this screen already has. Same "never overwrite a draft or a value the
+  // user's already touched" guard as every other reactive-guess effect on this screen - only
+  // fills a field that's still genuinely blank.
+  useEffect(() => {
+    if (!singleSelectedImdbId) return;
+    const classicWhoSerial = candidates.find((c) => c.imdbID === singleSelectedImdbId)?.classicWhoSerial;
+    if (!classicWhoSerial) return;
+    if (!draft?.seasonNo && !seasonNo.trim()) setSeasonNo(String(classicWhoSerial.season));
+    if (!draft?.episodeCount && !episodeCount.trim()) setEpisodeCount(String(classicWhoSerial.episodeCount));
+    // "BOX TV Sci-Fi" is the user's own dedicated Doctor Who shelf (2026-09-30) - ordered by
+    // release order server-side (apps/web/src/app/api/scan/confirm/route.ts's
+    // computeShelfLocation) rather than alphabetically, which only works when every Doctor
+    // Who title actually shares this same genre_location. Same guard as every other prefill
+    // here - only fills a genuinely blank field, never overwrites the user's own choice.
+    if (!draft?.genreLocation && !genreLocation.trim()) setGenreLocation("BOX TV Sci-Fi");
+    // Animated-reconstruction prefill (added 2026-10-01) - see classicWhoSerials.ts and
+    // coverVision.ts's own artStyle field for the two signals combined here. A classic serial
+    // with any missing episodes could never have a purely-live-action standalone disc release
+    // (the story either has no disc release at all - only surviving fragments inside "Doctor
+    // Who Lost in Time" - or the one that does exist is necessarily an official animated
+    // reconstruction filling the gap), so matching one here is itself strong evidence on its
+    // own. A "drawn" cover-art read is a second, independent signal for the same conclusion,
+    // and the only one at all for a serial this index's missing_episode_count hasn't caught
+    // (e.g. a brand new reconstruction released after the data was last backfilled). Always
+    // just a pre-fill, never locked - same "only a genuinely blank field" guard as the fields
+    // above, since the user still has to pick which style (2D/3D/puppet) actually applies,
+    // which neither signal can tell.
+    if (!draft?.animationOrLiveAction && !animationOrLiveAction.trim()) {
+      const { missingEpisodeCount, episodeCount: totalEpisodes } = classicWhoSerial;
+      if (missingEpisodeCount > 0 && missingEpisodeCount >= totalEpisodes) setAnimationOrLiveAction("Animation");
+      else if (missingEpisodeCount > 0) setAnimationOrLiveAction("Live Action/Animation Hybrid");
+      else if (coverLooksDrawn) setAnimationOrLiveAction("Animation");
+    }
   }, [singleSelectedImdbId]);
 
   // Sharpens the guess above from "Movie" to "TV Movie" once TMDb's own preview data has
@@ -1145,11 +1439,17 @@ export default function ConfirmScreen({
   // Title field used by the fully-manual path above - always fully editable, never enforced,
   // since the real collection already uses several different phrasings for this depending on
   // the show ("Series N", "the Complete Nth Season", a bare number with no word at all).
-  const selectedCandidateTitle = singleSelectedImdbId
-    ? candidates.find((c) => c.imdbID === singleSelectedImdbId)?.Title ?? null
-    : null;
+  const selectedCandidate = singleSelectedImdbId ? candidates.find((c) => c.imdbID === singleSelectedImdbId) : undefined;
+  const selectedCandidateTitle = selectedCandidate?.Title ?? null;
   const lastAutoTitleRef = useRef<string | null>(null);
+  // A classic Doctor Who serial's own matched title ("The Underwater Menace") is already the
+  // complete, correct catalogue title on its own - unlike an ordinary show, where OMDB only
+  // ever has one entry for the whole series ("Breaking Bad") and "Season N" has to be appended
+  // to tell discs apart. Auto-filling Season No. for a classic serial (see the prefill effect
+  // above) must never also trigger this composition, or it silently becomes "The Underwater
+  // Menace Season 4" the moment that auto-filled Season No. lands - found live 2026-09-30.
   function composeSeasonTitle(baseTitle: string): string {
+    if (selectedCandidate?.classicWhoSerial) return baseTitle;
     if (!showSeasonFields || !seasonNo.trim()) return baseTitle;
     const part = partOfSeasonNo.trim();
     return `${baseTitle} Season ${seasonNo.trim()}${part ? ` Part ${part}` : ""}`;
@@ -1243,8 +1543,16 @@ export default function ConfirmScreen({
   // Rating/Studio hiding once TMDb has answered. isAnimated === true keeps the field
   // visible so the user can pick the specific style TMDb doesn't know. isAnimated === null
   // (no TMDb match) also keeps it visible, since we have no confirmed answer either way.
+  // A classic Who serial with any missing episodes (or drawn cover art) is treated as likely
+  // animated regardless of what TMDb's own genre data says - TMDb has no reason to know a
+  // classic serial's specific disc release is a reconstruction, so its "isAnimated: false"
+  // read (the ordinary case for this show) must not hide/lock the field for one of these -
+  // see the prefill effect near singleSelectedImdbId above for the same two signals.
+  const isLikelyAnimatedWhoReconstruction =
+    !!selectedCandidate?.classicWhoSerial &&
+    (selectedCandidate.classicWhoSerial.missingEpisodeCount > 0 || coverLooksDrawn);
   const showAnimationField = singleSelectedImdbId
-    ? !tmdbPreviewLoading && tmdbPreview?.isAnimated !== false
+    ? isLikelyAnimatedWhoReconstruction || (!tmdbPreviewLoading && tmdbPreview?.isAnimated !== false)
     : true;
   // Once TMDb has confirmed this is animated, "Live Action" itself is never a valid choice
   // for the style dropdown - filtered out only in that specific case, not for the
@@ -1256,6 +1564,12 @@ export default function ConfirmScreen({
   // Same regex computeShelfLocation itself uses server-side (apps/web/src/app/api/scan/
   // confirm/route.ts) - only worth asking for a worded era label when this scan is
   // actually headed for that shelf section.
+  // Client-side genre signal for ranking Genre Location buttons (see rankGenreLocationOptions
+  // above) - TMDb's own genre list for the selected candidate when one exists (the practical
+  // client-side stand-in for OMDB's own Genre text, which this screen has no fetch for at
+  // all - only the server resolves that, at confirm time), else the manually-typed Genre
+  // field for a fully-manual entry (no candidate, no TMDb preview to draw from).
+  const genreSignalForLocationRanking = tmdbPreview?.genres ?? (genre ? genre.split(",").map((g) => g.trim()) : []);
   const isHistoryDocumentary = /history document/i.test(genreLocation);
   // Added 2026-09-27 per the user's own observation: a high proportion of the family/kids/
   // animated titles already in the collection turned out scratched from previous owners -
@@ -1312,8 +1626,13 @@ export default function ConfirmScreen({
         style={[styles.posterCard, selected.has(c.imdbID) && styles.posterCardSelected]}
         onPress={() => toggleCandidate(c.imdbID)}
       >
-        {c.Poster && c.Poster !== "N/A" ? (
-          <Image source={{ uri: c.Poster }} style={styles.posterImage} resizeMode="cover" />
+        {c.Poster && c.Poster !== "N/A" && !posterLoadFailed.has(c.imdbID) ? (
+          <Image
+            source={{ uri: c.Poster }}
+            style={styles.posterImage}
+            resizeMode="cover"
+            onError={() => markPosterLoadFailed(c.imdbID)}
+          />
         ) : (
           <View style={[styles.posterImage, styles.posterPlaceholder]}>
             <Text style={styles.posterPlaceholderText}>No poster image found</Text>
@@ -1484,13 +1803,21 @@ export default function ConfirmScreen({
       if (overwriteUniqueId && entries.length > 0) {
         entries[0] = { ...entries[0], overwriteUniqueId };
       }
-      const result = await confirmScan(scan.id, entries);
-      clearConfirmDraft(scan.id);
-      // Refresh the shared field-options cache so a brand-new tag/value just typed on this
-      // scan (Genre, Franchise, Format, etc.) is already suggestible on the very next scan
-      // in this session, not just after an app restart - fire-and-forget, doesn't block nav.
-      loadFieldOptions(true);
-      onConfirmed({ shelfLocation: result.shelfLocation });
+      // The real write runs in the background (backgroundSubmissions.ts, 2026-10-03) so the
+      // user can move straight on to the next scan - SuccessScreen shows "Scanning..." and
+      // the outcome, or App.tsx's banner does if they've already left. The draft is only
+      // cleared on success, so a failure leaves this scan in Pending Scans fully filled in.
+      const submittedTitle = (chosen.length === 1 ? chosen[0].Title : null) ?? (manualTitle.trim() || scan.barcode || "Untitled");
+      const submissionId = startBackgroundSubmission(scan.id, submittedTitle, async () => {
+        const result = await confirmScan(scan.id, entries);
+        clearConfirmDraft(scan.id);
+        // Refresh the shared field-options cache so a brand-new tag/value just typed on this
+        // scan (Genre, Franchise, Format, etc.) is already suggestible on the very next scan
+        // in this session, not just after an app restart - fire-and-forget.
+        loadFieldOptions(true);
+        return { shelfLocation: result.shelfLocation };
+      });
+      onConfirmed({ submissionId });
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -1559,6 +1886,11 @@ export default function ConfirmScreen({
     if (!rating.trim() && !tmdbConfirmedRating) missing.push("Rating");
     if (!studio.trim() && !tmdbConfirmedStudio) missing.push("Studio");
     if (!originalLanguage.trim() && !tmdbConfirmedOriginalLanguage) missing.push("Original Language");
+    // Unlike Franchise, Animation/Live Action always has a real answer (every film either is
+    // or isn't animated) - so once OMDB/TMDb hasn't confirmed "Live Action" (showAnimationField
+    // true, per the user's own explicit request), leaving it blank is genuinely missing data,
+    // not a legitimately-blank field, and blocks Confirm the same way Title/Format do.
+    if (showAnimationField && !animationOrLiveAction.trim()) missing.push("Animation / Live Action");
     return missing;
   }
 
@@ -1992,12 +2324,18 @@ export default function ConfirmScreen({
         },
       }));
 
-      const result = await confirmScan(scan.id, [headerEntry, ...memberEntries]);
+      // Background write, same as performCreate's (see its own comment) - the progress bar
+      // above only covers building the entries now; the save itself is tracked on
+      // SuccessScreen / the banner.
+      const submissionId = startBackgroundSubmission(scan.id, baseCollectionName || "Collection", async () => {
+        const result = await confirmScan(scan.id, [headerEntry, ...memberEntries]);
+        clearConfirmDraft(scan.id);
+        loadFieldOptions(true);
+        return { shelfLocation: result.shelfLocation };
+      });
       clearInterval(progressInterval);
       setSubmitProgress(1);
-      clearConfirmDraft(scan.id);
-      loadFieldOptions(true);
-      onConfirmed({ shelfLocation: result.shelfLocation });
+      onConfirmed({ submissionId });
     } catch (err) {
       clearInterval(progressInterval);
       setSubmitProgress(0);
@@ -2234,13 +2572,18 @@ export default function ConfirmScreen({
               {chosen.disk_region ? ` - Region ${chosen.disk_region}` : ""}
               {chosen.release_date ? ` - ${chosen.release_date.slice(0, 4)}` : ""}
             </Text>
-            <Text style={styles.body}>
-              {chosen.genre_location ? `Shelf: ${chosen.genre_location}. ` : ""}
-              {chosen.franchise.length > 0 ? `Franchise: ${chosen.franchise.join(", ")}. ` : ""}
-              {chosen.animation_or_live_action}
-              {chosen.rating ? ` - Rated ${chosen.rating}` : ""}
-              {chosen.studio ? ` - ${chosen.studio}` : ""}
-            </Text>
+            {/* Each field gets its own labeled line (fixed 2026-10-02) - previously all of
+                Animation/Rating/Studio ran on, unlabeled, right after "Franchise: ...", which
+                read as if they were all part of the franchise list itself. */}
+            {chosen.genre_location && <Text style={styles.body}>Shelf: {chosen.genre_location}</Text>}
+            {chosen.franchise.length > 0 && (
+              <Text style={styles.body}>Franchise: {chosen.franchise.join(", ")}</Text>
+            )}
+            {chosen.animation_or_live_action && (
+              <Text style={styles.body}>Animation: {chosen.animation_or_live_action}</Text>
+            )}
+            {chosen.rating && <Text style={styles.body}>Rating: {chosen.rating}</Text>}
+            {chosen.studio && <Text style={styles.body}>Studio: {chosen.studio}</Text>}
             <Text style={styles.body}>
               {chosen.special_features ? "Has special features. " : ""}
               {chosen.steelbook ? "Steelbook. " : ""}
@@ -2528,7 +2871,11 @@ export default function ConfirmScreen({
               <View style={styles.section}>
                 <Text style={styles.label}>Genre Location (shelf section)</Text>
                 <BigChoice
-                  options={filterGenreLocationOptions(fieldOptions?.genreLocation ?? [], true, movieOrTv)}
+                  options={rankGenreLocationOptions(
+                    filterGenreLocationOptions(fieldOptions?.genreLocation ?? [], true, movieOrTv),
+                    genreSignalForLocationRanking,
+                    4
+                  )}
                   value={genreLocation}
                   onChange={setGenreLocation}
                 />
@@ -2750,6 +3097,38 @@ export default function ConfirmScreen({
                   </View>
                 </View>
               ))}
+              {coverMemberTitleSuggestions.length > 0 && (
+                <View style={styles.section}>
+                  <Text style={styles.hint}>
+                    The cover photo also lists these titles - tap one to search and add it:
+                  </Text>
+                  {totalDiscCountNumber < 1 && (
+                    <Text style={styles.hint}>Enter the Total Disc Count above first - these are disabled until then.</Text>
+                  )}
+                  <View style={[styles.row, { flexWrap: "wrap" }]}>
+                    {coverMemberTitleSuggestions.map((t) => (
+                      <TouchableOpacity
+                        key={t}
+                        // Dimmed to match, added 2026-09-30 - found live the chip previously gave
+                        // no visual sign it was disabled at all, so tapping it before Total Disc
+                        // Count was entered just silently did nothing (same real gating "+ Add a
+                        // title" already has, right below - this chip opens the exact same
+                        // TitleSearchPicker, which needs totalDiscCount to render its disc
+                        // checklist).
+                        style={[styles.suggestionChip, totalDiscCountNumber < 1 && { opacity: 0.4 }]}
+                        disabled={totalDiscCountNumber < 1}
+                        onPress={() => {
+                          setEditingMemberKey(null);
+                          setPendingSuggestionQuery(t);
+                          setShowTitleSearchPicker(true);
+                        }}
+                      >
+                        <Text style={styles.suggestionChipText}>{t}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
               <TouchableOpacity
                 style={[styles.button, totalDiscCountNumber < 1 && { opacity: 0.4 }]}
                 onPress={() => {
@@ -2775,6 +3154,7 @@ export default function ConfirmScreen({
                     actually about. */}
                 <TitleSearchPicker
                   editingMember={editingMemberKey ? collectionMembers.find((m) => m.key === editingMemberKey) ?? null : null}
+                  initialQuery={pendingSuggestionQuery ?? undefined}
                   totalDiscCount={totalDiscCountNumber}
                   onAdd={(member) => {
                     userManagedMembersRef.current = true;
@@ -2782,10 +3162,12 @@ export default function ConfirmScreen({
                       prev.some((m) => m.key === member.key) ? prev.map((m) => (m.key === member.key ? member : m)) : [...prev, member]
                     );
                     setEditingMemberKey(null);
+                    setPendingSuggestionQuery(null);
                     setShowTitleSearchPicker(false);
                   }}
                   onCancel={() => {
                     setEditingMemberKey(null);
+                    setPendingSuggestionQuery(null);
                     setShowTitleSearchPicker(false);
                   }}
                   initialFormat={collectionMembers.length > 0 ? collectionMembers[collectionMembers.length - 1].format : format}
@@ -2819,7 +3201,19 @@ export default function ConfirmScreen({
               <SummaryRow
                 label="Format, region & animation"
                 value={[format, [...diskRegions].join(" / "), steelbook ? "Steelbook" : ""].filter(Boolean).join(", ")}
-                missing={collectionMissingNow.includes("Format") || collectionMissingNow.includes("Disk Region")}
+                // Animation/Live Action red-highlighted the moment it's blank (added
+                // 2026-09-30, per the user's explicit request) - NOT added to
+                // getMissingCollectionFields, so it never blocks Confirm: a box set can
+                // genuinely mix animated and live-action titles, so there's no single
+                // "correct" shared answer to force here the way there is for a single title.
+                // Left blank, the confirm route falls back to what the members themselves
+                // resolved to (unanimous value, or "Live Action/Animation Hybrid" if they
+                // differ), with "n/a" only as a last resort if that itself can't produce one.
+                missing={
+                  collectionMissingNow.includes("Format") ||
+                  collectionMissingNow.includes("Disk Region") ||
+                  !animationOrLiveAction.trim()
+                }
                 expanded={openRow === "format"}
                 onPress={() => collectionToggleRow("format")}
               >
@@ -2980,14 +3374,15 @@ export default function ConfirmScreen({
         <View style={styles.section}>
           <Text style={styles.label}>Your scanned item</Text>
           <Image
-            source={scannedImageSource}
+            source={{ uri: scannedImageSource.uri, headers: scannedImageSource.headers }}
             style={[styles.scannedItemImage, { aspectRatio: scannedImageAspectRatio }]}
             resizeMode="contain"
+            onError={() => setScannedImageSourceIndex((i) => i + 1)}
           />
           <Text style={styles.hint}>
-            Compare this against the candidates below - it's a photo of the actual listing, not a
-            generic poster, so it's the best way to confirm the specific release. Shown auto-cropped
-            (same crop that gets saved) - if it's cropped wrong, that's worth flagging.
+            {scannedImageSource.isCoverPhoto
+              ? "Your own front cover photo from this scan - this is what gets saved as the case image. Compare it against the candidates below to confirm the specific release. If it's cropped wrong, that's worth flagging."
+              : "Compare this against the candidates below - it's a photo of the actual listing, not a generic poster, so it's the best way to confirm the specific release. Shown auto-cropped (same crop that gets saved) - if it's cropped wrong, that's worth flagging."}
           </Text>
         </View>
       )}
@@ -3006,11 +3401,14 @@ export default function ConfirmScreen({
         <View style={styles.section}>
           <Text style={styles.label}>Matched by cover photo</Text>
           <View style={[styles.posterCard, styles.posterCardSelected, styles.autoMatchCard]}>
-            {autoMatchedCandidate.Poster && autoMatchedCandidate.Poster !== "N/A" ? (
+            {autoMatchedCandidate.Poster &&
+            autoMatchedCandidate.Poster !== "N/A" &&
+            !posterLoadFailed.has(autoMatchedCandidate.imdbID) ? (
               <Image
                 source={{ uri: autoMatchedCandidate.Poster }}
                 style={styles.posterImage}
                 resizeMode="cover"
+                onError={() => markPosterLoadFailed(autoMatchedCandidate.imdbID)}
               />
             ) : (
               <View style={[styles.posterImage, styles.posterPlaceholder]}>
@@ -3248,7 +3646,9 @@ export default function ConfirmScreen({
       </View>
           </>
         );
-        const setSfCount = (n: number) => setSpecialFeaturesDiscCount(String(Math.max(1, n)));
+        const maxSpecialFeaturesDiscCount = Math.max(0, (parseInt(discCount, 10) || 1) - 1);
+        const setSfCount = (n: number) =>
+          setSpecialFeaturesDiscCount(String(Math.min(maxSpecialFeaturesDiscCount, Math.max(0, n))));
         const discsNode = (
           <>
                 <View style={styles.section}>
@@ -3307,7 +3707,11 @@ export default function ConfirmScreen({
             <View style={styles.section}>
               <Text style={styles.label}>Genre Location (shelf section)</Text>
               <BigChoice
-                options={filterGenreLocationOptions(fieldOptions?.genreLocation ?? [], false, movieOrTv)}
+                options={rankGenreLocationOptions(
+                  filterGenreLocationOptions(fieldOptions?.genreLocation ?? [], false, movieOrTv),
+                  genreSignalForLocationRanking,
+                  4
+                )}
                 value={genreLocation}
                 onChange={setGenreLocation}
               />
@@ -3709,14 +4113,22 @@ export default function ConfirmScreen({
               {locationNode}
             </SummaryRow>
             <SummaryRow
-              label="Franchise"
+              label="Franchise & animation"
               value={franchise}
               // Amber, not red (2026-09-24) - a blank Franchise is very often genuinely
               // correct (most films aren't part of one), same reasoning
               // getMissingRequiredFields's own comment gives for never hard-requiring it - but
               // still worth a glance since it's easy to forget to check, per the user's own
-              // request.
+              // request. Suppressed (SummaryRow ignores `notable` once `missing` is true) the
+              // moment Animation/Live Action itself is unconfirmed below - that's the more
+              // urgent signal for this same row.
               notable={!franchise.trim()}
+              // Red (added 2026-09-30, per the user's explicit request): unlike Franchise,
+              // Animation/Live Action always has a real answer, so once OMDB/TMDb hasn't
+              // confirmed Live Action, a blank value here is genuinely missing data - see
+              // getMissingRequiredFields's own matching comment. This is a hard block (also in
+              // missingNow), not just a visual warning, per the user's own explicit choice.
+              missing={missingNow.includes("Animation / Live Action")}
               expanded={openRow === "franchise"}
               onPress={() => toggleRow("franchise")}
             >
@@ -3725,6 +4137,10 @@ export default function ConfirmScreen({
             <SummaryRow
               label="Release name & notes"
               value={[releaseNameMatchesTitle ? "" : releaseName, releaseVariantNote, caseNotes].filter((v) => v.trim()).join("; ") || "Same as Title"}
+              // Flags a still-unconfirmed cover-photo-derived release name (added 2026-09-29,
+              // per the user's own explicit request) - amber until the user taps in and either
+              // confirms or edits it, since a vision misread of an edition name is a real risk.
+              notable={releaseNameFromCoverVision}
               expanded={openRow === "release"}
               onPress={() => toggleRow("release")}
             >
@@ -3832,6 +4248,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   categoryWarningText: { color: "#fde68a", fontSize: 13 },
+  // Same pill shape as MultiSelectChips' own chip, but blue-accented rather than a plain
+  // toggle - this one is an action (tap to search/add), not a selection state.
+  suggestionChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#38bdf8",
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  suggestionChipText: { color: "#38bdf8" },
   // Small inline poster thumbnail for a Collection member row in the running "Titles in this
   // set" list - added 2026-09-20, deliberately much smaller than the full candidate poster
   // cards above, since this list can grow long (a real box set can hold a dozen+ titles).

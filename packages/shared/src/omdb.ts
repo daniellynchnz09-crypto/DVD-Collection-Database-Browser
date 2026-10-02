@@ -13,6 +13,17 @@ export interface OmdbSearchCandidate {
   // used to auto-narrow anything, since it's the disc's own case, not this listing's text,
   // that would say which cut is actually in hand.
   Runtime?: string;
+  // Only ever populated by matchClassicWhoSerial (packages/backend/src/classicWhoSerials.ts)
+  // for a classic-era (1963-1989) Doctor Who serial resolved via the cached
+  // classic_who_serial_index - the matched serial's own season/episode-count. Used client-
+  // side (ConfirmScreen.tsx) to sharpen the movie_or_tv guess to "TV Series" rather than the
+  // generic OMDB "episode"-Type guess of "TV Episode" (a classic serial is "a selection of TV
+  // episodes", per the user's own words, not a single one), and to pre-fill Season No./
+  // Episode Count once the candidate is selected - never for an ordinary OMDB match.
+  // missingEpisodeCount (added 2026-10-01) additionally drives an animated-reconstruction
+  // prefill for Animation/Live Action - see classicWhoSerials.ts and 0042_add_classic_who_
+  // missing_episode_count.sql.
+  classicWhoSerial?: { season: number; episodeCount: number; missingEpisodeCount: number };
 }
 
 export interface OmdbDetail {

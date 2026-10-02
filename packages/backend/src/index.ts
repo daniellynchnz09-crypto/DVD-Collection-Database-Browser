@@ -5,6 +5,7 @@ export * from "./caseImageStorage";
 export * from "./posterImageStorage";
 export * from "./coverStagingStorage";
 export * from "./coverVision";
+export * from "./classicWhoSerials";
 export * from "./titleTextSearch";
 export * from "./imageCrop";
 export * from "./posterMatch";

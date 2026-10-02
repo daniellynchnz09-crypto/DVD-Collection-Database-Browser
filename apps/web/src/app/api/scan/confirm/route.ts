@@ -9,8 +9,10 @@ import {
   buildColumnIndexes,
   buildSheetRowFromTitle,
   cleanFreeText,
+  deriveDocumentaryValue,
   inferDepictedEraStart,
   normalizeAnimationOrLiveAction,
+  normalizeDocumentary,
   normalizeDiscCondition,
   normalizeFormat,
   isValidNzRating,
@@ -23,8 +25,10 @@ import {
   parseOmdbRuntimeMins,
 } from "@danflix/shared";
 import {
+  CLASSIC_WHO_SERIES_IMDB_ID,
   deleteStagedCoverPhotos,
   fetchTmdbFieldsById,
+  lookupClassicWhoSerialByImdbId,
   lookupRottenTomatoesPage,
   lookupTmdbFields,
   pickFrontCoverPath,
@@ -66,7 +70,14 @@ interface ConfirmEntry {
   overwriteUniqueId?: string;
 }
 
-function omdbTypeToMovieOrTv(type: string | undefined): string {
+/** `seriesID` is only ever present on an "episode"-Type OMDB detail (the parent show's own
+ * imdbID) - checked ahead of the generic Type mapping below so a classic (1963-1989) Doctor
+ * Who serial guesses "TV Series" ("a selection of TV episodes", per the user's own words)
+ * rather than "TV Episode", the correct guess for an ordinary modern show's single-episode
+ * disc. Deliberately scoped to just this one show's classic-era id, not a general rule for
+ * every OMDB episode-Type match - see classicWhoSerials.ts's own header comment. */
+function omdbTypeToMovieOrTv(type: string | undefined, seriesID: string | undefined): string {
+  if (seriesID === CLASSIC_WHO_SERIES_IMDB_ID) return "TV Series";
   if (type === "series") return "TV Series";
   if (type === "episode") return "TV Episode";
   return "Movie";
@@ -148,11 +159,20 @@ function mergeOmdbAndTmdbGenres(omdbGenres: string[], tmdbGenres: string[]): str
   return merged;
 }
 
+// The user's own dedicated Doctor Who shelf (currently Doctor Who only, nothing else) -
+// ordered by real release order rather than alphabetically, same idea as the "history
+// document" branch below being ordered by depicted_era_start. A single exact-match genre_
+// location check, not a general franchise-detection rule, since this shelf doesn't hold
+// anything else right now - if the user ever puts another TV sci-fi franchise on it too,
+// this will need generalizing past a plain title-text sort for whatever isn't Doctor Who.
+const WHO_SHELF_GENRE_LOCATION = "BOX TV Sci-Fi";
+
 async function computeShelfLocation(
   supabase: SupabaseClient,
   genreLocation: string | null | undefined,
   newTitleName: string,
   newEraStart: number | null,
+  newWhoShelfOrder: number | null,
   excludeUniqueId: string
 ): Promise<{ before: string | null; after: string | null }> {
   if (!genreLocation) return { before: null, after: null };
@@ -166,17 +186,20 @@ async function computeShelfLocation(
   // put a box set inside another box set."
   const { data: siblings } = await supabase
     .from("titles")
-    .select("title, depicted_era_start")
+    .select("title, depicted_era_start, who_shelf_order")
     .eq("genre_location", genreLocation)
     .eq("title_in_a_collection", false)
     .neq("unique_id", excludeUniqueId);
   if (!siblings || siblings.length === 0) return { before: null, after: null };
 
   const isHistoryDoc = /history document/i.test(genreLocation);
+  const isWhoShelf = genreLocation === WHO_SHELF_GENRE_LOCATION;
   const sorted = [...siblings].sort((a, b) =>
     isHistoryDoc
       ? (a.depicted_era_start ?? Infinity) - (b.depicted_era_start ?? Infinity)
-      : a.title.localeCompare(b.title)
+      : isWhoShelf
+        ? (a.who_shelf_order ?? Infinity) - (b.who_shelf_order ?? Infinity)
+        : a.title.localeCompare(b.title)
   );
 
   let before: string | null = null;
@@ -184,7 +207,9 @@ async function computeShelfLocation(
   for (const sibling of sorted) {
     const isBeforeNew = isHistoryDoc
       ? (sibling.depicted_era_start ?? Infinity) <= (newEraStart ?? Infinity)
-      : sibling.title.localeCompare(newTitleName) <= 0;
+      : isWhoShelf
+        ? (sibling.who_shelf_order ?? Infinity) <= (newWhoShelfOrder ?? Infinity)
+        : sibling.title.localeCompare(newTitleName) <= 0;
     if (isBeforeNew) {
       before = sibling.title;
     } else {
@@ -375,6 +400,15 @@ export async function POST(request: Request) {
     existingLastWatchedDate: string | null;
   }
   const built: BuiltEntry[] = [];
+  // A Collection scan submits every member with the *same* case_image_url (the box's own
+  // listing photo, inherited from the header - individual titles in a box set have no cover
+  // photo of their own to scan). Without this cache, the loop below would independently
+  // re-fetch and re-upload that identical external image once per member, leaving N
+  // byte-for-byte duplicate files in Storage for one box set (confirmed live, 2026-09-29 -
+  // Universal Classic Monsters' 9 members and header all shared one identical eTag). Keyed by
+  // source URL, scoped to just this one confirm request/loop - reused across entries only
+  // when they genuinely share the same source image, never across unrelated scans.
+  const uploadedCaseImagePathByUrl = new Map<string, string | null>();
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
@@ -383,10 +417,25 @@ export async function POST(request: Request) {
 
     let omdbFields: Record<string, unknown> = {};
     let synopsis: string | null = null;
+    // Only ever set for a classic (1963-1989) Doctor Who serial - see computeShelfLocation's
+    // own "BOX TV Sci-Fi" branch below and 0041_add_who_shelf_order.sql.
+    let whoShelfOrder: number | null = null;
     if (entry.imdbId) {
       const detail = await omdbGetById(entry.imdbId);
       if (detail) {
         synopsis = detail.Plot;
+
+        // Only set for a genuine classic-serial match (entry.imdbId is one of that serial's
+        // own episode ids in classic_who_serial_index) - null for a whole-season box set,
+        // which was never indexed by individual episode id at all, so this naturally never
+        // fires for one. Reused below for the release_date carve-out.
+        let classicWhoSerialMatch: Awaited<ReturnType<typeof lookupClassicWhoSerialByImdbId>> = null;
+        if (detail.seriesID === CLASSIC_WHO_SERIES_IMDB_ID) {
+          classicWhoSerialMatch = await lookupClassicWhoSerialByImdbId(supabase, entry.imdbId);
+          if (classicWhoSerialMatch) {
+            whoShelfOrder = classicWhoSerialMatch.season * 1000 + classicWhoSerialMatch.storyOrderInSeason;
+          }
+        }
 
         // An "episode"-Type OMDb match is this project's classic-serial convention (one row
         // per serial, e.g. a Doctor Who story) - but release_date/imdb_page must always
@@ -415,12 +464,22 @@ export async function POST(request: Request) {
         // the confirm screen wins when given (e.g. reclassifying an "episode"-Type OMDb match
         // to "Serial"), falling back to OMDb's Type-based guess otherwise - same precedence
         // the final `title.movie_or_tv` below resolves with.
-        const resolvedMovieOrTv = asString(manual.movie_or_tv) || omdbTypeToMovieOrTv(detail.Type);
+        const resolvedMovieOrTv = asString(manual.movie_or_tv) || omdbTypeToMovieOrTv(detail.Type, detail.seriesID);
 
         omdbFields = {
           title: detail.Title,
-          movie_or_tv: omdbTypeToMovieOrTv(detail.Type),
-          release_date: parseOmdbReleaseDate(showLevelDetail.Released),
+          movie_or_tv: omdbTypeToMovieOrTv(detail.Type, detail.seriesID),
+          // Deliberate carve-out from the "release_date reflects the show, not one specific
+          // serial" rule above, per the user's own explicit instruction (2026-10-01) - scoped
+          // to an individual classic serial ONLY, never a whole-season box set (which
+          // `classicWhoSerialMatch` is always null for, so falls straight through to the
+          // general showLevelDetail rule unchanged). `detail.Released` here is the confirmed
+          // candidate's own OMDb detail (the serial's own first episode, e.g. "14 Jan 1967"
+          // for The Underwater Menace), fetched moments ago - before `showLevelDetail` above
+          // replaced it with the whole show's own 1963 series premiere date.
+          release_date: parseOmdbReleaseDate(
+            classicWhoSerialMatch ? detail.Released : showLevelDetail.Released
+          ),
           running_time_mins: resolvedMovieOrTv === "TV Series" ? null : parseOmdbRuntimeMins(detail.Runtime),
           genre: mergeOmdbAndTmdbGenres(
             detail.Genre?.split(",").map((g) => g.trim()).filter(Boolean) ?? [],
@@ -546,15 +605,26 @@ export async function POST(request: Request) {
     // when the upload fails (transient fetch/network error) rather than writing `null` - an
     // Overwrite must never silently erase a previously-good case image just because this one
     // re-fetch attempt didn't work.
-    // Caches the barcode listing's own product photo into Storage for the future web app's
-    // DVD Pages (0026_add_case_image_path.sql) - unconditional on every confirm (including an
-    // Overwrite), since a fresh photo of the user's actual physical copy is always
-    // authoritative over whatever was there before. Deliberately NOT included in `title` below
-    // when the upload fails (transient fetch/network error) rather than writing `null` - an
-    // Overwrite must never silently erase a previously-good case image just because this one
-    // re-fetch attempt didn't work.
+    //
+    // Reuses an already-uploaded path for the same source URL (uploadedCaseImagePathByUrl,
+    // declared above the loop) instead of re-uploading - every member of a Collection scan
+    // submits the identical case_image_url (the box's own listing photo, since individual
+    // titles in a box set have no cover photo of their own), so without this a 9-member box
+    // set left 9 byte-for-byte duplicate files in Storage, one per member's own uuid folder.
+    // The first entry to use a given URL still gets its own `titles/{uniqueId}/case.jpg`
+    // upload as before; every later entry sharing that same URL points at that same stored
+    // path instead - a deliberate, documented exception to the usual "own uuid, own folder"
+    // convention, specifically for this shared-cover case.
     const caseImageUrl = asString(manual.case_image_url);
-    const caseImagePath = caseImageUrl ? await uploadCaseImage(supabase, `titles/${uniqueId}/case.jpg`, caseImageUrl) : null;
+    let caseImagePath: string | null = null;
+    if (caseImageUrl) {
+      if (uploadedCaseImagePathByUrl.has(caseImageUrl)) {
+        caseImagePath = uploadedCaseImagePathByUrl.get(caseImageUrl)!;
+      } else {
+        caseImagePath = await uploadCaseImage(supabase, `titles/${uniqueId}/case.jpg`, caseImageUrl);
+        uploadedCaseImagePathByUrl.set(caseImageUrl, caseImagePath);
+      }
+    }
     // A specific CUT of the film ("the Final Cut," "Director's Cut," ...), detected
     // client-side from the barcode's own listing text (packages/shared/src/titleParsing.ts's
     // splitCutVariantTitle) - added 2026-09-18 per the user's explicit instruction: a cut
@@ -599,7 +669,12 @@ export async function POST(request: Request) {
         ((manual.genre ?? omdbFields.genre ?? []) as string[]).some((g) => /^animation$/i.test(g.trim()))
           ? "Animation"
           : "Live Action"),
-      documentary: manual.documentary ?? "n",
+      documentary:
+        normalizeDocumentary(asString(manual.documentary)) ??
+        deriveDocumentaryValue(
+          (manual.genre ?? omdbFields.genre ?? []) as string[],
+          (manual.movie_or_tv ?? omdbFields.movie_or_tv ?? "Movie") as string
+        ),
       is_collection: manual.is_collection ?? false,
       name_of_collection: manual.name_of_collection ?? null,
       title_in_a_collection: manual.title_in_a_collection ?? false,
@@ -634,6 +709,7 @@ export async function POST(request: Request) {
       depicted_era_start:
         manual.depicted_era_start ??
         inferDepictedEraStart(String(manual.title ?? omdbFields.title ?? ""), synopsis),
+      who_shelf_order: whoShelfOrder,
       depicted_era_label: cleanFreeText(asString(manual.depicted_era_label)),
       disc_condition: normalizeDiscCondition(asString(manual.disc_condition)),
       case_notes: cleanFreeText(asString(manual.case_notes)),
@@ -727,12 +803,18 @@ export async function POST(request: Request) {
       // titles becomes the existing "Live Action/Animation Hybrid" value.
       if (normalizeAnimationOrLiveAction(asString((headerBuilt.entry.manualFields ?? {}).animation_or_live_action)) == null) {
         const memberStyles = memberBuilts.map((b) => b.title.animation_or_live_action as string);
-        const allSame = memberStyles.every((v) => v === memberStyles[0]);
+        const allSame = memberStyles.length > 0 && memberStyles.every((v) => v === memberStyles[0]);
         headerBuilt.title.animation_or_live_action = allSame
           ? memberStyles[0]
-          : memberStyles.some((v) => v !== "Live Action")
-            ? "Live Action/Animation Hybrid"
-            : "Live Action";
+          : memberStyles.length === 0
+            // Last resort only (added 2026-09-30, per the user's explicit request) - every
+            // real member always resolves to a concrete value (never null, see the per-title
+            // default above), so this only fires if a collection were somehow submitted with
+            // no members at all.
+            ? "n/a"
+            : memberStyles.some((v) => v !== "Live Action")
+              ? "Live Action/Animation Hybrid"
+              : "Live Action";
       }
       const anyMemberSpecialFeatures = memberBuilts.some((b) => b.title.special_features === true);
       headerBuilt.title.special_features = headerBuilt.title.special_features === true || anyMemberSpecialFeatures;
@@ -797,6 +879,7 @@ export async function POST(request: Request) {
         title.genre_location as string | null,
         title.title as string,
         title.depicted_era_start as number | null,
+        title.who_shelf_order as number | null,
         uniqueId
       );
     }
@@ -837,6 +920,7 @@ export async function POST(request: Request) {
     submittedEntries: entries.map((e) => ({ manualFields: e.manualFields, overwriteUniqueId: e.overwriteUniqueId })),
     createdTitleIds: createdIds,
   });
+
 
 
   return NextResponse.json({

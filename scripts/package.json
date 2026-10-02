@@ -10,6 +10,11 @@
     "refresh-tmdb": "tsx src/refresh-tmdb.ts",
     "refresh-tmdb-title-index": "tsx src/refresh-tmdb-title-index.ts",
     "refresh-tmdb-tv-title-index": "tsx src/refresh-tmdb-tv-title-index.ts",
+    "build-classic-who-serial-index": "tsx src/build-classic-who-serial-index.ts",
+    "backfill-recrop-case-images": "tsx src/backfill-recrop-case-images.ts",
+    "backfill-doctor-who-shelf-order": "tsx src/backfill-doctor-who-shelf-order.ts",
+    "backfill-classic-who-missing-episodes": "tsx src/backfill-classic-who-missing-episodes.ts",
+    "backfill-classic-who-serial-release-dates": "tsx src/backfill-classic-who-serial-release-dates.ts",
     "find-missing-rotten-tomatoes": "tsx src/find-missing-rotten-tomatoes.ts"
   },
   "dependencies": {

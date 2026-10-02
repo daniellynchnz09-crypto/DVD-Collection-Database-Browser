@@ -1,0 +1,20 @@
+-- Backs the Doctor-Who-specific shelf-ordering rule in computeShelfLocation
+-- (apps/web/src/app/api/scan/confirm/route.ts): the user's "BOX TV Sci-Fi" shelf (currently
+-- Doctor Who only) is ordered by real release order rather than alphabetically, the same way
+-- a "history document" genre_location is already ordered by depicted_era_start rather than
+-- title text. `who_shelf_order` is a single sortable position per title:
+--   - -1 for a multi-era "Assorted" compilation (e.g. "Doctor Who Lost in Time") - always
+--     first, per the user's own explicit instruction.
+--   - season*1000 + story_order_in_season for an individual classic-era serial disc (see
+--     0040_add_classic_who_story_order.sql) - keeps every season's own serials in broadcast
+--     order and groups them together.
+--   - season*1000 + 999 for a whole-season box set disc - sorts directly AFTER every one of
+--     that season's own individual serials (i.e. "directly before" the box set, from an
+--     individual serial's point of view), per the user's own explicit instruction.
+--   - 100000 + season*1000 for a modern-era (2005+) entry - always after every classic-era
+--     entry regardless of numeric season_no, since the modern show restarts its own season
+--     numbering from 1 and would otherwise collide with the classic show's same-numbered
+--     season.
+-- Null for anything else (a non-Doctor-Who title, or a Doctor Who release this scheme can't
+-- confidently place) - computeShelfLocation falls back to alphabetical among those.
+alter table titles add column who_shelf_order real;

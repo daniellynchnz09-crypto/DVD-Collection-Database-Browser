@@ -25,8 +25,8 @@
 --
 -- Deliberately split from the private-only tables (amazon_provider_quota,
 -- pending_value_review, title_price_observations - see
--- 0033_add_estimated_value_schema_grants.sql) rather than one combined file, mirroring how
--- every other Estimated-Value-only migration (0021, 0024, 0025, 0029) is already excluded from
+-- migration 0033, private-only) rather than one combined file, mirroring how
+-- every other Estimated Value only migration (0021, 0024, 0025, 0029) is already excluded from
 -- the public repo by filename in scripts/src/sanitize-public-repo.ts - this file's own table
 -- list is exactly what both live projects actually have in common.
 

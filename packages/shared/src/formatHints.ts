@@ -206,22 +206,53 @@ export function mapRegionCountryToCode(regionText: string, format: string): stri
   return null;
 }
 
+/** True when `regionText` names EVERY code in the given scheme (Blu-ray's A/B/C, DVD's 1-6) -
+ * a disc genuinely coded for every region is region-free in substance even when the text
+ * enumerates the codes individually rather than using free-region wording (e.g. a real
+ * Blu-ray back cover's combined region badge - three joined hexagons each showing one of
+ * "A"/"B"/"C" together - describes itself this way; found live 2026-09-29 against a real
+ * "Madame Web" disc whose vision-read text only reported the single most legible letter,
+ * "B", out of that three-hexagon cluster, wrongly implying region-B-only). Checked ahead of
+ * the single-literal-code match below so a genuine enumeration of every code doesn't get
+ * truncated down to just the first one found. */
+function listsEveryRegionCode(regionText: string, isBluRay: boolean): boolean {
+  const codes = isBluRay ? ["A", "B", "C"] : ["1", "2", "3", "4", "5", "6"];
+  const pattern = isBluRay ? /\b[A-Ca-c]\b/g : /\b[1-6]\b/g;
+  const found = new Set<string>();
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(regionText))) found.add(match[0].toUpperCase());
+  return codes.every((code) => found.has(code));
+}
+
 /** Resolves arbitrary region text (a listing's own wording, or an LLM extraction's "region"
- * field - see listingTextExtract.ts) down to a real region code/"All" for the given format,
- * whether that text is already a literal code ("Region 2", "B"), region-free wording, or a
- * country/market name ("UK", "China") - trying each in that order. Returns null when nothing
- * usable can be found, same "never a guess" convention as the rest of this file. */
-export function resolveDiskRegionText(regionText: string, format: string): string | null {
-  if (REGION_FREE_WORDS.test(regionText)) return "All";
+ * field - see listingTextExtract.ts) down to real region code(s)/"All" for the given format,
+ * whether that text is already a literal code ("Region 2", "B"), region-free wording, every
+ * code in the scheme enumerated individually ("A, B, C"), or a country/market name ("UK",
+ * "China") - trying each in that order. A disc is very often coded for more than one region
+ * at once (e.g. a combined "Region 2/4" release) - found live 2026-10-02: a real scan whose
+ * region icon plainly showed both 2 and 4 only ever got "4" added, because the old version of
+ * this function matched the literal-code pattern WITHOUT the `g` flag, so `.match()` returned
+ * only the first (or in this case, apparently only) capture the regex engine reported before
+ * stopping - every literal code actually present is now collected, not just one. Returns null
+ * when nothing usable can be found at all, same "never a guess" convention as the rest of this
+ * file - otherwise always an array (even a single code comes back as a one-element array), so
+ * every caller treats "one region" and "several regions" the same way. */
+export function resolveDiskRegionText(regionText: string, format: string): string[] | null {
+  if (REGION_FREE_WORDS.test(regionText)) return ["All"];
   const normalized = format.toLowerCase();
   if (isRegionFreeFormat(normalized)) return null;
 
   const isBluRay = /blu-?ray/.test(normalized);
-  const literalCodePattern = isBluRay ? /\b[A-Ca-c]\b/ : /\b[1-6]\b/;
-  const literalMatch = regionText.match(literalCodePattern);
-  if (literalMatch) return literalMatch[0].toUpperCase();
+  if (listsEveryRegionCode(regionText, isBluRay)) return ["All"];
 
-  return mapRegionCountryToCode(regionText, format);
+  const literalCodePattern = isBluRay ? /\b[A-Ca-c]\b/g : /\b[1-6]\b/g;
+  const literalCodes = new Set<string>();
+  let literalMatch: RegExpExecArray | null;
+  while ((literalMatch = literalCodePattern.exec(regionText))) literalCodes.add(literalMatch[0].toUpperCase());
+  if (literalCodes.size > 0) return [...literalCodes];
+
+  const countryCode = mapRegionCountryToCode(regionText, format);
+  return countryCode ? [countryCode] : null;
 }
 
 export function extractDiskRegionHint(text: string, format: string): string | null {

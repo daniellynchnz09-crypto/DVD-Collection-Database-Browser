@@ -169,6 +169,7 @@ export default function TitleSearchPicker({
   discFormatLookup,
   impliedWatched,
   impliedWatchedDisc,
+  initialQuery,
 }: {
   /** Fires for both a brand-new title and a saved edit - a saved edit hands back the SAME `key`
    * it was opened with, which ConfirmScreen uses to replace that member in place. */
@@ -206,8 +207,15 @@ export default function TitleSearchPicker({
    * below, which hides itself entirely rather than just defaulting when these are true. */
   impliedWatched: boolean;
   impliedWatchedDisc: boolean;
+  /** Pre-fills and auto-runs the search the moment this picker opens fresh (never applies
+   * alongside `editingMember`, which already seeds its own known values) - added 2026-09-30 for
+   * ConfirmScreen's cover-derived member-title suggestion chips, so tapping a chip lands
+   * straight on real candidates to review/pick rather than making the user retype the name the
+   * cover photo already gave. Still just a starting point like every other suggestion on this
+   * screen - the query box stays fully editable if the read was slightly off. */
+  initialQuery?: string;
 }) {
-  const [query, setQuery] = useState(editingMember?.title ?? "");
+  const [query, setQuery] = useState(editingMember?.title ?? initialQuery ?? "");
   const [isCustomDisc, setIsCustomDisc] = useState(false);
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(!!editingMember);
@@ -409,6 +417,16 @@ export default function TitleSearchPicker({
       setSearching(false);
     }
   }
+
+  // Auto-runs the search once, only for a fresh add opened from a suggestion chip
+  // (initialQuery set, no editingMember - an edit already has its own known candidate, nothing
+  // to search for). Mount-only by design, matching this component's own real-world lifecycle:
+  // ConfirmScreen remounts a fresh TitleSearchPicker per modal open (same assumption its own
+  // editingMember pre-fill already relies on), so this never needs to react to a later change.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (initialQuery && !editingMember) handleSearch();
+  }, []);
 
   function selectCandidate(c: OmdbSearchCandidate) {
     setSelectedImdbId(c.imdbID);

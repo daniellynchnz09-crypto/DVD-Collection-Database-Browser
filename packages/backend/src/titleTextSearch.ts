@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { omdbSearch, splitCutVariantTitle, type OmdbSearchCandidate } from "@danflix/shared";
+import { matchClassicWhoSerial } from "./classicWhoSerials";
 import { correctSpelling } from "./spellcheck";
 import { fuzzySearchTitleIndex, resolveTmdbCandidatesByIds, searchTmdbMovies } from "./tmdb";
 
@@ -63,6 +64,12 @@ export async function searchTitleCandidates(
   options?: TitleTextSearchOptions
 ): Promise<OmdbSearchCandidate[]> {
   const skipCorrections = options?.skipCorrections === true;
+
+  // Classic-era (1963-1989) Doctor Who serials are never findable through the generic
+  // search below at all (see classicWhoSerials.ts's own header comment) - checked first,
+  // against the raw typed text, and short-circuits the rest of this function when it hits.
+  const classicWhoMatch = await matchClassicWhoSerial(supabase, typedTitle).catch(() => []);
+  if (classicWhoMatch.length > 0) return classicWhoMatch;
 
   // Same "search the base film title, not a specific cut/edition's own text" reasoning as
   // scanResolver.ts's automatic path (see splitCutVariantTitle's own comment) - a typed/cover-

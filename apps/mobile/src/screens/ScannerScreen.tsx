@@ -1,20 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
-import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cancelScanSession, finishScanSession, uploadCoverPhoto } from "../lib/scanApi";
 import { clearConfirmDraft } from "../lib/confirmDrafts";
 import { createScanSessionId } from "../lib/scanSession";
-import { computeCoverCropRegion } from "../lib/coverGuide";
-import CoverCaptureGuide from "../components/CoverCaptureGuide";
 import OfflineBanner from "../components/OfflineBanner";
-
-// Manual-tap countdown before a cover photo is actually captured - visually the same "3...2...1"
-// style the barcode scanner used to show automatically, but triggered by a deliberate "Capture"
-// tap here rather than a hold-steady detector, since there's no automatic "aligned" signal to
-// key off (see this screen's own header comment).
-const COVER_COUNTDOWN_SECONDS = 3;
 
 interface ScanSession {
   sessionId: string;
@@ -26,7 +17,7 @@ function freshSession(): ScanSession {
   return { sessionId: createScanSessionId(), barcode: null, stagedCoverPaths: [] };
 }
 
-type CaptureMode = "scanning" | "positioningCover" | "coverCountdown";
+type CaptureMode = "scanning" | "positioningCover";
 
 /**
  * Cover-photo scanning (2026-09-28) turned this screen from "instantly queue whatever barcode
@@ -42,14 +33,21 @@ type CaptureMode = "scanning" | "positioningCover" | "coverCountdown";
  *
  * Cover capture ("Scan Cover") is a repeatable mini-flow within the same session - tap it once
  * for the front, once for the back, in either order, as many times as needed: `captureMode`
- * swaps the whole bottom overlay to a static alignment guide (CoverCaptureGuide.tsx) + a manual
- * "Capture" button; tapping it starts a plain timer countdown, then takes the photo, crops it to
- * the guide's own fixed rectangle (coverGuide.ts - deterministic, content-blind, not a smart
- * crop), and uploads it to temporary staging (uploadCoverPhoto). The screen never asks which
+ * swaps the whole bottom overlay to a plain "Capture"/"Back" button pair (no on-screen framing
+ * guide any more - see below); tapping Capture takes the photo immediately and uploads the raw,
+ * uncropped bytes straight to temporary staging (uploadCoverPhoto). The screen never asks which
  * side was just photographed - front/back classification happens automatically, server-side,
  * during resolution (coverVision.ts), never at capture time. While `captureMode !== "scanning"`,
  * `handleBarcodeScanned` short-circuits so the two capture modes never race on the same
  * CameraView instance.
+ *
+ * Cropping moved server-side entirely as of 2026-09-29 (packages/backend/src/scanResolver.ts's
+ * analyzeStagedCoverPhotos, via coverVision.ts's detectCoverBoundingBox) - the previous
+ * client-side fixed-guide-rectangle crop (CoverCaptureGuide.tsx + coverGuide.ts, now deleted)
+ * only ever trimmed a thin, content-blind border regardless of where the case actually was in
+ * frame, which the user found "obviously isn't working" once a real photo showed plenty of
+ * background surviving the crop. The on-screen guide overlay was removed outright rather than
+ * kept as a non-functional aiming aid, per the user's own explicit choice.
  *
  * "Done" (enabled once a barcode or any staged cover exists) finishes the whole session in one
  * call (finishScanSession) and resets session state. "Cancel Session" explicitly cleans up any
@@ -61,6 +59,15 @@ type CaptureMode = "scanning" | "positioningCover" | "coverCountdown";
  * otherwise silently reset the cooldown on every trip to review scans. The check now runs
  * at "Capture Barcode" tap time rather than at Done, since it's about the same barcode being
  * re-captured within a manual gesture, not about session completion.
+ *
+ * Focus: `expo-camera` (plain Expo Go, no native module) exposes no manual focus-distance/lens
+ * API on either platform, only an on/off `autofocus` toggle - and Android's "off" isn't a no-op,
+ * it actively freezes whatever focus distance the lens already had (`cancelFocusAndMetering`).
+ * `focusLocked` drives that toggle: continuous autofocus (`"on"`) runs the whole time the user
+ * is lining a shot up, then flips to locked (`"off"`) for a brief 250ms pause right before
+ * `takePictureAsync` fires, so autofocus can't hunt for a new distance at the exact moment of
+ * exposure. It resets back to `"on"` once the capture finishes (success or failure) so the next
+ * positioning phase - or plain barcode scanning - gets continuous autofocus again.
  */
 export default function ScannerScreen({
   onGoToPending,
@@ -78,23 +85,9 @@ export default function ScannerScreen({
   const [detectedBarcode, setDetectedBarcode] = useState<string | null>(null);
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const [captureMode, setCaptureMode] = useState<CaptureMode>("scanning");
-  const [coverCountdown, setCoverCountdown] = useState(COVER_COUNTDOWN_SECONDS);
   const [coverBusy, setCoverBusy] = useState(false);
+  const [focusLocked, setFocusLocked] = useState(false);
   const busyRef = useRef(false);
-
-  // Ticks the cover-capture countdown down once a second, then actually takes the photo once
-  // it reaches zero. A plain timer, not tied to any live "is it aligned" signal - see this
-  // screen's own header comment on why there's no automatic detection to key off here.
-  useEffect(() => {
-    if (captureMode !== "coverCountdown") return;
-    if (coverCountdown <= 0) {
-      handleCaptureCoverPhoto();
-      return;
-    }
-    const timeout = setTimeout(() => setCoverCountdown((n) => n - 1), 1000);
-    return () => clearTimeout(timeout);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [captureMode, coverCountdown]);
 
   if (!permission) {
     return <View style={styles.container} />;
@@ -132,12 +125,6 @@ export default function ScannerScreen({
 
   function handleCancelCoverCapture() {
     setCaptureMode("scanning");
-    setCoverCountdown(COVER_COUNTDOWN_SECONDS);
-  }
-
-  function handleStartCoverCountdown() {
-    setCoverCountdown(COVER_COUNTDOWN_SECONDS);
-    setCaptureMode("coverCountdown");
   }
 
   async function handleCaptureCoverPhoto() {
@@ -147,24 +134,25 @@ export default function ScannerScreen({
     }
     setCoverBusy(true);
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.9 });
+      // Lock focus just before the shutter fires rather than leaving continuous autofocus
+      // running through the capture itself - autofocus can otherwise decide to hunt for a new
+      // focus distance at the exact moment of exposure, blurring an otherwise well-aligned shot.
+      // A short pause gives the native focus-lock time to actually take effect before capturing.
+      setFocusLocked(true);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.9, shutterSound: false, base64: true });
       if (!photo) throw new Error("No photo returned");
+      if (!photo.base64) throw new Error("Capture produced no image data");
 
-      const region = computeCoverCropRegion(photo.width, photo.height);
-      const cropped = await manipulateAsync(photo.uri, [{ crop: region }], {
-        compress: 0.85,
-        format: SaveFormat.JPEG,
-        base64: true,
-      });
-      if (!cropped.base64) throw new Error("Crop produced no image data");
-
-      const { stagedPath } = await uploadCoverPhoto(session.sessionId, cropped.base64, "image/jpeg");
+      const { stagedPath } = await uploadCoverPhoto(session.sessionId, photo.base64, "image/jpeg");
       setSession((prev) => ({ ...prev, stagedCoverPaths: [...prev.stagedCoverPaths, stagedPath] }));
       setLastMessage(`Cover photo captured (${session.stagedCoverPaths.length + 1} this session).`);
     } catch (err) {
       setLastMessage(`Failed to capture cover photo: ${(err as Error).message}`);
     } finally {
       setCoverBusy(false);
+      setFocusLocked(false);
       setCaptureMode("scanning");
     }
   }
@@ -212,6 +200,7 @@ export default function ScannerScreen({
         ref={cameraRef}
         style={styles.camera}
         facing="back"
+        autofocus={focusLocked ? "off" : "on"}
         barcodeScannerSettings={{ barcodeTypes: ["ean13", "upc_a", "upc_e"] }}
         onBarcodeScanned={handleBarcodeScanned}
       />
@@ -267,28 +256,21 @@ export default function ScannerScreen({
           </TouchableOpacity>
         </View>
       ) : (
-        <>
-          <CoverCaptureGuide />
-          <View style={[styles.overlay, { paddingBottom: 20 + insets.bottom }]}>
-            {captureMode === "positioningCover" ? (
-              <>
-                <Text style={styles.hint}>
-                  Line up the front or back cover within the guide, then tap Capture
-                </Text>
-                <TouchableOpacity style={styles.button} onPress={handleStartCoverCountdown}>
-                  <Text style={styles.buttonText}>Capture</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={handleCancelCoverCapture}>
-                  <Text style={styles.buttonText}>Back</Text>
-                </TouchableOpacity>
-              </>
-            ) : (
-              <Text style={styles.countdown}>
-                {coverBusy ? "Capturing..." : `Hold steady... ${coverCountdown}`}
-              </Text>
-            )}
-          </View>
-        </>
+        <View style={[styles.overlay, { paddingBottom: 20 + insets.bottom }]}>
+          <Text style={styles.hint}>Point the camera at the front or back cover, then tap Capture</Text>
+          {coverBusy ? (
+            <Text style={styles.countdown}>Capturing...</Text>
+          ) : (
+            <>
+              <TouchableOpacity style={styles.button} onPress={handleCaptureCoverPhoto}>
+                <Text style={styles.buttonText}>Capture</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.button, styles.cancelButton]} onPress={handleCancelCoverCapture}>
+                <Text style={styles.buttonText}>Back</Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
       )}
     </View>
   );

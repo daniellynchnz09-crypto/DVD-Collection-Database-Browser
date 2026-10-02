@@ -8,7 +8,7 @@
 -- app doesn't just reuse a saved poster instead of hitting OMDB fresh every time.
 --
 -- Deliberately a NEW column, not a reuse of the existing `poster_image_path`
--- (0021_estimated_value.sql) - that one is populated only lazily, as a side effect of the
+-- (migration 0021, private-only) - that one is populated only lazily, as a side effect of the
 -- private-only Estimated Value feature happening to run on a title, into the private-only
 -- `retail-product-images` bucket that doesn't exist at all in the public build. The user
 -- explicitly asked for this to be general-purpose (works the same in both builds), so it

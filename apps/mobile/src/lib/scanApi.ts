@@ -75,6 +75,17 @@ export function getCroppedImageSource(imageUrl: string): { uri: string; headers:
   };
 }
 
+/** Image source for a staged cover photo captured during the scan session (the private
+ * staging bucket has no URL of its own) - see `/api/scan/staged-cover-preview`. Same
+ * secret-in-query-param reasoning as getCroppedImageSource above. */
+export function getStagedCoverImageSource(stagedPath: string): { uri: string; headers: Record<string, string> } {
+  const params = new URLSearchParams({ path: stagedPath, secret: API_SECRET });
+  return {
+    uri: `${API_URL}/api/scan/staged-cover-preview?${params.toString()}`,
+    headers: { "x-scan-secret": API_SECRET },
+  };
+}
+
 export interface ManualPendingScan {
   id: string;
   barcode: null;

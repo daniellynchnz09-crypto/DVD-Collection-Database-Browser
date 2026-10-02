@@ -6,6 +6,7 @@ import PendingScansScreen, { type PendingScan } from "./src/screens/PendingScans
 import ConfirmScreen from "./src/screens/ConfirmScreen";
 import SuccessScreen from "./src/screens/SuccessScreen";
 import OfflineQueueScreen from "./src/screens/OfflineQueueScreen";
+import SubmissionBanner from "./src/components/SubmissionBanner";
 import { subscribeToReconnect } from "./src/lib/network";
 import { getQueuedSubmissions, trySyncOfflineQueue } from "./src/lib/offlineQueue";
 import { hydrateConfirmDrafts } from "./src/lib/confirmDrafts";
@@ -25,11 +26,9 @@ type Screen =
   | { name: "pending" }
   | { name: "confirm"; scan: PendingScan }
   | { name: "offlineQueue" }
-  | {
-      name: "success";
-      shelfLocation: { before: string | null; after: string | null } | null;
-      linkedTitle?: string;
-    };
+  // Just the background save's id (2026-10-03) - SuccessScreen reads its live status/outcome
+  // from backgroundSubmissions.ts rather than receiving a finished result.
+  | { name: "success"; submissionId: string };
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: "scanner" });
@@ -111,20 +110,19 @@ export default function App() {
           {screen.name === "confirm" && (
             <ConfirmScreen
               scan={screen.scan}
-              onConfirmed={({ shelfLocation, linkedTitle }) =>
-                setScreen({ name: "success", shelfLocation, linkedTitle })
-              }
+              onConfirmed={({ submissionId }) => setScreen({ name: "success", submissionId })}
               onBack={() => setScreen({ name: "pending" })}
               onDiscarded={forgetQueued}
             />
           )}
           {screen.name === "success" && (
             <SuccessScreen
-              shelfLocation={screen.shelfLocation}
-              linkedTitle={screen.linkedTitle}
-              onDone={() => setScreen({ name: "scanner" })}
+              submissionId={screen.submissionId}
+              onGoToScanner={() => setScreen({ name: "scanner" })}
+              onGoToPending={() => setScreen({ name: "pending" })}
             />
           )}
+          <SubmissionBanner suppressedSubmissionId={screen.name === "success" ? screen.submissionId : null} />
         </>
       )}
       <StatusBar style="light" />

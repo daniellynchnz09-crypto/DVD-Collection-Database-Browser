@@ -21,9 +21,11 @@ import { detectFormatFromImage } from "./formatVision";
 import { extractListingTextFields, type ListingTextExtraction } from "./listingTextExtract";
 import { recordUpcRateLimit } from "./upcQuota";
 import { getSignedPosterImageUrl } from "./posterImageStorage";
-import { downloadStagedCoverPhoto } from "./coverStagingStorage";
-import { detectCoverFromImage, type StagedCoverAnalysis } from "./coverVision";
+import { downloadStagedCoverPhoto, replaceStagedCoverPhoto } from "./coverStagingStorage";
+import { detectCoverBoundingBox, detectCoverFromImage, detectCoverRotation, type StagedCoverAnalysis } from "./coverVision";
+import { cropImageBufferToBox, rotateImageBuffer } from "./imageCrop";
 import { searchTitleCandidates } from "./titleTextSearch";
+import { matchClassicWhoSerial } from "./classicWhoSerials";
 
 /**
  * One combined pass over an already year-filtered OMDB candidate list that (a) narrows it
@@ -149,7 +151,24 @@ async function withResolvedPoster<
  * and/or back, in whatever order they were captured. A photo that fails to download or that
  * the model can't read anything from is simply skipped - one bad read never blocks the rest
  * of this scan's resolution, same "a cache miss is fine, a bad write isn't" posture as every
- * other vision/lookup call in this pipeline. */
+ * other vision/lookup call in this pipeline.
+ *
+ * Rotate-then-crop-then-analyze, added 2026-09-29: each staged photo is first checked for
+ * whether it needs straightening (detectCoverRotation - the phone was held sideways/upside
+ * down, so the case came out landscape instead of upright portrait) and rotated if so, THEN
+ * checked for where the actual disc case is (detectCoverBoundingBox) against the now-upright
+ * image - the bounding box's percentages only mean anything measured against the orientation
+ * the photo will actually be stored/analyzed in. A separate, earlier pair of Gemini calls from
+ * the text-extraction one below, specifically so the crop is what gets analyzed for
+ * title/format/rating, not the full uncropped photo (the user's own explicit reasoning: other
+ * documents/objects in frame could otherwise confuse the read). Replaces the old client-side
+ * fixed-guide-rectangle crop entirely - ScannerScreen.tsx now uploads the raw, uncropped,
+ * unrotated photo. When either step changes the bytes, the staged file is overwritten in place
+ * with the result (replaceStagedCoverPhoto) so promoteStagedCoverToCaseImage's own, much-later
+ * download of this same path at confirm time gets the rotated/cropped version for free. When
+ * neither step succeeds (no key, network failure, model couldn't tell), the original bytes are
+ * analyzed and staged as-is - a missed rotation/crop degrades to "the old raw-photo behavior",
+ * never a blocked scan. */
 async function analyzeStagedCoverPhotos(
   supabase: SupabaseClient,
   stagedPaths: string[]
@@ -158,7 +177,31 @@ async function analyzeStagedCoverPhotos(
   for (const stagedPath of stagedPaths) {
     const staged = await downloadStagedCoverPhoto(supabase, stagedPath);
     if (!staged) continue;
-    const analysis = await detectCoverFromImage(staged.bytes, staged.contentType);
+
+    let bytes = staged.bytes;
+    let changed = false;
+
+    const rotation = await detectCoverRotation(bytes, staged.contentType);
+    if (rotation) {
+      const rotated = await rotateImageBuffer(bytes, staged.contentType, rotation);
+      if (rotated !== bytes) {
+        bytes = rotated;
+        changed = true;
+      }
+    }
+
+    const box = await detectCoverBoundingBox(bytes, staged.contentType);
+    if (box) {
+      const cropped = await cropImageBufferToBox(bytes, staged.contentType, box);
+      if (cropped !== bytes) {
+        bytes = cropped;
+        changed = true;
+      }
+    }
+
+    if (changed) await replaceStagedCoverPhoto(supabase, stagedPath, bytes, staged.contentType);
+
+    const analysis = await detectCoverFromImage(bytes, staged.contentType);
     if (analysis) analyses.push({ stagedPath, analysis });
   }
   return analyses;
@@ -175,6 +218,35 @@ function pickCoverDerivedTitle(analyses: StagedCoverAnalysis[]): string | null {
     analyses.find((a) => a.analysis.title)?.analysis.title ??
     null
   );
+}
+
+/** A box set's own member-title list (added 2026-09-30) - originally took just the first
+ * non-null list found (front preferred), on the theory that reconciling two partial lists risked
+ * more harm (spelling mismatches) than picking one complete source. **Corrected the same day**,
+ * found live on a real "Gidget Film Collection" scan: the front cover's own printed list
+ * actually named all 4 titles, but a physical rating/retailer sticker stuck on the case was
+ * covering the 4th one ("Gidget Gets Married") in the photo, so the front analysis only ever
+ * had 3 legible - the back cover, with no sticker over that same spot, read all 4 cleanly.
+ * Taking "front, if present" outright silently dropped the 4th title even though a different
+ * staged photo's analysis already had it. This isn't a one-off fix for this single case - a
+ * sticker (or glare, a crease, a thumb in frame) can obscure a different, unpredictable part of
+ * either side on any given scan, so trusting one side outright is never safe in general. Now
+ * merges every analysis's own list into one, deduping case/whitespace-insensitively (keeping
+ * whichever spelling was seen first) rather than trusting a single side - a genuine duplicate
+ * reads as the same title either way, and a title only one side happened to catch is no longer
+ * lost. Null when no staged photo's analysis carries a member-title list at all. */
+function pickCoverDerivedMemberTitles(analyses: StagedCoverAnalysis[]): string[] | null {
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  for (const a of analyses) {
+    for (const t of a.analysis.collectionMemberTitles ?? []) {
+      const key = t.trim().toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(t);
+    }
+  }
+  return merged.length > 0 ? merged : null;
 }
 
 export async function resolvePendingScansBatch(
@@ -197,6 +269,24 @@ export async function resolvePendingScansBatch(
     const stagedCoverPaths: string[] = (scan.staged_cover_photos as string[] | null) ?? [];
     const coverAnalysis = await analyzeStagedCoverPhotos(supabase, stagedCoverPaths);
     const coverDerivedTitle = pickCoverDerivedTitle(coverAnalysis);
+    // The box set's own member titles, when the cover actually lists them (see
+    // pickCoverDerivedMemberTitles's own comment) - ConfirmScreen.tsx's Collection flow shows
+    // these as tappable suggestion chips, never auto-added.
+    const coverDerivedMemberTitles = pickCoverDerivedMemberTitles(coverAnalysis);
+    // Added 2026-09-30, per the user's own explicit request: a cover photo's own printed title
+    // ("The Alfred Hitchcock Classics Collection") is just as real a collection signal as a UPC
+    // listing's title text, but nothing checked it before now - `isCollection` below only ever
+    // looked at `upcProduct.title`, so a collection scanned by cover photo alone (or alongside a
+    // barcode whose OWN listing text doesn't happen to say "Collection") never defaulted
+    // ConfirmScreen into its Collection flow. A cover actually listing 2+ member titles is
+    // itself unambiguous proof this is a collection, even when the box's own printed name uses
+    // none of looksLikeCollection's trigger words (e.g. "Universal Monsters Essentials" naming
+    // Dracula/Frankenstein/The Mummy) - folded in as a second, independent signal alongside the
+    // keyword check. Computed once here so every branch below (cover-only, barcode-with-failed-
+    // UPC-lookup, and the full barcode+UPC path) can fold it in.
+    const coverLooksLikeCollection =
+      (coverDerivedTitle ? looksLikeCollection(coverDerivedTitle) : false) ||
+      (coverDerivedMemberTitles?.length ?? 0) >= 2;
 
     // Cover-only session (no barcode at all - decision 6 in the plan this implements): none
     // of the UPC/existing-title lookup below applies, since there's no barcode to look either
@@ -204,13 +294,31 @@ export async function resolvePendingScansBatch(
     // best-match search a typed title would, via searchTitleCandidates - this is the direct
     // "cover photo replaces typing a title" path the feature exists for.
     if (!scan.barcode) {
-      const omdbCandidates = coverDerivedTitle ? await searchTitleCandidates(supabase, coverDerivedTitle) : [];
+      // Never search OMDB by a collection's own title text (2026-09-20 design decision, see
+      // barcode-scanning-pipeline.md's Collections section) - a box set's own name almost never
+      // matches a real OMDB film entry, and a multi-word query with no real match can come back
+      // with junk results OMDB's fuzzy search partially matched on a single generic word (found
+      // live 2026-09-30: "Gidget Film Collection" returned "Collection"/"The Collection"/"La
+      // Collection" - real films, just entirely unrelated ones). Applies here the same way it
+      // already applied to the full barcode+UPC path below - this branch just never checked
+      // isCollection at all before today, since it didn't exist here yet.
+      const omdbCandidates =
+        coverDerivedTitle && !coverLooksLikeCollection ? await searchTitleCandidates(supabase, coverDerivedTitle) : [];
+      // A real collection stays "needs_manual" (same as the full barcode+UPC path below,
+      // per barcode-scanning-pipeline.md's Collections section) - ConfirmScreen drives the
+      // whole Collection flow from its own UI state, not resolved candidates.
       const status = omdbCandidates.length > 0 ? "resolved" : "needs_manual";
       await supabase
         .from("pending_scans")
         .update({
           status,
-          resolved_candidates: { coverAnalysis, omdbCandidates, existingMatch: null },
+          resolved_candidates: {
+            coverAnalysis,
+            omdbCandidates,
+            existingMatch: null,
+            isCollection: coverLooksLikeCollection,
+            coverMemberTitles: coverDerivedMemberTitles,
+          },
         })
         .eq("id", scan.id);
       if (status === "resolved") resolved++;
@@ -249,8 +357,10 @@ export async function resolvePendingScansBatch(
       // No barcode listing at all, but a cover photo was also captured this session (any
       // combination of barcode/front/back is valid - decision 6) - fall back to the same
       // cover-derived search a cover-only session would use, rather than dead-ending straight
-      // into needs_manual when the resolver actually has a usable title in hand.
-      const omdbCandidates = coverDerivedTitle ? await searchTitleCandidates(supabase, coverDerivedTitle) : [];
+      // into needs_manual when the resolver actually has a usable title in hand. Same
+      // never-search-OMDB-for-a-collection's-own-title rule as the cover-only branch above.
+      const omdbCandidates =
+        coverDerivedTitle && !coverLooksLikeCollection ? await searchTitleCandidates(supabase, coverDerivedTitle) : [];
       const status = omdbCandidates.length > 0 ? "resolved" : "needs_manual";
       await supabase
         .from("pending_scans")
@@ -260,6 +370,8 @@ export async function resolvePendingScansBatch(
             upcLookupFailed: true,
             coverAnalysis,
             omdbCandidates,
+            isCollection: coverLooksLikeCollection,
+            coverMemberTitles: coverDerivedMemberTitles,
             existingMatch: await withResolvedPoster(supabase, existing),
           },
         })
@@ -277,7 +389,7 @@ export async function resolvePendingScansBatch(
     // comment in titleParsing.ts for the real case this was found from). The full cleaned
     // title (base + cut, when a cut was found) is what ConfirmScreen separately offers as the
     // release_name pre-fill - not threaded through here, since that's purely a UI concern.
-    const isCollection = looksLikeCollection(upcProduct.title);
+    const isCollection = looksLikeCollection(upcProduct.title) || coverLooksLikeCollection;
     // A listing's year is the disc's own home-video release year, not necessarily the
     // film's - but home video always follows theatrical release, so it's a valid upper
     // bound: no film released after this year could already have a disc for it. Computed
@@ -299,7 +411,12 @@ export async function resolvePendingScansBatch(
     let listingTextExtraction: ListingTextExtraction | null = null;
     if (!isCollection) {
       const { baseTitle: searchQuery } = splitCutVariantTitle(cleanProductTitleForSearch(upcProduct.title));
-      let rawCandidates = searchQuery ? await omdbSearch(searchQuery) : [];
+      // Same classic-Doctor-Who-serial short-circuit searchTitleCandidates applies for a
+      // cover-derived title (see classicWhoSerials.ts) - a UPC listing's own title text can
+      // just as easily be "Doctor Who The Underwater Menace" and hit the exact same false-
+      // match problem via the plain omdbSearch call below.
+      let rawCandidates = await matchClassicWhoSerial(supabase, upcProduct.title).catch(() => []);
+      if (rawCandidates.length === 0) rawCandidates = searchQuery ? await omdbSearch(searchQuery) : [];
       if (rawCandidates.length === 0) {
         listingTextExtraction = await extractListingTextFields(upcProduct.title, upcProduct.description);
         if (listingTextExtraction?.title) {
@@ -360,6 +477,7 @@ export async function resolvePendingScansBatch(
           upcProduct,
           omdbCandidates,
           isCollection,
+          coverMemberTitles: coverDerivedMemberTitles,
           depictedEraStart,
           productYear,
           posterMatch,

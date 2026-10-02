@@ -13,6 +13,7 @@ import type { Title } from "@danflix/shared";
 import { supabase } from "../lib/supabase";
 import { createManualPendingScan, discardScan, fetchUpcQuotaStatus, type UpcQuotaStatus } from "../lib/scanApi";
 import { clearConfirmDraft } from "../lib/confirmDrafts";
+import { getHiddenPendingScanIds, useSubmissionsVersion } from "../lib/backgroundSubmissions";
 
 export interface PendingScan {
   id: string;
@@ -33,6 +34,11 @@ export interface PendingScan {
     upcProduct?: { title: string; description?: string; imageUrl?: string; category?: string };
     upcLookupFailed?: boolean;
     isCollection?: boolean;
+    // The box set's own member titles, read directly off a scanned cover photo when it lists
+    // them (packages/backend/src/coverVision.ts's collectionMemberTitles, added 2026-09-30) -
+    // ConfirmScreen surfaces these as tappable suggestion chips in the Collection flow, never
+    // auto-added. Null/undefined whenever no staged cover photo's analysis carried a list.
+    coverMemberTitles?: string[] | null;
     // Best-effort vision-model format guess (packages/backend/src/formatVision.ts) - only
     // ever populated when the barcode listing's own text didn't already name the format, and
     // only ever a pre-fill suggestion on ConfirmScreen, never presented as confirmed fact.
@@ -48,15 +54,59 @@ export interface PendingScan {
       format: "DVD" | "Blu-Ray" | "4K UHD Blu-Ray" | "VHS" | "CD Movie" | null;
       region: string | null;
     } | null;
+    // Cover-photo vision reads (packages/backend/src/coverVision.ts) - populated for any scan
+    // with staged cover photos, not just a cover-only scan (a barcode scan that also captured
+    // cover photos gets this too, riding along as a secondary pre-fill signal - see
+    // scanResolver.ts). One entry per staged photo. Same "pre-fill suggestion, never
+    // confirmed fact" status as visionFormatGuess above; ConfirmScreen takes the first
+    // non-null value across every analysis for each field, since a value is only ever
+    // reported when the model actually found it legible on that specific photo.
+    coverAnalysis?: {
+      stagedPath: string;
+      analysis: {
+        side: "front" | "back" | "unclear";
+        title: string | null;
+        mediaType: "Movie" | "TV Series" | "Unclear";
+        format: "DVD" | "Blu-Ray" | "Blu-Ray 3D" | "4K UHD Blu-Ray" | "VHS" | "CD Movie" | null;
+        discCount: number | null;
+        rating: "G" | "PG" | "M" | "R12" | "R13" | "R15" | "R16" | "R18" | null;
+        // Added 2026-09-29 - see coverVision.ts's own comment on why these exist (a real
+        // "Five Nights at Freddy's" scan whose own cover photo showed a multi-disc banner, a
+        // back-cover special-features list, and a region mark, none read before now).
+        extraDiscs: "NONE" | "ONE_EXTRA" | "TWO_EXTRA";
+        specialFeaturesListed: boolean | null;
+        // Verbatim, unresolved region text (e.g. "Region 4", "UK") - can come from either the
+        // front or back photo. ConfirmScreen.tsx resolves it via resolveDiskRegionText.
+        region: string | null;
+        // "drawn" vs "photographic" cover-art style, added 2026-10-01 - a confirming signal
+        // for a classic Doctor Who serial's officially-released animated reconstruction (see
+        // coverVision.ts and ConfirmScreen.tsx's Animation/Live Action prefill effect).
+        artStyle: "drawn" | "photographic" | null;
+        // A packaging/marketing edition name distinct from the base title (e.g. "Night Shift
+        // Edition") - never a content-different cut, which stays merged into `title` instead.
+        releaseName: string | null;
+      };
+    }[];
   };
   scanned_at: string;
 }
 
 function scanDisplayTitle(scan: PendingScan): string {
+  const coverAnalysis = scan.resolved_candidates?.coverAnalysis ?? [];
+  // Same front-preferred, else-any precedence as scanResolver.ts's own pickCoverDerivedTitle -
+  // added 2026-09-30, found live: a real collection scan with no UPC listing (upcLookupFailed)
+  // and no OMDB candidates (a collection's own title is never searched, see scanResolver.ts's
+  // Collections comment) fell all the way through to the raw barcode number here, when the
+  // cover photo had already read the real name ("Gidget Film Collection") perfectly fine.
+  const coverDerivedTitle =
+    coverAnalysis.find((a) => a.analysis.side === "front" && a.analysis.title)?.analysis.title ??
+    coverAnalysis.find((a) => a.analysis.title)?.analysis.title ??
+    null;
   return (
     scan.resolved_candidates?.existingMatch?.title ??
     scan.resolved_candidates?.omdbCandidates?.[0]?.Title ??
     scan.resolved_candidates?.upcProduct?.title ??
+    coverDerivedTitle ??
     scan.barcode ??
     "New entry"
   );
@@ -121,7 +171,18 @@ export default function PendingScansScreen({
   offlineQueueCount?: number;
 }) {
   const insets = useSafeAreaInsets();
-  const [scans, setScans] = useState<PendingScan[]>([]);
+  const [loadedScans, setLoadedScans] = useState<PendingScan[]>([]);
+  // A scan whose Confirm save is running (or just succeeded) in the background (backgroundSubmissions.ts,
+  // 2026-10-03) is hidden here so it can't be opened and submitted twice - it reappears on
+  // its own the moment that save fails (re-rendered via useSubmissionsVersion), with its
+  // draft intact. The server still lists it as unconfirmed until the write lands, which is
+  // why this filter is client-side rather than part of the query.
+  const submissionsVersion = useSubmissionsVersion();
+  const scans = useMemo(() => {
+    const saving = getHiddenPendingScanIds();
+    return loadedScans.filter((s) => !saving.has(s.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadedScans, submissionsVersion]);
   const [loading, setLoading] = useState(true);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -136,7 +197,7 @@ export default function PendingScansScreen({
       .select("*")
       .in("status", ["resolved", "needs_manual"])
       .order("scanned_at", { ascending: true });
-    setScans((data as PendingScan[] | null) ?? []);
+    setLoadedScans((data as PendingScan[] | null) ?? []);
     setLoading(false);
     // Refreshed alongside the scan list (every mount, pull-to-refresh and post-delete reload),
     // not on a timer - the server-side resolver (the one real spender of UPC quota) runs

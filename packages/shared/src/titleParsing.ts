@@ -684,6 +684,91 @@ export function removeNonGenreTags(genres: string[]): string[] {
   return genres.filter((g) => !/^animation$/i.test(g.trim()));
 }
 
+/** Derives the pseudo-boolean `documentary` column (RESOURCES.md: "y"/"n", or a more specific
+ * realism-level value like "Biography" for a biopic - the original spec's own "biopic"/"based
+ * on a true story" example) from signals already resolved at confirm time, rather than leaving
+ * it hardcoded to "n" for every scan - added 2026-09-30 after a real "Piece by Piece" scan
+ * (genre: Biography, Comedy, Music, Documentary) saved `documentary: "n"` despite being a
+ * biopic, since ConfirmScreen has never actually exposed a manual field for this column at all
+ * (`/api/scan/confirm` always fell back to a bare `"n"` literal before this). "Biography" wins
+ * over a plain "y" whenever both genre tags are present on the same title (as they are here) -
+ * the more specific, informative answer - reusing Genre's own real word ("Biography") rather
+ * than inventing a differently-spelled synonym ("Biopic") that wouldn't match what Genre
+ * already says for the same film. `movieOrTv` can itself be the literal value "Documentary"
+ * (see `MOVIE_OR_TV_OPTIONS` in `apps/mobile/src/components/TitleSearchPicker.tsx`) even when
+ * OMDB/TMDb never applied a "Documentary" genre tag - both are treated as equally confident
+ * signals. "Based on a true story" is a real value the original spec also named, but has no
+ * automatable signal at all (OMDB/TMDb have no such genre tag) - left manual-only, not
+ * attempted here; disclosed rather than silently guessed at. */
+export function deriveDocumentaryValue(genre: string[], movieOrTv: string): "y" | "Biography" | "n" {
+  const hasGenreTag = (name: string) => genre.some((g) => g.trim().toLowerCase() === name);
+  if (hasGenreTag("biography")) return "Biography";
+  if (hasGenreTag("documentary") || movieOrTv.trim().toLowerCase() === "documentary") return "y";
+  return "n";
+}
+
+function normalizeDocumentaryKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+// Confirmed against a full distinct-value audit of the real ~3,077-row collection
+// (2026-09-30, prompted by the same Piece by Piece scan above) rather than guessed at - this
+// free-text column (no alias table at all before now, unlike Rating/Animation/Format) had
+// accumulated several typo'd/near-duplicate variants of the same real claim, plus a trailing
+// "?" a few rows used informally to flag the data-enterer's own uncertainty. Decisions
+// confirmed directly with the user rather than assumed:
+// - A bare "Documentary"/"documentary" collapses to the plain "y" it's clearly standing in for
+//   - every real row using it already also carries a "Documentary" Genre tag.
+// - "Biopic"/"biography" fold into "Biography", the dominant real spelling (36 rows) and the
+//   same word this collection's Genre column already uses for a biopic.
+// - The whole "based on true events" family - "Based on a True Story", "Based on Real Events",
+//   "Based on History", "A True Story?", and the typo'd "Loosley Based on True Events" - all
+//   fold into the dominant real spelling, "Based on True Events" (already used 5x): the user
+//   chose to treat every one of these as the same underlying claim, not distinct shades of
+//   meaning, including the "loosely based" wording that might otherwise read as a weaker claim.
+// - A trailing "?" ("Dramatization?", "A True Story?") is stripped and treated as confirmed -
+//   the user's own choice, since this column has no separate confidence/certainty concept
+//   anywhere else in the schema.
+// - Genuinely distinct real categories - Dramatization, Mockumentary, Reality TV, Stand Up,
+//   Music, Live Concert, Live Performance - are left alone, not folded into anything else, each
+//   representing a real, deliberate distinction already used consistently across real titles
+//   (e.g. "Live Concert" only on music-genre rows, "Live Performance" only on non-music ones -
+//   see Claude/TECH STACK AND ARCHITECTURE/database-design.md's own note on this column).
+const DOCUMENTARY_ALIASES: Record<string, string> = {
+  y: "y",
+  yes: "y",
+  documentary: "y",
+  n: "n",
+  no: "n",
+  na: "n",
+  biography: "Biography",
+  biopic: "Biography",
+  dramatization: "Dramatization",
+  basedontrueevents: "Based on True Events",
+  basedonatruestory: "Based on True Events",
+  basedonrealevents: "Based on True Events",
+  basedonhistory: "Based on True Events",
+  atruestory: "Based on True Events",
+  looslybasedontrueevents: "Based on True Events",
+  mockumentary: "Mockumentary",
+  realitytv: "Reality TV",
+  standup: "Stand Up",
+  music: "Music",
+  liveconcert: "Live Concert",
+  liveperformance: "Live Performance",
+};
+
+/** Alias-corrects a free-typed `documentary` value the same way normalizeRating/
+ * normalizeAnimationOrLiveAction correct their own columns - an unrecognized value (a genuinely
+ * new category never seen before) passes through unchanged rather than being rejected, since
+ * this column isn't a closed enum. See DOCUMENTARY_ALIASES's own comment for the real audit
+ * behind every mapping here. */
+export function normalizeDocumentary(value: string | undefined): string | null {
+  const cleaned = cleanCell(value);
+  if (cleaned == null) return null;
+  return DOCUMENTARY_ALIASES[normalizeDocumentaryKey(cleaned)] ?? cleaned;
+}
+
 function normalizeAnimationKey(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
@@ -822,7 +907,7 @@ export function parseSheetRowToTitle(
     special_features_disc_format: cleanCell(row[columnIndexes["special_features_disc_format"]]),
     animation_or_live_action:
       normalizeAnimationOrLiveAction(row[columnIndexes["animation_or_live_action"]]) ?? "Live Action",
-    documentary: cleanCell(row[columnIndexes["documentary"]]) ?? "n",
+    documentary: normalizeDocumentary(row[columnIndexes["documentary"]]) ?? "n",
     is_collection: toBoolean(row[columnIndexes["is_collection"]]),
     name_of_collection: cleanCell(row[columnIndexes["name_of_collection"]]),
     title_in_a_collection: toBoolean(row[columnIndexes["title_in_a_collection"]]),

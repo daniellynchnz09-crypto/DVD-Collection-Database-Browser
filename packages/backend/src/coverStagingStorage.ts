@@ -16,12 +16,15 @@ import { autocropImageBuffer } from "./imageCrop";
 const STAGING_BUCKET = "cover-scan-staging";
 const CASE_IMAGES_BUCKET = "case-images";
 
-/** Uploads a freshly-captured cover photo's raw bytes (already cropped client-side to the
- * guide rectangle - see ScannerScreen.tsx's CoverCaptureGuide - so no server-side cropping
- * happens here) to the staging bucket. Returns the path on success, null on any failure - same
- * "a cache miss is fine, a bad write isn't" convention as every other image-caching helper in
- * this codebase. Takes bytes directly (not a URL) since the caller already has them in hand
- * from the upload request body - there's nothing to fetch. */
+/** Uploads a freshly-captured cover photo's raw, uncropped bytes to the staging bucket -
+ * cropping now happens server-side, during resolution (scanResolver.ts's
+ * analyzeStagedCoverPhotos, via coverVision.ts's detectCoverBoundingBox +
+ * imageCrop.ts's cropImageBufferToBox), not client-side at capture time (see
+ * replaceStagedCoverPhoto below for how the cropped result gets back into this same staged
+ * path). Returns the path on success, null on any failure - same "a cache miss is fine, a bad
+ * write isn't" convention as every other image-caching helper in this codebase. Takes bytes
+ * directly (not a URL) since the caller already has them in hand from the upload request body -
+ * there's nothing to fetch. */
 export async function uploadStagedCoverPhoto(
   supabase: SupabaseClient,
   path: string,
@@ -33,6 +36,28 @@ export async function uploadStagedCoverPhoto(
     return error ? null : path;
   } catch {
     return null;
+  }
+}
+
+/** Overwrites an already-staged photo in place with its cropped result (added 2026-09-29,
+ * content-aware cropping) - `upsert: true`, unlike uploadStagedCoverPhoto's own `false`, since
+ * this deliberately replaces what's already there rather than requiring a fresh path. Doing
+ * this in-place (rather than writing the crop to a new path) means every later reader of this
+ * same `stagedPath` - most importantly promoteStagedCoverToCaseImage below, which runs much
+ * later at confirm time, entirely separate from the resolver's own in-memory analysis - gets
+ * the cropped version for free with no changes needed on its end. Best-effort: a failure here
+ * just leaves the original uncropped upload in place rather than losing the photo. */
+export async function replaceStagedCoverPhoto(
+  supabase: SupabaseClient,
+  path: string,
+  bytes: Buffer,
+  contentType: string
+): Promise<boolean> {
+  try {
+    const { error } = await supabase.storage.from(STAGING_BUCKET).upload(path, bytes, { contentType, upsert: true });
+    return !error;
+  } catch {
+    return false;
   }
 }
 
@@ -74,10 +99,12 @@ export async function deleteStagedCoverPhotos(supabase: SupabaseClient, paths: s
  * not a `fetch(url)`, since the staging bucket is private and has no fetchable URL. Used both
  * for a brand-new title (confirm route) and for updating an already-existing, already-
  * catalogued title's photo (the dismiss-path re-scan case, session-finish/route.ts) - the
- * target is just whichever `uniqueId` the caller already knows, new or existing. Runs the same
- * autocrop border-trim as every other case-images upload for consistency, even though a
- * client-cropped cover photo usually has no uniform border left to trim - harmless no-op in
- * that case. Returns the path on success, null on any failure. */
+ * target is just whichever `uniqueId` the caller already knows, new or existing. The staged
+ * photo it downloads here is normally already the content-aware-cropped result (see
+ * replaceStagedCoverPhoto above) - this also runs the same uniform-border autocrop every other
+ * case-images upload gets, for consistency, though it's usually a harmless no-op on an image
+ * that's already been cropped tightly to the case. Returns the path on success, null on any
+ * failure. */
 export async function promoteStagedCoverToCaseImage(
   supabase: SupabaseClient,
   stagedPath: string,
