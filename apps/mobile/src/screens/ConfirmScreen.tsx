@@ -225,10 +225,19 @@ function guessMovieOrTvFromType(type: string | undefined, isClassicWhoSerial: bo
  * spelling variant of each other. Both are collection-only prefixes for filtering purposes. */
 function filterGenreLocationOptions(options: string[], isCollectionEntry: boolean, movieOrTvValue: string): string[] {
   if (isCollectionEntry) return options.filter((o) => o.startsWith("COLLECTION ") || o.startsWith("BOX COLLECTION "));
-  const isTv = movieOrTvValue.startsWith("TV ");
-  return options.filter(
-    (o) => (isTv ? o.startsWith("TV ") : !o.startsWith("TV ") && !o.startsWith("COLLECTION ") && !o.startsWith("BOX COLLECTION "))
-  );
+  const isCollectionShelf = (o: string) => o.startsWith("COLLECTION ") || o.startsWith("BOX COLLECTION ");
+  const isTvShelf = (o: string) => o.startsWith("TV ") || o.startsWith("BOX TV ");
+  const filmShelves = options.filter((o) => !isTvShelf(o) && !isCollectionShelf(o));
+  // Fixed 2026-10-03 (user-reported: "The Story of Movie Westerns" showed no Genre Location
+  // options at all, and searching found nothing either). TMDb's "TV Movie" genre tag
+  // auto-sharpens Movie -> "TV Movie", which used to land in the TV-only branch - but no real
+  // shelf section starts with "TV " (the only TV one is "BOX TV Sci-Fi"), so the list came
+  // back empty. A TV Movie is a film and shelves with films; real TV types also match "BOX
+  // TV " shelves, listed first, followed by the film shelves (so a non-sci-fi show isn't left
+  // with "BOX TV Sci-Fi" as its only choice).
+  const isTv = movieOrTvValue.startsWith("TV ") && movieOrTvValue !== "TV Movie";
+  if (!isTv) return filmShelves;
+  return [...options.filter(isTvShelf), ...filmShelves];
 }
 
 // Hand-mapped synonyms between this collection's own genre_location words and TMDb's genre
@@ -357,7 +366,6 @@ export default function ConfirmScreen({
   const releaseVariantNoteInputRef = useRef<TextInput>(null);
   const caseNotesInputRef = useRef<TextInput>(null);
   const depictedEraLabelInputRef = useRef<TextInput>(null);
-  const tmdbIdOverrideInputRef = useRef<TextInput>(null);
   const runningTimeMinsInputRef = useRef<TextInput>(null);
   const directorInputRef = useRef<TextInput>(null);
 
@@ -828,9 +836,8 @@ export default function ConfirmScreen({
   // up as a fallback when TMDb has no match at all, same pattern as Rating/Studio (see
   // barcode-review-screen-fields.md for the full history of this field).
   const [originalLanguage, setOriginalLanguage] = useState(draft?.originalLanguage ?? "");
-  // Manual fallback for when TMDb's own /find-by-imdb-id lookup comes up empty - see
-  // showTmdbOverrideField below. Only ever needed for a genuine TMDb miss, not shown by
-  // default.
+  // Former manual TMDb-link fallback - the field was removed 2026-10-03 (a TMDb miss is now
+  // simply saved without one); the state is kept only so older saved drafts still load.
   const [tmdbIdOverride, setTmdbIdOverride] = useState(draft?.tmdbIdOverride ?? "");
   // Manual-only detail fields, shown only in the fully-manual path (no OMDB/TMDb candidate
   // at all - selected.size === 0 below) per the user's own request: when a real candidate
@@ -1588,14 +1595,12 @@ export default function ConfirmScreen({
   const isFamilyOrKidsGenre =
     genre.split(",").some((g) => /family|kids/i.test(g.trim())) || /family/i.test(genreLocation);
   const isAnimatedStyle = animationOrLiveAction.trim() !== "" && animationOrLiveAction !== "Live Action";
-  // Hard requirement (Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan" section):
-  // a candidate-backed entry (a real film was identified) must end up with a real TMDb id,
-  // so every metadata-driven feature can be backfilled later without re-touching the
-  // physical disc. TMDb's own /find lookup sometimes has nothing - this shows a manual
-  // override field in that case and blocks Confirm until it's filled in.
-  const showTmdbOverrideField = Boolean(
-    singleSelectedImdbId && !tmdbPreviewLoading && tmdbPreview?.tmdbId == null
-  );
+  // TMDb link no longer required (2026-10-03, per the user's own instruction - superseding
+  // the original "Backfill Rescan" hard requirement): when TMDb's own /find lookup has
+  // nothing for the matched title (typically a thin, weak IMDb entry - effectively a manual
+  // entry anyway), the title is simply saved without a TMDb id. The user: "if the system
+  // couldn't find it, I certainly wouldn't be able to find it from the case or on the
+  // internet easily myself." The old manual-override field and its Confirm block are gone.
 
   function handleNotThisItem() {
     setShowAllCandidates(true);
@@ -1731,7 +1736,7 @@ export default function ConfirmScreen({
         is_currently_rented_out: isCurrentlyRentedOut,
         rented_by_who: isCurrentlyRentedOut ? rentedByWho.trim() || null : null,
         date_rented: isCurrentlyRentedOut ? dateRented || null : null,
-        tmdb_id_override: showTmdbOverrideField ? tmdbIdOverride.trim() || null : null,
+        tmdb_id_override: null,
         // Only sent for a fully-manual entry (no OMDB/TMDb candidate at all) - omitted
         // entirely rather than sent as null/[] whenever a real candidate is selected, so
         // the confirm route's `manual.genre ?? omdbFields.genre` fallback (and the
@@ -1941,10 +1946,6 @@ export default function ConfirmScreen({
     const missingFields = getMissingRequiredFields();
     if (missingFields.length > 0) {
       setError(`Please fill in before confirming: ${missingFields.join(", ")}.`);
-      return;
-    }
-    if (showTmdbOverrideField && !tmdbIdOverride.trim()) {
-      setError("TMDb has no match for this title - enter a TMDb link/id above to continue.");
       return;
     }
 
@@ -3564,8 +3565,7 @@ export default function ConfirmScreen({
           {/* No OMDB/TMDb candidate exists here to backfill Genre/Runtime/Director later,
               unlike every field below this block - so these are asked for now, the one
               chance to capture them at all. Rotten Tomatoes/IMDb/TMDb links and ids are
-              deliberately NOT asked for here (see showTmdbOverrideField above, already
-              gated on singleSelectedImdbId) since a page almost certainly doesn't
+              deliberately NOT asked for here since a page almost certainly doesn't
               exist for a title neither database could find in the first place. */}
           <View style={styles.section}>
             <Text style={styles.label}>Genre (optional, comma-separated)</Text>
@@ -3978,29 +3978,9 @@ export default function ConfirmScreen({
             .map(([ratingValue]) => ratingValue);
           return [...new Set([...suggestions, ...ranked])];
         })();
-        const needsCaseInfo = showTmdbOverrideField || showRatingField || showStudioField || showOriginalLanguageField;
+        const needsCaseInfo = showRatingField || showStudioField || showOriginalLanguageField;
         const neededNode = (
           <>
-      {showTmdbOverrideField && (
-        <View style={styles.section}>
-          <Text style={styles.label}>TMDb Link or ID (required - TMDb had no automatic match)</Text>
-          <TextInput
-            ref={tmdbIdOverrideInputRef}
-            style={styles.input}
-            value={tmdbIdOverride}
-            onChangeText={setTmdbIdOverride}
-            onFocus={() => scrollInputRefIntoView(tmdbIdOverrideInputRef)}
-            placeholder="e.g. https://www.themoviedb.org/movie/12345"
-            placeholderTextColor="#71717a"
-            autoCapitalize="none"
-          />
-          <Text style={styles.hint}>
-            Every scanned title needs a real TMDb match so ratings, cast, posters and everything
-            else can be filled in automatically later - search themoviedb.org for this title and
-            paste its link here.
-          </Text>
-        </View>
-      )}
       {singleSelectedImdbId && tmdbPreviewLoading && (
         <Text style={styles.hint}>Checking TMDb for Rating/Studio/Original Language...</Text>
       )}
@@ -4159,8 +4139,8 @@ export default function ConfirmScreen({
             {needsCaseInfo && (
               <SummaryRow
                 label="Needed from the case"
-                value={[showTmdbOverrideField ? "TMDb link" : "", showRatingField ? rating : "", showStudioField ? studio : "", showOriginalLanguageField ? originalLanguage : ""].filter(Boolean).join(", ")}
-                missing={missingNow.some((f) => ["Rating", "Studio", "Original Language"].includes(f)) || (showTmdbOverrideField && !tmdbIdOverride.trim())}
+                value={[showRatingField ? rating : "", showStudioField ? studio : "", showOriginalLanguageField ? originalLanguage : ""].filter(Boolean).join(", ")}
+                missing={missingNow.some((f) => ["Rating", "Studio", "Original Language"].includes(f))}
                 expanded={openRow === "needed"}
                 onPress={() => toggleRow("needed")}
               >
@@ -4172,7 +4152,7 @@ export default function ConfirmScreen({
       <TouchableOpacity
         style={styles.button}
         onPress={handleConfirmPressed}
-        disabled={submitting || checkingExisting || (showTmdbOverrideField && !tmdbIdOverride.trim())}
+        disabled={submitting || checkingExisting}
       >
         <Text style={styles.buttonText}>
           {checkingExisting ? "Checking your collection..." : submitting ? "Saving..." : "Confirm"}

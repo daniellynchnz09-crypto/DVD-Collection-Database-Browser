@@ -362,23 +362,11 @@ export async function POST(request: Request) {
       fields = { tmdbId: override.id, tmdbMediaType: override.mediaType, ...overrideDetails };
     }
 
-    // Hard requirement (Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan" section):
-    // any entry backed by a real OMDB/TMDb candidate (entry.imdbId set) must end up with a
-    // real TMDb id, so every other metadata-driven feature (scores, cast/crew, synopsis,
-    // third-party review-tracking integrations, ...) can be backfilled later for the whole
-    // collection at once, without ever re-touching the physical disc. A fully manual entry
-    // (no candidate at all - the user's own custom-burned discs) has nothing to look up and
-    // is exempt.
-    if (entry.imdbId && fields.tmdbId == null) {
-      return NextResponse.json(
-        {
-          error:
-            "TMDb has no match for this title, and no manual TMDb link/id was given - " +
-            "enter one in the TMDb field on the confirm screen to continue.",
-        },
-        { status: 400 }
-      );
-    }
+    // No longer a hard requirement (2026-10-03, per the user's own instruction): an entry
+    // whose candidate TMDb has no match for is saved without a TMDb id rather than rejected -
+    // that's almost always a thin, weak IMDb entry, effectively a manual entry, and the user
+    // can't realistically find a TMDb page the lookup itself couldn't. Previously a 400 here
+    // (the original "Backfill Rescan" rule that every candidate-backed entry needs a TMDb id).
     resolvedTmdb.push(fields);
   }
 

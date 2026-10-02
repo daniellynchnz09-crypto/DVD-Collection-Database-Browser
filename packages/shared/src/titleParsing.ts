@@ -681,7 +681,138 @@ const ANIMATION_ALIASES: Record<string, string> = {
  * Animation or Live Action column, so it is stripped from every Genre list (OMDB and TMDb both
  * tag animated films with it). */
 export function removeNonGenreTags(genres: string[]): string[] {
-  return genres.filter((g) => !/^animation$/i.test(g.trim()));
+  return normalizeGenreList(genres.filter((g) => !/^animation$/i.test(g.trim())));
+}
+
+/**
+ * Canonical genre spellings, keyed by a squashed form (lowercase, no spaces/hyphens) - added
+ * 2026-10-03 after the user flagged "a lot of overlapping genres with similar names". An audit
+ * of the real collection found 204 distinct genre tags across ~3,090 rows: casing drift
+ * ("BIography"), letter-level typos ("Advenutre", "Thirller", "Kajiu"), plural/suffix
+ * variants ("Sports", "Monster Movie", "Pirates"), and the canonical list below. Merges the
+ * user explicitly chose (2026-10-03): Kids -> Family, Fighting/Fighting Movie -> Martial Arts.
+ * Merges the user explicitly did NOT choose stay separate: Music vs Musical, Christmas vs
+ * Holiday. "Sci-Fi" (not TMDb's "Science Fiction") is the collection's own established
+ * spelling (390 rows) and matches every Sci-Fi genre_location shelf.
+ */
+const GENRE_ALIASES: Record<string, string> = {
+  action: "Action", actiton: "Action",
+  adventure: "Adventure", adenture: "Adventure", advenure: "Adventure", advenutre: "Adventure",
+  advneutre: "Adventure", aventure: "Adventure",
+  biography: "Biography", biopic: "Biography",
+  christmas: "Christmas", chrismas: "Christmas",
+  holiday: "Holiday", holdiay: "Holiday",
+  comedy: "Comedy",
+  crime: "Crime",
+  cyberpunk: "Cyberpunk",
+  disaster: "Disaster", diaster: "Disaster", disastermovie: "Disaster",
+  docodrama: "Docudrama", docudrama: "Docudrama",
+  documentary: "Documentary", docounmentary: "Documentary", documetary: "Documentary",
+  mockumentary: "Mockumentary",
+  drama: "Drama",
+  eastern: "Eastern",
+  faith: "Faith",
+  religion: "Religion", relgion: "Religion",
+  family: "Family", familly: "Family", familty: "Family", kids: "Family",
+  fantasy: "Fantasy", fatasy: "Fantasy", fatnasy: "Fantasy",
+  fighting: "Martial Arts", fightingmovie: "Martial Arts", fighingmovie: "Martial Arts",
+  martialarts: "Martial Arts",
+  filmnoir: "Film Noir",
+  gameshow: "Gameshow",
+  gangster: "Gangster", gamgster: "Gangster",
+  heist: "Heist", hiest: "Heist",
+  history: "History", histroy: "History",
+  horror: "Horror", horor: "Horror", horrror: "Horror",
+  slasher: "Slasher",
+  kaiju: "Kaiju", kajiu: "Kaiju", kaju: "Kaiju",
+  monster: "Monster", monstermovie: "Monster",
+  music: "Music",
+  musical: "Musical", muscial: "Musical",
+  mystery: "Mystery", msytery: "Mystery", myster: "Mystery",
+  parody: "Parody",
+  satire: "Satire",
+  pirate: "Pirate", pirates: "Pirate", priate: "Pirate",
+  realitytv: "Reality TV",
+  roman: "Roman",
+  romance: "Romance",
+  samurai: "Samurai", samauri: "Samurai", samuari: "Samurai",
+  scifi: "Sci-Fi", sciencefiction: "Sci-Fi",
+  sitcom: "Sitcom",
+  sport: "Sport", sports: "Sport",
+  spy: "Spy", soy: "Spy",
+  superhero: "Superhero", superheor: "Superhero",
+  swordandsandal: "Sword and Sandal", swordinsandal: "Sword and Sandal", sowrdandsandal: "Sword and Sandal",
+  swordandsorcery: "Sword and Sorcery", swordandsoccery: "Sword and Sorcery", swordandsourcery: "Sword and Sorcery",
+  teen: "Teen",
+  thriller: "Thriller", thirller: "Thriller", thrller: "Thriller",
+  tragedy: "Tragedy",
+  videogame: "Video Game Movie", videogamemovie: "Video Game Movie", videogameadaptation: "Video Game Movie",
+  war: "War",
+  western: "Western", wetsern: "Western",
+  wuxia: "Wuxia",
+  zombie: "Zombie",
+};
+
+/** Tags that aren't genres at all (director names typed into the wrong column, placeholder
+ * words) - verified against the real data 2026-10-03, dropped outright. */
+const NON_GENRE_TAGS = new Set(["jaumecolletserra", "petersegal", "shawnlevy", "movie", "specialfeatures"]);
+
+function squashGenreKey(value: string): string {
+  return value.toLowerCase().replace(/[\s\-_]+/g, "");
+}
+
+/** Splits a space-joined combo like "Sci-Fi Monster Movie" or "War Comedy" into its known
+ * genres by greedy longest match over its words. Returns null unless EVERY word is consumed by
+ * a known genre - an unrecognized phrase is kept whole rather than chopped up wrongly. */
+function splitSpaceJoinedGenres(tag: string): string[] | null {
+  const words = tag.split(/\s+/).filter(Boolean);
+  if (words.length < 2) return null;
+  const out: string[] = [];
+  let i = 0;
+  while (i < words.length) {
+    let matched = false;
+    for (let j = words.length; j > i; j--) {
+      const canonical = GENRE_ALIASES[squashGenreKey(words.slice(i, j).join(" "))];
+      if (canonical) {
+        out.push(canonical);
+        i = j;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) return null;
+  }
+  return out;
+}
+
+/** Normalizes a Genre list: splits "Action/Crime"-style and "Sword and Sandal. Religion"-style
+ * combined tags, maps every tag to its canonical spelling (GENRE_ALIASES above), drops
+ * non-genre tags, and de-duplicates while keeping first-seen order. An unknown tag is kept as
+ * typed (trimmed), so a genuinely new genre is never lost. */
+export function normalizeGenreList(genres: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (g: string) => {
+    const key = squashGenreKey(g);
+    if (!key || NON_GENRE_TAGS.has(key) || seen.has(key)) return;
+    seen.add(key);
+    out.push(g);
+  };
+  for (const raw of genres) {
+    for (const part of raw.split(/[\/.,]/)) {
+      const tag = part.trim();
+      if (!tag) continue;
+      const canonical = GENRE_ALIASES[squashGenreKey(tag)];
+      if (canonical) {
+        push(canonical);
+        continue;
+      }
+      const split = splitSpaceJoinedGenres(tag);
+      if (split) split.forEach(push);
+      else push(tag);
+    }
+  }
+  return out;
 }
 
 /** Derives the pseudo-boolean `documentary` column (RESOURCES.md: "y"/"n", or a more specific

@@ -61,6 +61,26 @@ export async function autocropImageBuffer(buffer: Buffer, contentType: string): 
  * any failure returns the ORIGINAL buffer unchanged rather than throwing, since a failed crop
  * must never block the photo from being analyzed/stored at all. */
 /**
+ * Bakes a phone photo's EXIF orientation tag into its actual pixels (added 2026-10-03) - a
+ * real batch of cover photos (Fahrenheit 9/11, The Story of Movie Westerns, Elvis At The
+ * Movies) came out stored upside down. An Android camera JPEG often keeps its pixels in sensor
+ * orientation plus an EXIF tag saying how to turn them; Jimp's own `fromBuffer` honours that
+ * tag (@jimp/core's attemptExifRotate) but Gemini doesn't reliably, so detectCoverRotation
+ * judged the RAW pixels ("needs 180 degrees") while rotateImageBuffer then turned the already
+ * EXIF-corrected image - flipping an upright photo upside down. Round-tripping through Jimp
+ * once up front means every later step (rotation check, bounding box, crop, the stored file)
+ * sees the same, tag-free, upright-as-shot pixels. Any failure returns the original buffer. */
+export async function normalizeImageOrientation(buffer: Buffer, contentType: string): Promise<Buffer> {
+  if (!/^image\/jpe?g$/i.test(contentType)) return buffer;
+  try {
+    const image = await Jimp.fromBuffer(buffer);
+    return await image.getBuffer("image/jpeg");
+  } catch {
+    return buffer;
+  }
+}
+
+/**
  * Rotates an image buffer by a clockwise angle (0/90/180/270 - coverVision.ts's
  * detectCoverRotation) so a cover photo taken with the phone held sideways ends up right-way-up
  * before cropping/analysis - added 2026-09-29 after the user found their Eddington cover photo

@@ -23,7 +23,7 @@ import { recordUpcRateLimit } from "./upcQuota";
 import { getSignedPosterImageUrl } from "./posterImageStorage";
 import { downloadStagedCoverPhoto, replaceStagedCoverPhoto } from "./coverStagingStorage";
 import { detectCoverBoundingBox, detectCoverFromImage, detectCoverRotation, type StagedCoverAnalysis } from "./coverVision";
-import { cropImageBufferToBox, rotateImageBuffer } from "./imageCrop";
+import { cropImageBufferToBox, normalizeImageOrientation, rotateImageBuffer } from "./imageCrop";
 import { searchTitleCandidates } from "./titleTextSearch";
 import { matchClassicWhoSerial } from "./classicWhoSerials";
 
@@ -178,8 +178,10 @@ async function analyzeStagedCoverPhotos(
     const staged = await downloadStagedCoverPhoto(supabase, stagedPath);
     if (!staged) continue;
 
-    let bytes = staged.bytes;
-    let changed = false;
+    // EXIF orientation baked into the pixels first (see normalizeImageOrientation) - without
+    // this, Gemini's rotation read and Jimp's own rotate disagreed about which way was up.
+    let bytes = await normalizeImageOrientation(staged.bytes, staged.contentType);
+    let changed = bytes !== staged.bytes;
 
     const rotation = await detectCoverRotation(bytes, staged.contentType);
     if (rotation) {

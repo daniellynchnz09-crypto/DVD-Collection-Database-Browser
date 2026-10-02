@@ -93,7 +93,27 @@ export function isRegionFreeFormat(format: string): boolean {
   return /4k|ultra ?hd|uhd/.test(format.toLowerCase());
 }
 
-const REGION_FREE_WORDS = /\bregion[- ]?free\b|\ball regions?\b/i;
+// "Region 0" / "R0" added 2026-10-03 - a DVD marked Region 0 has every region flag set, the
+// same thing as "ALL"/region-free (Wikipedia, "DVD region code"). "No regional coding" (read
+// verbatim off a real "Elvis At The Movies" back cover the same day) means the same.
+const REGION_FREE_WORDS = /\bregion[- ]?free\b|\ball regions?\b|\bregion\s*0\b|\bR0\b|\bno region(al)? cod(e|ing)\b/i;
+
+/**
+ * DVD regions implied by an analog video-standard mark printed instead of a region number
+ * (added 2026-10-03, per the user's own request: "find out what regions are included in these
+ * ... and auto select the numbers"). PAL/NTSC are TV standards, not region codes, so this is
+ * only ever a fallback when no region number/country is legible at all. Mapping chosen by the
+ * user from research (Wikipedia: DVD region code, PAL, NTSC): PAL is the main standard in
+ * Region 2 (UK/Europe) and Region 4 (NZ/AU) -> "2", "4"; NTSC is Region 1 (US/Canada) -> "1".
+ * DVD only - Blu-ray is digital HD where PAL/NTSC doesn't define a region, so nothing is
+ * inferred for it.
+ */
+function regionsFromVideoStandard(text: string, isBluRay: boolean): string[] | null {
+  if (isBluRay) return null;
+  if (/\bPAL\b/i.test(text)) return ["2", "4"];
+  if (/\bNTSC\b/i.test(text)) return ["1"];
+  return null;
+}
 
 /**
  * Best-effort disc-region code(s) mentioned directly in a UPC listing's own text (e.g.
@@ -252,7 +272,8 @@ export function resolveDiskRegionText(regionText: string, format: string): strin
   if (literalCodes.size > 0) return [...literalCodes];
 
   const countryCode = mapRegionCountryToCode(regionText, format);
-  return countryCode ? [countryCode] : null;
+  if (countryCode) return [countryCode];
+  return regionsFromVideoStandard(regionText, isBluRay);
 }
 
 export function extractDiskRegionHint(text: string, format: string): string | null {
@@ -261,12 +282,12 @@ export function extractDiskRegionHint(text: string, format: string): string | nu
   const normalized = format.toLowerCase();
   if (isRegionFreeFormat(normalized)) return null;
 
+  const isBluRay = /blu-?ray/.test(normalized);
   const regionMatch = text.match(/\bregions?\b\s*[:-]?\s*/i);
-  if (!regionMatch) return null;
+  if (!regionMatch) return regionsFromVideoStandard(text, isBluRay)?.join(", ") ?? null;
   const windowStart = (regionMatch.index ?? 0) + regionMatch[0].length;
   const window = text.slice(windowStart, windowStart + 20);
 
-  const isBluRay = /blu-?ray/.test(normalized);
   const tokenPattern = isBluRay ? /\b[A-Ca-c]\b/g : /\b[1-6]\b/g;
 
   const codes: string[] = [];
@@ -279,5 +300,6 @@ export function extractDiskRegionHint(text: string, format: string): string | nu
       codes.push(code);
     }
   }
-  return codes.length > 0 ? codes.join(", ") : null;
+  if (codes.length > 0) return codes.join(", ");
+  return regionsFromVideoStandard(text, isBluRay)?.join(", ") ?? null;
 }
