@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Dimensions,
   FlatList,
   findNodeHandle,
   Image,
@@ -163,18 +164,29 @@ function sanitizeSpecialFeaturesDiscOverlap(member: CollectionMember): Collectio
  * own header comment) - `extraDiscs` only ever says how MANY extra items the banner lists,
  * never what an unlabeled "Bonus Disc" itself is, so that assumption lives here where it's
  * visible and easy to correct or extend:
- * - alongside a 4K UHD primary disc, the user has only ever seen a Blu-ray bonus disc
- * - alongside a plain Blu-ray primary disc, the user has only ever seen a DVD bonus disc
- * Returns null for every field when there's nothing to derive (extraDiscs is "NONE", or the
- * primary format isn't one either combination is known for) - the ordinary case for the vast
- * majority of scans, which touches none of these fields differently than they already work. */
+ * - alongside a 4K UHD primary disc, the bonus disc is almost always a Blu-ray
+ * - otherwise the bonus disc is assumed to be the same format as the primary disc
+ * (revised 2026-10-04 per the user's own rule - previously a Blu-ray primary assumed a DVD
+ * bonus disc; see defaultBonusDiscFormat). Returns null for every field when there's nothing
+ * to derive (extraDiscs is "NONE", or no primary format is known yet) - the ordinary case for
+ * the vast majority of scans, which touches none of these fields differently than they
+ * already work. */
+/** The user's own rule (2026-10-04): a special-features bonus disc is the same format as the
+ * primary movie disc, except alongside a 4K UHD disc, where it's almost always a Blu-ray.
+ * Always presented as an assumption to check (amber), never as confirmed. */
+function defaultBonusDiscFormat(primaryFormat: string): string | null {
+  const trimmed = primaryFormat.trim();
+  if (!trimmed) return null;
+  return /4k/i.test(trimmed) ? "Blu-Ray" : trimmed;
+}
+
 function deriveDiscConfigFromExtraDiscs(
   primaryFormat: string,
   extraDiscs: "NONE" | "ONE_EXTRA" | "TWO_EXTRA" | undefined
 ): { discCount: number; specialFeaturesDiscCount: number; specialFeaturesDiscFormat: string } | null {
   if (!extraDiscs || extraDiscs === "NONE") return null;
 
-  const bonusDiscFormat = primaryFormat === "4K UHD Blu-Ray" ? "Blu-Ray" : primaryFormat === "Blu-Ray" ? "DVD" : null;
+  const bonusDiscFormat = defaultBonusDiscFormat(primaryFormat);
   if (!bonusDiscFormat) return null;
 
   const specialFeaturesDiscCount = extraDiscs === "TWO_EXTRA" ? 2 : 1;
@@ -331,14 +343,38 @@ export default function ConfirmScreen({
   const scrollRef = useRef<ScrollView>(null);
   const scrollYRef = useRef(0);
   const keyboardHeightRef = useRef(0);
+  // How much of the window the Android keyboard actually covers (2026-10-04, user-reported:
+  // "on the bottom text entry fields the onscreen keyboard covers the field"). The Android
+  // path below relied on the OS resizing the window, but with edge-to-edge (Expo SDK 57 /
+  // Android 15+, and Expo Go ignores app.json's softwareKeyboardLayoutMode anyway) the window
+  // isn't resized - the keyboard just draws over the form, and the last fields have no scroll
+  // room left to move above it. Measured as the overlap between the keyboard's top edge and
+  // the window's bottom, so it's automatically 0 on a device that does resize the window (no
+  // double gap), and reset to 0 on hide (no leftover dead space - the problem a static padding
+  // had before).
+  const [androidKeyboardOverlap, setAndroidKeyboardOverlap] = useState(0);
   useEffect(() => {
     const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
     const showSub = Keyboard.addListener(showEvent, (e) => {
-      keyboardHeightRef.current = e.endCoordinates.height;
+      if (Platform.OS === "android") {
+        const overlap = Math.max(0, Dimensions.get("window").height - e.endCoordinates.screenY);
+        keyboardHeightRef.current = overlap;
+        setAndroidKeyboardOverlap(overlap);
+        // Android only reports the keyboard AFTER the field has focused, so the field's own
+        // on-focus scroll ran while the keyboard height was still 0 and did nothing - re-run
+        // it for whichever input is focused now, once the extra padding has been laid out.
+        if (overlap > 0) {
+          const focused = TextInput.State.currentlyFocusedInput();
+          if (focused) scrollFieldIntoView(findNodeHandle(focused as unknown as TextInput), 80);
+        }
+      } else {
+        keyboardHeightRef.current = e.endCoordinates.height;
+      }
     });
     const hideSub = Keyboard.addListener(hideEvent, () => {
       keyboardHeightRef.current = 0;
+      setAndroidKeyboardOverlap(0);
     });
     return () => {
       showSub.remove();
@@ -905,6 +941,17 @@ export default function ConfirmScreen({
   const [specialFeaturesDiscFormat, setSpecialFeaturesDiscFormat] = useState(
     draft?.specialFeaturesDiscFormat ?? visionDiscConfig?.specialFeaturesDiscFormat ?? coverDiscConfig?.specialFeaturesDiscFormat ?? ""
   );
+  // True while the bonus-disc format is the app's own assumption (defaultBonusDiscFormat) rather
+  // than something the user picked - drives the amber "check this" highlight (2026-10-04, per
+  // the user's own request). Cleared the moment the user chooses a format themselves.
+  const [specialFeaturesDiscFormatAssumed, setSpecialFeaturesDiscFormatAssumed] = useState(
+    draft?.specialFeaturesDiscFormatAssumed ??
+      Boolean(!draft?.specialFeaturesDiscFormat && (visionDiscConfig?.specialFeaturesDiscFormat || coverDiscConfig?.specialFeaturesDiscFormat))
+  );
+  function chooseSpecialFeaturesDiscFormat(value: string) {
+    setSpecialFeaturesDiscFormat(value);
+    setSpecialFeaturesDiscFormatAssumed(false);
+  }
   const [fieldOptions, setFieldOptions] = useState<FieldOptions | null>(null);
   // "Would TMDb find anything for this specific title" - keeps the manual Rating/Studio
   // fields hidden by default (TMDB now auto-fills both at confirm time - see
@@ -1127,6 +1174,7 @@ export default function ConfirmScreen({
       specialFeatures,
       specialFeaturesDiscCount,
       specialFeaturesDiscFormat,
+      specialFeaturesDiscFormatAssumed,
       candidates,
       titleSearchQuery,
       hasSearchedOrSkipped,
@@ -1174,6 +1222,7 @@ export default function ConfirmScreen({
     specialFeatures,
     specialFeaturesDiscCount,
     specialFeaturesDiscFormat,
+    specialFeaturesDiscFormatAssumed,
     candidates,
     titleSearchQuery,
     hasSearchedOrSkipped,
@@ -1236,6 +1285,18 @@ export default function ConfirmScreen({
   const extraCandidates = candidates.filter((c) => looksLikeExtraContent(c.Title));
   const diskRegionOptions = getDiskRegionOptions(format) ?? fieldOptions?.diskRegion ?? [];
   const showSpecialFeaturesDiscFields = specialFeatures && (parseInt(discCount, 10) || 1) > 1;
+  // Fills the bonus-disc format with the user's own default rule (defaultBonusDiscFormat) as
+  // soon as the field appears blank, and keeps it following the primary Format while it's
+  // still only the app's assumption - never overwrites a format the user picked themselves.
+  useEffect(() => {
+    if (!showSpecialFeaturesDiscFields) return;
+    if (specialFeaturesDiscFormat.trim() && !specialFeaturesDiscFormatAssumed) return;
+    const assumed = defaultBonusDiscFormat(format);
+    if (!assumed || assumed === specialFeaturesDiscFormat) return;
+    setSpecialFeaturesDiscFormat(assumed);
+    setSpecialFeaturesDiscFormatAssumed(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSpecialFeaturesDiscFields, format]);
   // Collection mode's own header-level special-features gate (added 2026-09-20) - the header
   // row has no single "primary disc" of its own the way an ordinary scan does (its discs are
   // all inside the per-title members instead), so unlike showSpecialFeaturesDiscFields above,
@@ -1437,6 +1498,32 @@ export default function ConfirmScreen({
     setMovieOrTv("TV Movie");
   }, [tmdbPreview]);
 
+  // TV shape from TMDb (added 2026-10-04, user-reported: a "Hindenburg: The Last Flight" scan
+  // defaulted to TV Series - OMDb only ever says "series" - and its Season/Episode details were
+  // blank, since nothing pre-filled them for ordinary TV at all). TMDb's own `type:
+  // "Miniseries"` sharpens a still-automatic TV Series guess to "TV Mini-Series" (same "only
+  // while the field still holds the tool's own suggestion" guard as the TV Movie effect above),
+  // and when the show has exactly one season (every mini-series, plus any one-season show)
+  // Season No. "1" and its Episode Count are pre-filled - a multi-season show is left blank,
+  // since nothing says which season this particular disc holds. Never overwrites a value the
+  // user (or their saved draft) already has.
+  useEffect(() => {
+    const tv = tmdbPreview?.tvInfo;
+    if (!tv) return;
+    const isMiniseries = tv.type === "Miniseries";
+    let effectiveMovieOrTv = movieOrTv;
+    if (isMiniseries && movieOrTv === "TV Series" && movieOrTv === lastAutoMovieOrTvRef.current) {
+      lastAutoMovieOrTvRef.current = "TV Mini-Series";
+      setMovieOrTv("TV Mini-Series");
+      effectiveMovieOrTv = "TV Mini-Series";
+    }
+    if (!SEASON_FIELDS_MOVIE_OR_TV_VALUES.has(effectiveMovieOrTv)) return;
+    if (tv.numberOfSeasons !== 1 && !isMiniseries) return;
+    if (!draft?.seasonNo && !seasonNo.trim()) setSeasonNo("1");
+    if (!draft?.episodeCount && !episodeCount.trim() && tv.numberOfEpisodes) setEpisodeCount(String(tv.numberOfEpisodes));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tmdbPreview]);
+
   // Title + season/part composition, added 2026-09-19: OMDB only ever has one entry per
   // whole show, never one per season, so a matched candidate's own Title is always just the
   // bare show name ("Breaking Bad") - with nothing else, the catalogued title would have no
@@ -1457,6 +1544,9 @@ export default function ConfirmScreen({
   // Menace Season 4" the moment that auto-filled Season No. lands - found live 2026-09-30.
   function composeSeasonTitle(baseTitle: string): string {
     if (selectedCandidate?.classicWhoSerial) return baseTitle;
+    // A mini-series is one complete set, not one season of many (2026-10-04) - "Hindenburg:
+    // The Last Flight", not "Hindenburg: The Last Flight Season 1".
+    if (movieOrTv === "TV Mini-Series") return baseTitle;
     if (!showSeasonFields || !seasonNo.trim()) return baseTitle;
     const part = partOfSeasonNo.trim();
     return `${baseTitle} Season ${seasonNo.trim()}${part ? ` Part ${part}` : ""}`;
@@ -1479,7 +1569,7 @@ export default function ConfirmScreen({
     const suggested = composeSeasonTitle(selectedCandidateTitle);
     lastAutoTitleRef.current = suggested;
     setManualTitle(suggested);
-  }, [seasonNo, partOfSeasonNo, showSeasonFields]);
+  }, [seasonNo, partOfSeasonNo, showSeasonFields, movieOrTv]);
 
   // Re-checks TMDb every time the chosen candidate changes - a different film can have
   // different TMDb availability. No candidate selected at all (pure manual entry, no
@@ -2643,7 +2733,7 @@ export default function ConfirmScreen({
         style={styles.scrollView}
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingTop: 48 + insets.top, paddingBottom: 24 + insets.bottom },
+          { paddingTop: 48 + insets.top, paddingBottom: 24 + insets.bottom + androidKeyboardOverlap },
         ]}
         keyboardShouldPersistTaps="handled"
       >
@@ -3687,13 +3777,18 @@ export default function ConfirmScreen({
                     </TouchableOpacity>
                   </View>
                 </View>
-                <View style={styles.section}>
+                <View style={[styles.section, specialFeaturesDiscFormatAssumed && styles.assumedSection]}>
                   <Text style={styles.label}>Format of Special Features Discs</Text>
-                  <BigChoice options={commonFormats} value={specialFeaturesDiscFormat} onChange={setSpecialFeaturesDiscFormat} columns={3} />
+                  {specialFeaturesDiscFormatAssumed && (
+                    <Text style={styles.assumedHint}>
+                      Assumed {specialFeaturesDiscFormat} ({/4k/i.test(format) ? "4K UHD sets usually have a Blu-ray bonus disc" : "same as the main disc"}) - check the case.
+                    </Text>
+                  )}
+                  <BigChoice options={commonFormats} value={specialFeaturesDiscFormat} onChange={chooseSpecialFeaturesDiscFormat} columns={3} />
                   <Text style={styles.hint}>Something else? Pick or type it here:</Text>
                   <SearchableModalInput
                     value={specialFeaturesDiscFormat}
-                    onChangeText={setSpecialFeaturesDiscFormat}
+                    onChangeText={chooseSpecialFeaturesDiscFormat}
                     options={fieldOptions?.format ?? []}
                     onFocusScroll={scrollFieldIntoView}
                   />
@@ -4077,7 +4172,7 @@ export default function ConfirmScreen({
               missing={showSpecialFeaturesDiscFields && (!specialFeaturesDiscCount.trim() || !specialFeaturesDiscFormat.trim())}
               // Worth a glance whenever Special Features is off (2026-09-24) - easy to forget
               // to tick if the case genuinely has a bonus disc/menu, per the user's own request.
-              notable={!specialFeatures}
+              notable={!specialFeatures || (showSpecialFeaturesDiscFields && specialFeaturesDiscFormatAssumed)}
               expanded={openRow === "discs"}
               onPress={() => toggleRow("discs")}
             >
@@ -4221,6 +4316,10 @@ const styles = StyleSheet.create({
   link: { color: "#38bdf8" },
   // Same amber warning family as OfflineBanner.tsx, for consistency between the two banners
   // that can appear on this screen.
+  // Same amber family as SummaryRow's rowNotable - marks a value the app assumed for the user to
+  // check (the bonus-disc format default, 2026-10-04).
+  assumedSection: { borderWidth: 1, borderColor: "#d97706", backgroundColor: "#2a1f0a", borderRadius: 10, padding: 10 },
+  assumedHint: { color: "#fbbf24", fontSize: 13 },
   categoryWarning: {
     backgroundColor: "#78350f",
     borderRadius: 8,

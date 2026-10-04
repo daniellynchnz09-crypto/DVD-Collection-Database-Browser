@@ -43,8 +43,14 @@ export async function getUpcQuotaStatus(supabase: SupabaseClient): Promise<UpcQu
     .eq("id", STATUS_ROW_ID)
     .maybeSingle();
   const limit = (data?.limit_count as number | undefined) ?? 100;
+  const resetAt = (data?.reset_at as string | null | undefined) ?? null;
+  // Once UPCitemdb's own reset time has passed, the last snapshot is stale - the provider has
+  // already restored the full allowance, but nothing rewrites this row until the next real
+  // lookup (2026-10-04: a cover-only scanning batch made no lookups at all, so the bar kept
+  // showing the previous day's usage). Report it as fully available instead.
+  if (resetAt && Date.parse(resetAt) <= Date.now()) return { used: 0, limit, remaining: limit, resetAt: null };
   const remaining = (data?.remaining_count as number | undefined) ?? limit;
-  return { used: Math.max(0, limit - remaining), limit, remaining, resetAt: (data?.reset_at as string | null | undefined) ?? null };
+  return { used: Math.max(0, limit - remaining), limit, remaining, resetAt };
 }
 
 /** Overwrites the tracked snapshot with UPCitemdb's own real headers from the most recent

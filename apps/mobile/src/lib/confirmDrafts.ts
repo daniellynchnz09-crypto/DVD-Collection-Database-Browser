@@ -90,6 +90,8 @@ export interface ConfirmDraft {
   specialFeatures: boolean;
   specialFeaturesDiscCount: string;
   specialFeaturesDiscFormat: string;
+  /** True while the bonus-disc format is still the app's own assumption (2026-10-04). */
+  specialFeaturesDiscFormatAssumed?: boolean;
   candidates?: ConfirmDraftCandidate[];
   titleSearchQuery?: string;
   hasSearchedOrSkipped?: boolean;

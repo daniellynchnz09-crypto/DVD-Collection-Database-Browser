@@ -53,6 +53,22 @@ interface TmdbMovieDetail {
   production_companies?: { name: string }[];
   genres?: { name: string }[];
   original_language?: string;
+  // `/tv/{id}` only - see TmdbTvInfo.
+  type?: string;
+  number_of_seasons?: number;
+  number_of_episodes?: number;
+}
+
+/** A TV show's own shape from TMDb's `/tv/{id}` (added 2026-10-04, after a real "Hindenburg:
+ * The Last Flight" scan came up with no Season/Episode details - OMDb only says "series" for
+ * it, while TMDb says `type: "Miniseries"`, 1 season, 2 episodes). Read off the same detail
+ * response the TV branch already fetches - no extra call. ConfirmScreen uses it to sharpen
+ * TV Series -> TV Mini-Series and to pre-fill Season No./Episode Count when there's only one
+ * season to choose from. */
+export interface TmdbTvInfo {
+  type: string | null;
+  numberOfSeasons: number | null;
+  numberOfEpisodes: number | null;
 }
 
 interface TmdbReleaseDatesResponse {
@@ -139,6 +155,7 @@ export async function fetchTmdbFieldsById(
   // reads - genuinely free, no extra call. Empty array (not null) when the detail fetch
   // itself failed, same "absence of a signal" convention as isAnimated defaulting to false.
   genres: string[];
+  tvInfo?: TmdbTvInfo | null;
 }> {
   if (mediaType === "tv") {
     const [details, contentRatings] = await Promise.all([
@@ -153,8 +170,11 @@ export async function fetchTmdbFieldsById(
 
     const nzEntry = contentRatings?.results?.find((r) => r.iso_3166_1 === "NZ");
     const rating = validNzRatingOrNull(nzEntry?.rating);
+    const tvInfo: TmdbTvInfo | null = details
+      ? { type: details.type ?? null, numberOfSeasons: details.number_of_seasons ?? null, numberOfEpisodes: details.number_of_episodes ?? null }
+      : null;
 
-    return { rating, studio, isAnimated, originalLanguage, genres };
+    return { rating, studio, isAnimated, originalLanguage, genres, tvInfo };
   }
 
   const [details, releaseDates] = await Promise.all([
@@ -327,6 +347,7 @@ export interface TmdbFields {
   isAnimated: boolean | null;
   originalLanguage: string | null;
   genres: string[];
+  tvInfo?: TmdbTvInfo | null;
 }
 
 /** Looks a title up on TMDb for the first time, via its IMDb id - returns everything
@@ -343,8 +364,8 @@ export async function lookupTmdbFields(imdbId: string): Promise<TmdbFields> {
   if (found == null) {
     return { tmdbId: null, tmdbMediaType: null, rating: null, studio: null, isAnimated: null, originalLanguage: null, genres: [] };
   }
-  const { rating, studio, isAnimated, originalLanguage, genres } = await fetchTmdbFieldsById(found.tmdbId, found.mediaType);
-  return { tmdbId: found.tmdbId, tmdbMediaType: found.mediaType, rating, studio, isAnimated, originalLanguage, genres };
+  const { rating, studio, isAnimated, originalLanguage, genres, tvInfo } = await fetchTmdbFieldsById(found.tmdbId, found.mediaType);
+  return { tmdbId: found.tmdbId, tmdbMediaType: found.mediaType, rating, studio, isAnimated, originalLanguage, genres, tvInfo: tvInfo ?? null };
 }
 
 interface TmdbTvSearchResponse {

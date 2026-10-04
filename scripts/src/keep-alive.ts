@@ -2,8 +2,8 @@
  * Pings both Supabase projects with a trivial read so Supabase's activity scan
  * doesn't flag them for auto-pause (their free tier pauses a project after 7 days
  * with no activity - see Claude/TECH STACK AND ARCHITECTURE.md's "Hosting" section).
- * Run on a schedule via .github/workflows/keep-alive.yml every 3 days, well inside
- * the 7-day window. Also runnable by hand: `npm run keep-alive` from the repo root.
+ * Run on a schedule via .github/workflows/keep-alive.yml daily (every 3 days until
+ * 2026-10-04 - see pingTarget's own comment). Also runnable by hand: `npm run keep-alive` from the repo root.
  *
  * Both projects are pinged with their anon key, not the service-role key the other
  * scripts in this folder need - a read against titles' public-read RLS policy is
@@ -41,15 +41,28 @@ async function pingTarget(target: KeepAliveTarget): Promise<boolean> {
     return true;
   }
 
+  // Several real requests per run rather than one tiny read (2026-10-04) - the public project
+  // still got Supabase's "scheduled to be paused" email despite this job's single
+  // `limit(1)` read succeeding every 3 days (verified in the Actions logs), so that alone
+  // evidently doesn't register as "sufficient activity". Supabase doesn't document the exact
+  // threshold, so this now exercises the database (an exact row count plus a real page of
+  // rows), the Auth service and Storage, and the workflow runs daily instead of every 3 days.
   const supabase = createClient(target.url, target.key);
-  const { error } = await supabase.from("titles").select("unique_id").limit(1);
+  const { error: countError } = await supabase.from("titles").select("unique_id", { count: "exact", head: true });
+  const { error: pageError } = await supabase.from("titles").select("unique_id, title").limit(50);
+  const authRes = await fetch(`${target.url}/auth/v1/health`, { headers: { apikey: target.key } }).catch(() => null);
+  const { error: storageError } = await supabase.storage.from("case-images").list("", { limit: 1 });
 
+  const error = countError ?? pageError;
   if (error) {
     console.error(`[keep-alive] "${target.name}" ping FAILED: ${error.message}`);
     return false;
   }
 
-  console.log(`[keep-alive] "${target.name}" ping OK.`);
+  // Auth/Storage are extra activity only - a hiccup there isn't a failed keep-alive.
+  console.log(
+    `[keep-alive] "${target.name}" ping OK (auth ${authRes?.status ?? "unreachable"}, storage ${storageError ? "skipped" : "ok"}).`
+  );
   return true;
 }
 

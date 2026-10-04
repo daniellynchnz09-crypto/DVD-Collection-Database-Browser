@@ -51,9 +51,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "imdbId is required" }, { status: 400 });
   }
 
-  const [{ tmdbId, rating, studio, isAnimated, originalLanguage, genres }, franchise] = await Promise.all([
+  const [{ tmdbId, rating, studio, isAnimated, originalLanguage, genres, tvInfo }, franchise] = await Promise.all([
     lookupTmdbFields(imdbId),
     lookupFranchiseFromWikidata(imdbId),
   ]);
-  return NextResponse.json({ tmdbId, rating, studio, isAnimated, originalLanguage, genres, franchise });
+  return NextResponse.json({ tmdbId, rating, studio, isAnimated, originalLanguage, genres, franchise, tvInfo: tvInfo ?? null });
 }

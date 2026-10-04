@@ -250,6 +250,9 @@ export interface TmdbPreview {
   // tagged TMDb's own "TV Movie" genre almost certainly is one), same signal the confirm
   // route's own OMDb+TMDb genre merge uses. See ConfirmScreen.tsx's guessMovieOrTvFromType.
   genres: string[];
+  // TMDb's own TV show shape (type e.g. "Miniseries"/"Scripted", season/episode totals) - null
+  // for a movie or no match. Added 2026-10-04, see packages/backend/src/tmdb.ts's TmdbTvInfo.
+  tvInfo?: { type: string | null; numberOfSeasons: number | null; numberOfEpisodes: number | null } | null;
 }
 
 /** Read-only "would TMDb find anything for this title" check - lets ConfirmScreen keep
