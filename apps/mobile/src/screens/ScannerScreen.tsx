@@ -1,8 +1,9 @@
-import { useRef, useState } from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Modal, StyleSheet, Switch, Text, TouchableOpacity, View } from "react-native";
+import { CameraView, scanFromURLAsync, useCameraPermissions, type BarcodeScanningResult, type BarcodeType } from "expo-camera";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { cancelScanSession, finishScanSession, uploadCoverPhoto } from "../lib/scanApi";
+import { cancelScanSession, fetchUpcQuotaStatus, finishScanSession, uploadCoverPhoto } from "../lib/scanApi";
+import { useScannerSettings } from "../lib/scannerSettings";
 import { clearConfirmDraft } from "../lib/confirmDrafts";
 import { createScanSessionId } from "../lib/scanSession";
 import OfflineBanner from "../components/OfflineBanner";
@@ -18,6 +19,8 @@ function freshSession(): ScanSession {
 }
 
 type CaptureMode = "scanning" | "positioningCover";
+
+const BARCODE_TYPES: BarcodeType[] = ["ean13", "upc_a", "upc_e"];
 
 /**
  * Cover-photo scanning (2026-09-28) turned this screen from "instantly queue whatever barcode
@@ -60,6 +63,19 @@ type CaptureMode = "scanning" | "positioningCover";
  * at "Capture Barcode" tap time rather than at Done, since it's about the same barcode being
  * re-captured within a manual gesture, not about session completion.
  *
+ * Automatic barcode capture (2026-10-04, per the user's own request): a barcode found on the
+ * case while photographing its covers joins the scan automatically when Done is tapped - no
+ * "Capture Barcode" tap needed. Two sources, since neither is reliable alone: the camera's live
+ * barcode detector while a cover is being lined up (`positioningCover`), and
+ * `scanFromURLAsync` run on each captured cover photo (Expo's own docs warn Android reads a
+ * barcode from a still image best when it fills most of the frame, so a whole back cover can
+ * miss). Only detections made while photographing covers count - a barcode merely glimpsed in
+ * plain scanning mode still needs the manual tap, so a neighbouring disc's barcode can't sneak
+ * in. The found code is shown before Done with a "Don't add it" option. Turned off when the
+ * UPC lookup quota is used up (no credits left to spend on it), and by the persisted
+ * "Manual barcode capture only" setting (scannerSettings.ts), which restores the old
+ * manual-only behaviour so the user can choose not to spend UPC credits automatically.
+ *
  * Focus: `expo-camera` (plain Expo Go, no native module) exposes no manual focus-distance/lens
  * API on either platform, only an on/off `autofocus` toggle - and Android's "off" isn't a no-op,
  * it actively freezes whatever focus distance the lens already had (`cancelFocusAndMetering`).
@@ -88,6 +104,24 @@ export default function ScannerScreen({
   const [coverBusy, setCoverBusy] = useState(false);
   const [focusLocked, setFocusLocked] = useState(false);
   const busyRef = useRef(false);
+  const { settings, loaded: settingsLoaded, update: updateSettings } = useScannerSettings();
+  const [showSettings, setShowSettings] = useState(false);
+  // Barcode found automatically while photographing covers (see the header comment), plus any
+  // code the user said not to add, so the live detector doesn't immediately re-add it.
+  const [autoBarcode, setAutoBarcode] = useState<string | null>(null);
+  const [dismissedAutoBarcode, setDismissedAutoBarcode] = useState<string | null>(null);
+  // null until the first quota check returns (or if it fails) - treated as "available".
+  const [upcRemaining, setUpcRemaining] = useState<number | null>(null);
+  const refreshUpcQuota = useCallback(() => {
+    fetchUpcQuotaStatus()
+      .then(({ quota }) => setUpcRemaining(quota.remaining))
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    refreshUpcQuota();
+  }, [refreshUpcQuota]);
+  const upcQuotaExhausted = upcRemaining !== null && upcRemaining <= 0;
+  const autoBarcodeEnabled = settingsLoaded && !settings.manualBarcodeCaptureOnly && !upcQuotaExhausted;
 
   if (!permission) {
     return <View style={styles.container} />;
@@ -104,8 +138,16 @@ export default function ScannerScreen({
     );
   }
 
+  function noteAutoBarcode(code: string) {
+    if (!autoBarcodeEnabled || session.barcode || code === dismissedAutoBarcode) return;
+    setAutoBarcode(code);
+  }
+
   function handleBarcodeScanned(result: BarcodeScanningResult) {
-    if (captureMode !== "scanning") return;
+    if (captureMode === "positioningCover") {
+      noteAutoBarcode(result.data);
+      return;
+    }
     setDetectedBarcode(result.data);
   }
 
@@ -145,6 +187,16 @@ export default function ScannerScreen({
       if (!photo) throw new Error("No photo returned");
       if (!photo.base64) throw new Error("Capture produced no image data");
 
+      // Second automatic-barcode source (see header comment) - best-effort, never blocks the photo.
+      if (autoBarcodeEnabled && !session.barcode && photo.uri) {
+        try {
+          const found = await scanFromURLAsync(photo.uri, BARCODE_TYPES);
+          if (found[0]?.data) noteAutoBarcode(found[0].data);
+        } catch {
+          // No barcode read from this photo - the live detector may still have one.
+        }
+      }
+
       const { stagedPath } = await uploadCoverPhoto(session.sessionId, photo.base64, "image/jpeg");
       setSession((prev) => ({ ...prev, stagedCoverPaths: [...prev.stagedCoverPaths, stagedPath] }));
       setLastMessage(`Cover photo captured (${session.stagedCoverPaths.length + 1} this session).`);
@@ -163,15 +215,31 @@ export default function ScannerScreen({
     busyRef.current = true;
 
     try {
-      const { replacedIds } = await finishScanSession(session.barcode, session.stagedCoverPaths);
+      // A manually captured barcode always wins; otherwise the automatically found one is
+      // added now, at Done (skipped if the same code was queued in the last few minutes).
+      let barcode = session.barcode;
+      let autoNote = "";
+      if (!barcode && autoBarcode && autoBarcodeEnabled) {
+        if (wasRecentlyQueued(autoBarcode)) autoNote = ` (barcode ${autoBarcode} was queued recently - left off)`;
+        else {
+          barcode = autoBarcode;
+          autoNote = ` with barcode ${autoBarcode}`;
+        }
+      }
+      const { replacedIds } = await finishScanSession(barcode, session.stagedCoverPaths);
       // Any old, still-unfinished pending scan for this same barcode was just deleted
       // server-side in favor of this fresh one - its local autosaved draft, if any, can
       // never be reopened again, so it must be cleared here too, not just left orphaned.
       replacedIds.forEach(clearConfirmDraft);
-      if (session.barcode) markQueued(session.barcode);
-      setLastMessage("Scan session finished - queued for lookup.");
+      if (barcode) markQueued(barcode);
+      setLastMessage(`Scan session finished${autoNote} - queued for lookup.`);
       setSession(freshSession());
       setDetectedBarcode(null);
+      setAutoBarcode(null);
+      setDismissedAutoBarcode(null);
+      // The resolver spends a UPC lookup on a barcode scan - re-check shortly afterwards so
+      // auto-capture switches itself off once the quota actually runs out.
+      if (barcode) setTimeout(refreshUpcQuota, 20000);
     } catch (err) {
       setLastMessage(`Failed to finish scan session: ${(err as Error).message}`);
     } finally {
@@ -183,6 +251,8 @@ export default function ScannerScreen({
     const { sessionId } = session;
     setSession(freshSession());
     setDetectedBarcode(null);
+    setAutoBarcode(null);
+    setDismissedAutoBarcode(null);
     setLastMessage("Scan session cancelled.");
     try {
       await cancelScanSession(sessionId);
@@ -206,13 +276,55 @@ export default function ScannerScreen({
       />
       <View style={[styles.topOverlay, { top: insets.top }]}>
         <OfflineBanner />
+        <TouchableOpacity style={styles.settingsButton} onPress={() => setShowSettings(true)} hitSlop={10}>
+          <Text style={styles.settingsButtonText}>Settings</Text>
+        </TouchableOpacity>
       </View>
+
+      <Modal visible={showSettings} transparent animationType="fade" onRequestClose={() => setShowSettings(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Scanner settings</Text>
+            <View style={styles.settingRow}>
+              <Text style={styles.settingLabel}>Manual barcode capture only</Text>
+              <Switch
+                value={settings.manualBarcodeCaptureOnly}
+                onValueChange={(value) => updateSettings({ manualBarcodeCaptureOnly: value })}
+              />
+            </View>
+            <Text style={styles.settingHint}>
+              Off: a barcode spotted while you photograph the covers is added to the scan automatically when you tap
+              Done (each one uses a UPC lookup credit). On: a barcode is only added when you tap Capture Barcode.
+            </Text>
+            {upcRemaining !== null && <Text style={styles.settingHint}>UPC lookups left today: {upcRemaining}</Text>}
+            <TouchableOpacity style={styles.button} onPress={() => setShowSettings(false)}>
+              <Text style={styles.buttonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {captureMode === "scanning" ? (
         <View style={[styles.overlay, { paddingBottom: 20 + insets.bottom }]}>
           <Text style={styles.hint}>Point the camera at the disc case's barcode</Text>
           {detectedBarcode && <Text style={styles.message}>Detected: {detectedBarcode}</Text>}
           {session.barcode && <Text style={styles.captured}>Barcode captured: {session.barcode}</Text>}
+          {!session.barcode && autoBarcode && autoBarcodeEnabled && (
+            <View style={styles.autoBarcodeRow}>
+              <Text style={styles.captured}>Barcode found on the case: {autoBarcode} - added when you tap Done</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setDismissedAutoBarcode(autoBarcode);
+                  setAutoBarcode(null);
+                }}
+              >
+                <Text style={styles.link}>Don&apos;t add it</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          {upcQuotaExhausted && !settings.manualBarcodeCaptureOnly && (
+            <Text style={styles.warning}>UPC lookups used up for today - automatic barcode capture is off.</Text>
+          )}
           {session.stagedCoverPaths.length > 0 && (
             <Text style={styles.captured}>
               Cover photos captured: {session.stagedCoverPaths.length}
@@ -288,6 +400,17 @@ const styles = StyleSheet.create({
   },
   camera: { flex: 1 },
   topOverlay: { position: "absolute", left: 0, right: 0 },
+  settingsButton: { alignSelf: "flex-end", margin: 12, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: "rgba(0,0,0,0.6)" },
+  settingsButtonText: { color: "#e4e4e7", fontWeight: "600" },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "center", padding: 24 },
+  modalCard: { backgroundColor: "#18181b", borderRadius: 12, padding: 20, gap: 14 },
+  modalTitle: { color: "#fafafa", fontSize: 18, fontWeight: "700" },
+  settingRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  settingLabel: { color: "#f4f4f5", fontSize: 16, flexShrink: 1 },
+  settingHint: { color: "#a1a1aa", fontSize: 13 },
+  autoBarcodeRow: { alignItems: "center", gap: 4 },
+  link: { color: "#38bdf8", textDecorationLine: "underline" },
+  warning: { color: "#fbbf24", textAlign: "center" },
   overlay: {
     position: "absolute",
     bottom: 0,
