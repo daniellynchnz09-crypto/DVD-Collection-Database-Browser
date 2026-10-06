@@ -139,8 +139,11 @@ export interface BrowserSeason {
   number: number | null;
   label: string;
   overview: string | null;
-  /** Live from TMDb; null when no TMDb id is known or the fetch failed. */
+  /** Live from TMDb, narrowed to the episodes the owned discs actually hold (see
+   * ownedEpisodeNumbers); null when no TMDb id is known or the fetch failed. */
   episodes: TvEpisode[] | null;
+  /** How many episodes the whole season has, when `episodes` was narrowed to fewer. */
+  seasonEpisodeTotal: number | null;
   holders: SeasonHolder[];
 }
 
@@ -159,6 +162,7 @@ const MAX_LIVE_SEASONS = 40;
  * with episode lists from TMDb when the show's TMDb id is known. */
 export async function getSeriesBrowser(work: Work): Promise<SeriesBrowserData> {
   const bySeason = new Map<number, SeasonHolder[]>();
+  const rowsBySeason = new Map<number, TitleDetailRow[]>();
   const unnumbered = new Map<string, SeasonHolder[]>();
 
   for (const d of work.items) {
@@ -172,7 +176,12 @@ export async function getSeriesBrowser(work: Work): Promise<SeriesBrowserData> {
       episodeCount: d.row.episode_count,
     };
     if (parsed.numbers.length > 0) {
-      for (const n of parsed.numbers) bySeason.set(n, [...(bySeason.get(n) ?? []), holder]);
+      for (const n of parsed.numbers) {
+        bySeason.set(n, [...(bySeason.get(n) ?? []), holder]);
+        // Only a disc for exactly one season can be narrowed to particular episodes.
+        if (parsed.numbers.length === 1) rowsBySeason.set(n, [...(rowsBySeason.get(n) ?? []), d.row]);
+        else rowsBySeason.set(n, [...(rowsBySeason.get(n) ?? []), { ...d.row, title: "", part_of_season_no: null }]);
+      }
     } else {
       const label = parsed.label ?? "Other releases";
       unnumbered.set(label, [...(unnumbered.get(label) ?? []), holder]);
@@ -183,19 +192,71 @@ export async function getSeriesBrowser(work: Work): Promise<SeriesBrowserData> {
   const numbers = [...bySeason.keys()].sort((a, b) => a - b);
   const live = tvId ? await getTvSeasons(tvId, numbers.slice(0, MAX_LIVE_SEASONS)) : new Map();
 
+  const showTitle = workDisplayTitle(work);
   const seasons: BrowserSeason[] = numbers.map((n) => {
     const s = live.get(n);
+    const all: TvEpisode[] | null = s?.episodes ?? null;
+    const owned = all ? ownedEpisodeNumbers(all, rowsBySeason.get(n) ?? [], showTitle) : null;
+    const episodes = all && owned ? all.filter((e) => owned.has(e.episodeNumber)) : all;
     return {
       number: n,
       label: n === 0 ? "Specials" : `Season ${n}`,
       overview: s?.overview ?? null,
-      episodes: s?.episodes ?? null,
+      episodes,
+      seasonEpisodeTotal: all && episodes && episodes.length < all.length ? all.length : null,
       holders: bySeason.get(n) ?? [],
     };
   });
-  for (const [label, holders] of unnumbered) seasons.push({ number: null, label, overview: null, episodes: null, holders });
+  for (const [label, holders] of unnumbered)
+    seasons.push({ number: null, label, overview: null, episodes: null, seasonEpisodeTotal: null, holders });
 
   return { seasons, usedTmdb: live.size > 0, tmdbLinked: tvId !== null };
+}
+
+const normalizeEpisodeName = (name: string) =>
+  name
+    .toLowerCase()
+    .replace(/\(\d+\)|part\s*\d+|episode\s*\d+/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+/**
+ * Which of a season's episodes the owned discs hold (2026-10-06, the user: a series like Doctor
+ * Who should only list the episodes in the sets they own - season 3 just The Savages' four,
+ * season 4 just The Underwater Menace's). null = show the whole season. Per disc:
+ *  - a whole-season set ("Doctor Who Season 21", "Complete Series 2", or just the show's own
+ *    name) holds every episode, so the season isn't narrowed at all;
+ *  - a story/serial disc ("The Savages") holds the run of episodes TMDb names after it ("The
+ *    Savages (1)".."(4)"), capped at the disc's episode_count - checked against the classic Who
+ *    serial index: identical ranges for both of the user's serials;
+ *  - "Part N" of a season with an episode_count holds the Nth block of that many episodes,
+ *    assuming the parts split the season evenly;
+ *  - anything else can't be pinned down, so the whole season is shown rather than guessing.
+ */
+function ownedEpisodeNumbers(episodes: TvEpisode[], rows: TitleDetailRow[], showTitle: string): Set<number> | null {
+  if (rows.length === 0) return null;
+  const show = normalizeEpisodeName(showTitle);
+  const owned = new Set<number>();
+  for (const row of rows) {
+    let story = normalizeEpisodeName(row.title ?? "");
+    if (show && story.startsWith(`${show} `)) story = story.slice(show.length + 1);
+    const wholeSeason = !story || story === show || /(season|series|complete|collection|box set)/.test(story);
+    const part = parseInt(row.part_of_season_no ?? "", 10);
+
+    if (wholeSeason && Number.isFinite(part) && part > 0 && row.episode_count && row.episode_count > 0) {
+      const first = (part - 1) * row.episode_count + 1;
+      for (let n = first; n < first + row.episode_count; n++) owned.add(n);
+      continue;
+    }
+    if (wholeSeason) return null;
+
+    const matches = episodes.filter((e) => normalizeEpisodeName(e.name) === story || normalizeEpisodeName(e.name).startsWith(`${story} `));
+    if (matches.length === 0) return null;
+    for (const e of matches.slice(0, row.episode_count && row.episode_count > 0 ? row.episode_count : matches.length)) {
+      owned.add(e.episodeNumber);
+    }
+  }
+  return owned.size > 0 ? owned : null;
 }
 
 /**

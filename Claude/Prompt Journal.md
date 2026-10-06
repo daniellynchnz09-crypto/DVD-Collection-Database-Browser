@@ -787,3 +787,9 @@ Follow-up, 2026-10-04: after another scanning batch the user reported four thing
   - Gemma 4 26B got 8/9 on rotation but 4/9 on boxes;
   - read quality was similar between 3.1 Flash-Lite and Gemma 4 26B.
 - **Result.** Kept the existing model first and added a per-model fallback chain (3.5 Flash-Lite, then 3.1 Flash-Lite, then Gemma 4 26B) in `geminiRequest.ts`. Every Gemini call goes through it. This also restored cover reading the same day, since the first model's quota was used up. Started the stored-photo rotation repair dry run on the chain.
+
+2026-10-06 (later):
+- **Upside-down photos fixed.** The stored-photo rotation repair ran on the model chain. The dry run flagged 9 photos (12 Years a Slave, Alexander, Amadeus, Anna and the King of Siam, Barry Lyndon, Bathory, The 14, The Agony and the Ecstasy, Zulu). All 9 previews were checked by eye, then applied.
+- **Metadata backfill finished** for scanned titles. OMDb hit its daily cap with 5 titles left, because the earlier whole-collection run had already used about 900 OMDb lookups. That correction was reported to the user.
+- **Series browser.** The user asked for TV series to list only the episodes in the sets they own: Doctor Who season 3 only The Savages, season 4 only The Underwater Menace. Built by matching serial titles to TMDb episode names (verified against the serial index); whole-season sets still show everything.
+- **Row scroll arrows.** The user asked for them to touch the page edges. They were already full-width, but the chevron clip cut away the outer corners, so the clip direction was flipped.

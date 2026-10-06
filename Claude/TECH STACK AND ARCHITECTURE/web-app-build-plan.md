@@ -78,3 +78,10 @@ The original plan above is kept as written; these replace parts of it.
   - `0047` also gives the anon key back read access to `personal_rating` on the private project, at the user's request.
   - All of it is stripped from the public build (excluded files, plus LETTERBOXD markers in the title page).
 - **Phone access in development.** `allowedDevOrigins: ["192.168.1.70"]` is now in `next.config.ts`. Without it, Next 16 blocked its own scripts on the phone. Plain links still worked, but the Back button, search and the endless home rows did not.
+- **Series browser shows only the episodes on owned discs (2026-10-06).** Season 3 of Doctor Who lists just The Savages' 4 episodes ("4 of 45 episodes // on my discs"), not the whole season.
+  - Story/serial discs are matched to TMDb's episode names ("The Savages (1)".."(4)"), capped at the disc's episode count. This was checked against the classic Who serial index: same episode ranges.
+  - Whole-season sets show every episode.
+  - "Part N" discs show the Nth block of episodes, assuming the parts split the season evenly.
+  - Anything that can't be pinned down shows the whole season.
+  - Code: `ownedEpisodeNumbers` in `titlePages.ts`.
+- **Row scroll arrows** now sit flat against the page edge, with the angled side facing the cards. Before, the point sat at the edge and left gaps at the corners.

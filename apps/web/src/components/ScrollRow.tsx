@@ -85,7 +85,9 @@ function RowArrow({ dir, enabled, onClick }: { dir: -1 | 1; enabled: boolean; on
       disabled={!enabled}
       aria-label={left ? "Scroll left" : "Scroll right"}
       className={`absolute top-1 bottom-12 z-10 hidden w-10 items-center justify-center bg-void/75 text-accent backdrop-blur-sm transition sm:flex ${
-        left ? "clip-chevron-left left-0" : "clip-chevron-right right-0"
+        // Flat side flush with the page edge, angled side facing the cards (2026-10-06 - the
+        // point used to sit against the edge, leaving gaps at the corners).
+        left ? "clip-chevron-right left-0" : "clip-chevron-left right-0"
       } ${enabled ? "opacity-0 group-hover/row:opacity-100 hover:bg-accent-deep hover:text-accent-hi focus-visible:opacity-100" : "pointer-events-none opacity-0"}`}
     >
       <svg aria-hidden viewBox="0 0 10 16" className="h-4 w-2.5 fill-current">

@@ -46,6 +46,11 @@ export function TvSeriesBrowser({ seasons, tmdbLinked }: { seasons: BrowserSeaso
       <div id={`${baseId}-panel`} role="tabpanel" aria-labelledby={`${baseId}-tab-${active}`} className="grid gap-6 p-4 lg:grid-cols-[1fr_17rem] lg:p-5">
         <div className="min-w-0">
           {season.overview ? <p className="mb-4 max-w-3xl text-sm leading-relaxed text-mist">{season.overview}</p> : null}
+          {season.seasonEpisodeTotal && season.episodes ? (
+            <p className="label-tech mb-3 text-accent">
+              {`${season.episodes.length} of ${season.seasonEpisodeTotal} episodes // on my discs`}
+            </p>
+          ) : null}
           {season.episodes && season.episodes.length > 0 ? (
             <ol className="flex flex-col divide-y divide-rule">
               {season.episodes.map((ep) => (
