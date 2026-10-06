@@ -29,7 +29,8 @@
           "cameraPermission": "Allow DVD Database to access your camera to scan disc barcodes.",
           "barcodeScannerEnabled": true
         }
-      ]
+      ],
+      "expo-font"
     ]
   }
 }

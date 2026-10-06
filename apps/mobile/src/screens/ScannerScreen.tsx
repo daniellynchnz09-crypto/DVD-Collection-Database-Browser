@@ -7,6 +7,7 @@ import { useScannerSettings } from "../lib/scannerSettings";
 import { clearConfirmDraft } from "../lib/confirmDrafts";
 import { createScanSessionId } from "../lib/scanSession";
 import OfflineBanner from "../components/OfflineBanner";
+import { CHROME_BAR, COLORS, FONTS, GLOSS, PANEL } from "../theme";
 
 interface ScanSession {
   sessionId: string;
@@ -276,9 +277,16 @@ export default function ScannerScreen({
       />
       <View style={[styles.topOverlay, { top: insets.top }]}>
         <OfflineBanner />
-        <TouchableOpacity style={styles.settingsButton} onPress={() => setShowSettings(true)} hitSlop={10}>
-          <Text style={styles.settingsButtonText}>Settings</Text>
-        </TouchableOpacity>
+        {/* The website's header: logo left, settings right, on a brushed-metal strip. */}
+        <View style={styles.brandBar}>
+          <View style={styles.brandMark} />
+          <Text style={styles.brandText}>
+            DANFLIX<Text style={styles.brandVersion}> 5.0</Text>
+          </Text>
+          <TouchableOpacity style={styles.settingsButton} onPress={() => setShowSettings(true)} hitSlop={10}>
+            <Text style={styles.settingsButtonText}>Settings</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <Modal visible={showSettings} transparent animationType="fade" onRequestClose={() => setShowSettings(false)}>
@@ -400,17 +408,39 @@ const styles = StyleSheet.create({
   },
   camera: { flex: 1 },
   topOverlay: { position: "absolute", left: 0, right: 0 },
-  settingsButton: { alignSelf: "flex-end", margin: 12, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: "rgba(0,0,0,0.6)" },
-  settingsButtonText: { color: "#e4e4e7", fontWeight: "600" },
+  brandBar: { ...CHROME_BAR, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 8, opacity: 0.94 },
+  // The logo's chevron, drawn as a CSS-style triangle.
+  brandMark: {
+    width: 0,
+    height: 0,
+    borderTopWidth: 9,
+    borderBottomWidth: 9,
+    borderLeftWidth: 10,
+    borderTopColor: "transparent",
+    borderBottomColor: "transparent",
+    borderLeftColor: COLORS.accent,
+  },
+  brandText: {
+    flex: 1,
+    fontFamily: FONTS.displayBold,
+    fontSize: 20,
+    letterSpacing: 2.4,
+    color: COLORS.accent,
+    textShadowColor: "rgba(92,200,255,0.45)",
+    textShadowRadius: 8,
+  },
+  brandVersion: { color: COLORS.accentHi },
+  settingsButton: { ...GLOSS, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 0, backgroundColor: COLORS.accentDeep },
+  settingsButtonText: { letterSpacing: 1, color: "#d7e2ee", fontFamily: FONTS.displaySemiBold },
   modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "center", padding: 24 },
-  modalCard: { backgroundColor: "#18181b", borderRadius: 12, padding: 20, gap: 14 },
-  modalTitle: { color: "#fafafa", fontSize: 18, fontWeight: "700" },
+  modalCard: { ...PANEL, backgroundColor: "#0f1c2f", borderRadius: 0, padding: 20, gap: 14 },
+  modalTitle: { color: "#f2f7fc", fontSize: 18, fontFamily: FONTS.displayBold },
   settingRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
-  settingLabel: { color: "#f4f4f5", fontSize: 16, flexShrink: 1 },
-  settingHint: { color: "#a1a1aa", fontSize: 13 },
+  settingLabel: { fontFamily: FONTS.body, color: "#e9f1f9", fontSize: 16, flexShrink: 1 },
+  settingHint: { fontFamily: FONTS.body, color: "#a9b8cc", fontSize: 13 },
   autoBarcodeRow: { alignItems: "center", gap: 4 },
-  link: { color: "#38bdf8", textDecorationLine: "underline" },
-  warning: { color: "#fbbf24", textAlign: "center" },
+  link: { fontFamily: FONTS.body, color: "#5cc8ff", textDecorationLine: "underline" },
+  warning: { fontFamily: FONTS.body, color: "#ffb347", textAlign: "center" },
   overlay: {
     position: "absolute",
     bottom: 0,
@@ -420,21 +450,22 @@ const styles = StyleSheet.create({
     gap: 10,
     backgroundColor: "rgba(0,0,0,0.6)",
   },
-  hint: { color: "#e4e4e7", textAlign: "center" },
-  message: { color: "#38bdf8", textAlign: "center" },
-  captured: { color: "#4ade80", textAlign: "center", fontWeight: "600" },
-  countdown: { color: "#fbbf24", textAlign: "center", fontSize: 16, fontWeight: "700" },
+  hint: { fontFamily: FONTS.body, color: "#d7e2ee", textAlign: "center" },
+  message: { fontFamily: FONTS.body, color: "#5cc8ff", textAlign: "center" },
+  captured: { color: "#4ade80", textAlign: "center", fontFamily: FONTS.displaySemiBold },
+  countdown: { color: "#ffb347", textAlign: "center", fontSize: 16, fontFamily: FONTS.displayBold },
   row: { flexDirection: "row", gap: 10 },
   rowButton: { flex: 1 },
   button: {
-    backgroundColor: "#0284c7",
+    ...GLOSS,
+    backgroundColor: "#1d6c9a",
     paddingVertical: 12,
-    borderRadius: 8,
+    borderRadius: 0,
     alignItems: "center",
   },
   buttonDisabled: { opacity: 0.4 },
-  coverButton: { backgroundColor: "#7c3aed" },
-  doneButton: { flex: 1, backgroundColor: "#16a34a" },
-  cancelButton: { flex: 1, backgroundColor: "#dc2626" },
-  buttonText: { color: "#fff", fontWeight: "600" },
+  coverButton: { ...GLOSS, backgroundColor: "#2c5d8a" },
+  doneButton: { ...GLOSS, flex: 1, backgroundColor: "#16a34a" },
+  cancelButton: { ...GLOSS, flex: 1, backgroundColor: "#dc2626" },
+  buttonText: { letterSpacing: 1, color: "#fff", fontFamily: FONTS.displaySemiBold },
 });

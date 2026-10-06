@@ -24,6 +24,7 @@ import SingleSelectChips from "./SingleSelectChips";
 import BigChoice from "./BigChoice";
 import SummaryRow from "./SummaryRow";
 import SlideFlow, { type Slide } from "./SlideFlow";
+import { FONTS, GLOSS, WELL } from "../theme";
 
 /** One title added to a Collection scan's running member list (ConfirmScreen.tsx's
  * Collection flow, added 2026-09-20 - see Claude/TECH STACK AND ARCHITECTURE/
@@ -534,7 +535,7 @@ export default function TitleSearchPicker({
             onChangeText={setQuery}
             onFocus={() => scrollInputRefIntoView(queryInputRef)}
             placeholder="Title"
-            placeholderTextColor="#71717a"
+            placeholderTextColor="#8193ab"
             autoFocus
             returnKeyType="search"
             onSubmitEditing={handleSearch}
@@ -585,7 +586,7 @@ export default function TitleSearchPicker({
                   onChangeText={setManualTitle}
                   onFocus={() => scrollInputRefIntoView(manualTitleInputRef)}
                   placeholder="Title"
-                  placeholderTextColor="#71717a"
+                  placeholderTextColor="#8193ab"
                 />
               </View>
             </>
@@ -637,7 +638,7 @@ export default function TitleSearchPicker({
               value={seasonNo}
               onChangeText={setSeasonNo}
               onFocus={() => scrollInputRefIntoView(seasonNoInputRef)}
-              placeholderTextColor="#71717a"
+              placeholderTextColor="#8193ab"
             />
           </View>
           <View style={styles.section}>
@@ -649,7 +650,7 @@ export default function TitleSearchPicker({
               onChangeText={setPartOfSeasonNo}
               onFocus={() => scrollInputRefIntoView(partOfSeasonNoInputRef)}
               keyboardType="number-pad"
-              placeholderTextColor="#71717a"
+              placeholderTextColor="#8193ab"
             />
           </View>
           <View style={styles.section}>
@@ -661,7 +662,7 @@ export default function TitleSearchPicker({
               onChangeText={setEpisodeCount}
               onFocus={() => scrollInputRefIntoView(episodeCountInputRef)}
               keyboardType="number-pad"
-              placeholderTextColor="#71717a"
+              placeholderTextColor="#8193ab"
             />
           </View>
         </>
@@ -675,7 +676,7 @@ export default function TitleSearchPicker({
             value={manualTitle}
             onChangeText={setManualTitle}
             onFocus={() => scrollInputRefIntoView(manualTitleInputRef)}
-            placeholderTextColor="#71717a"
+            placeholderTextColor="#8193ab"
           />
         </View>
       )}
@@ -818,7 +819,7 @@ export default function TitleSearchPicker({
           onChangeText={setReleaseName}
           onFocus={() => scrollInputRefIntoView(releaseNameInputRef)}
           placeholder="e.g. Definitive Edition"
-          placeholderTextColor="#71717a"
+          placeholderTextColor="#8193ab"
         />
       </View>
 
@@ -978,48 +979,51 @@ export default function TitleSearchPicker({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#09090b" },
+  container: { flex: 1, backgroundColor: "#070d17" },
   scrollContent: { padding: 16, paddingTop: 48, gap: 12 },
-  title: { color: "#f4f4f5", fontSize: 18, fontWeight: "700" },
+  title: { color: "#e9f1f9", fontSize: 18, fontFamily: FONTS.displayBold },
   section: { gap: 8 },
   // gap + flexShrink on the sibling text styles below (added 2026-09-20) - see
   // ConfirmScreen.tsx's own `label` style comment for the full reasoning: without flexShrink,
   // a long label next to a fixed-size Switch/checkbox renders at its full natural width and
   // pushes the control off the right edge of the screen instead of wrapping.
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 },
-  label: { color: "#e4e4e7", fontWeight: "600", flexShrink: 1 },
-  hint: { color: "#a1a1aa", fontStyle: "italic" },
-  link: { color: "#38bdf8" },
-  error: { color: "#f87171" },
+  label: { color: "#d7e2ee", fontFamily: FONTS.displaySemiBold, flexShrink: 1 },
+  hint: { fontFamily: FONTS.body, color: "#a9b8cc", fontStyle: "italic" },
+  link: { fontFamily: FONTS.body, color: "#5cc8ff" },
+  error: { fontFamily: FONTS.body, color: "#f87171" },
   input: {
+    ...WELL,
+    fontFamily: FONTS.body,
     borderWidth: 1,
-    borderColor: "#3f3f46",
-    borderRadius: 8,
+    borderColor: "#24395a",
+    borderRadius: 0,
     padding: 10,
-    color: "#f4f4f5",
+    color: "#e9f1f9",
   },
   button: {
-    backgroundColor: "#0284c7",
-    borderRadius: 8,
+    ...GLOSS,
+    backgroundColor: "#1d6c9a",
+    borderRadius: 0,
     padding: 12,
     alignItems: "center",
   },
-  buttonText: { color: "#f4f4f5", fontWeight: "600" },
+  buttonText: { letterSpacing: 1, color: "#e9f1f9", fontFamily: FONTS.displaySemiBold },
   checkboxRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   checkbox: {
     width: 22,
     height: 22,
-    borderRadius: 4,
+    borderRadius: 0,
     borderWidth: 1,
-    borderColor: "#71717a",
+    borderColor: "#8193ab",
     alignItems: "center",
     justifyContent: "center",
   },
-  checkboxChecked: { backgroundColor: "#0284c7", borderColor: "#0284c7" },
-  checkboxMark: { color: "#f4f4f5", fontSize: 14 },
-  checkboxLabel: { color: "#e4e4e7", flexShrink: 1 },
+  checkboxChecked: { backgroundColor: "#1d6c9a", borderColor: "#1d6c9a" },
+  checkboxMark: { fontFamily: FONTS.body, color: "#e9f1f9", fontSize: 14 },
+  checkboxLabel: { fontFamily: FONTS.body, color: "#d7e2ee", flexShrink: 1 },
   candidateRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 },
-  candidateText: { color: "#e4e4e7", flexShrink: 1 },
-  posterThumb: { width: 40, height: 56, borderRadius: 4 },
-  posterLarge: { width: 100, height: 140, borderRadius: 6 },
+  candidateText: { fontFamily: FONTS.body, color: "#d7e2ee", flexShrink: 1 },
+  posterThumb: { width: 40, height: 56, borderRadius: 0 },
+  posterLarge: { width: 100, height: 140, borderRadius: 0 },
 });

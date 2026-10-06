@@ -6,6 +6,7 @@ import {
   getNextUnacknowledgedSubmission,
   useSubmissionsVersion,
 } from "../lib/backgroundSubmissions";
+import { FONTS, PANEL } from "../theme";
 
 const SUCCESS_VISIBLE_MS = 4000;
 const FAILURE_VISIBLE_MS = 7000;
@@ -58,21 +59,22 @@ export default function SubmissionBanner({ suppressedSubmissionId }: { suppresse
 const styles = StyleSheet.create({
   wrapper: { position: "absolute", left: 12, right: 12, zIndex: 1000, elevation: 1000 },
   banner: {
+    ...PANEL,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
     paddingVertical: 10,
     paddingHorizontal: 14,
-    borderRadius: 10,
+    borderRadius: 0,
     borderWidth: 1,
-    backgroundColor: "#18181b",
+    backgroundColor: "#0f1c2f",
   },
   bannerSucceeded: { borderColor: "#166534" },
   bannerFailed: { borderColor: "#991b1b" },
-  icon: { fontSize: 20, fontWeight: "700" },
-  iconSucceeded: { color: "#4ade80" },
-  iconFailed: { color: "#f87171" },
+  icon: { fontSize: 20, fontFamily: FONTS.displayBold },
+  iconSucceeded: { fontFamily: FONTS.body, color: "#4ade80" },
+  iconFailed: { fontFamily: FONTS.body, color: "#f87171" },
   textBlock: { flex: 1 },
-  title: { color: "#fafafa", fontWeight: "600" },
-  subtitle: { color: "#a1a1aa", fontSize: 12 },
+  title: { color: "#f2f7fc", fontFamily: FONTS.displaySemiBold },
+  subtitle: { fontFamily: FONTS.body, color: "#a9b8cc", fontSize: 12 },
 });

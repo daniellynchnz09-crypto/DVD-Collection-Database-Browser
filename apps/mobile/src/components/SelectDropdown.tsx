@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { FlatList, Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { FONTS, PANEL } from "../theme";
 
 /**
  * A genuine closed-choice dropdown - tap the field to open a full-screen list of options,
@@ -58,25 +59,26 @@ export default function SelectDropdown({
 const styles = StyleSheet.create({
   field: {
     borderWidth: 1,
-    borderColor: "#3f3f46",
-    borderRadius: 8,
+    borderColor: "#24395a",
+    borderRadius: 0,
     padding: 10,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  valueText: { color: "#f4f4f5" },
-  placeholderText: { color: "#71717a" },
-  chevron: { color: "#a1a1aa", marginLeft: 8 },
+  valueText: { fontFamily: FONTS.body, color: "#e9f1f9" },
+  placeholderText: { fontFamily: FONTS.body, color: "#8193ab" },
+  chevron: { fontFamily: FONTS.body, color: "#a9b8cc", marginLeft: 8 },
   backdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.6)",
     justifyContent: "flex-end",
   },
   sheet: {
-    backgroundColor: "#18181b",
-    borderTopLeftRadius: 12,
-    borderTopRightRadius: 12,
+    ...PANEL,
+    backgroundColor: "#0f1c2f",
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
     maxHeight: "60%",
     paddingVertical: 8,
   },
@@ -84,9 +86,9 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 20,
     borderBottomWidth: 1,
-    borderBottomColor: "#27272a",
+    borderBottomColor: "#16294a",
   },
-  optionRowSelected: { backgroundColor: "#0c4a6e" },
-  optionText: { color: "#e4e4e7", fontSize: 16 },
-  optionTextSelected: { color: "#7dd3fc", fontWeight: "600" },
+  optionRowSelected: { backgroundColor: "#0c3554" },
+  optionText: { fontFamily: FONTS.body, color: "#d7e2ee", fontSize: 16 },
+  optionTextSelected: { color: "#b3e8ff", fontFamily: FONTS.displaySemiBold },
 });

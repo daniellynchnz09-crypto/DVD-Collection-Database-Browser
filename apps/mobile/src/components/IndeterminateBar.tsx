@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Animated, Easing, StyleSheet, View } from "react-native";
+import { WELL } from "../theme";
 
 /**
  * Slim indeterminate loading bar (added 2026-09-20, per the user's request - a Collection
@@ -30,6 +31,6 @@ export default function IndeterminateBar() {
 }
 
 const styles = StyleSheet.create({
-  track: { height: 4, backgroundColor: "#27272a", borderRadius: 2, overflow: "hidden", marginTop: 8 },
-  segment: { height: 4, backgroundColor: "#0ea5e9", borderRadius: 2 },
+  track: { ...WELL, height: 4, backgroundColor: "#16294a", borderRadius: 2, overflow: "hidden", marginTop: 8 },
+  segment: { height: 4, backgroundColor: "#5cc8ff", borderRadius: 2 },
 });

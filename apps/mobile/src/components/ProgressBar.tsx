@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Animated, StyleSheet, View } from "react-native";
+import { WELL } from "../theme";
 
 /**
  * A real determinate loading bar - fills from start to finish once and stays there, instead
@@ -37,6 +38,6 @@ export default function ProgressBar({ progress }: { progress: number }) {
 }
 
 const styles = StyleSheet.create({
-  track: { height: 4, backgroundColor: "#27272a", borderRadius: 2, overflow: "hidden", marginTop: 8 },
-  fill: { height: 4, backgroundColor: "#0ea5e9", borderRadius: 2 },
+  track: { ...WELL, height: 4, backgroundColor: "#16294a", borderRadius: 2, overflow: "hidden", marginTop: 8 },
+  fill: { height: 4, backgroundColor: "#5cc8ff", borderRadius: 2 },
 });

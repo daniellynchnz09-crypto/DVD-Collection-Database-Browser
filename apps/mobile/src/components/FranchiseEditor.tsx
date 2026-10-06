@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import SearchableModalInput from "./SearchableModalInput";
+import { FONTS, GLOSS } from "../theme";
 
 type Props = {
   /** Comma-separated franchise tags, same string the form state already holds. */
@@ -94,18 +95,18 @@ export default function FranchiseEditor({ value, onChange, options, cooccurrence
 
 const styles = StyleSheet.create({
   wrap: { gap: 10 },
-  heading: { color: "#a1a1aa", fontSize: 14, marginTop: 4 },
-  empty: { color: "#71717a", fontStyle: "italic" },
+  heading: { fontFamily: FONTS.body, color: "#a9b8cc", fontSize: 14, marginTop: 4 },
+  empty: { fontFamily: FONTS.body, color: "#8193ab", fontStyle: "italic" },
   blocks: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   // maxWidth keeps a long franchise name inside the panel (2026-10-03, user-reported: a long
   // name pushed the chip past the panel's edge) - the text wraps onto extra lines instead.
-  block: { flexDirection: "row", alignItems: "center", backgroundColor: "#0284c7", borderRadius: 10, paddingLeft: 14, minHeight: 48, maxWidth: "100%" },
-  blockText: { color: "#fff", fontSize: 16, fontWeight: "600", flexShrink: 1, paddingVertical: 8 },
+  block: { flexDirection: "row", alignItems: "center", backgroundColor: "#1d6c9a", borderRadius: 0, paddingLeft: 14, minHeight: 48, maxWidth: "100%" },
+  blockText: { color: "#fff", fontSize: 16, fontFamily: FONTS.displaySemiBold, flexShrink: 1, paddingVertical: 8 },
   remove: { paddingHorizontal: 14, height: 48, alignItems: "center", justifyContent: "center" },
-  removeText: { color: "#fff", fontSize: 24, fontWeight: "700" },
-  suggestion: { borderWidth: 1, borderColor: "#38bdf8", borderRadius: 10, paddingHorizontal: 14, minHeight: 48, alignItems: "center", justifyContent: "center", maxWidth: "100%" },
-  suggestionText: { color: "#38bdf8", fontSize: 16, fontWeight: "600", flexShrink: 1, paddingVertical: 8 },
-  addButton: { minHeight: 52, borderRadius: 10, backgroundColor: "#27272a", alignItems: "center", justifyContent: "center" },
+  removeText: { color: "#fff", fontSize: 24, fontFamily: FONTS.displayBold },
+  suggestion: { borderWidth: 1, borderColor: "#5cc8ff", borderRadius: 0, paddingHorizontal: 14, minHeight: 48, alignItems: "center", justifyContent: "center", maxWidth: "100%" },
+  suggestionText: { color: "#5cc8ff", fontSize: 16, fontFamily: FONTS.displaySemiBold, flexShrink: 1, paddingVertical: 8 },
+  addButton: { ...GLOSS, minHeight: 52, borderRadius: 0, backgroundColor: "#16294a", alignItems: "center", justifyContent: "center" },
   addDisabled: { opacity: 0.4 },
-  addText: { color: "#f4f4f5", fontSize: 16, fontWeight: "700" },
+  addText: { color: "#e9f1f9", fontSize: 16, fontFamily: FONTS.displayBold },
 });

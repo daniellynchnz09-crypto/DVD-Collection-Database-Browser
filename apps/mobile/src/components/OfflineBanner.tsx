@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View } from "react-native";
 import { useIsOnline } from "../lib/network";
+import { FONTS } from "../theme";
 
 /**
  * A persistent warning banner shown whenever there's no real internet access - added
@@ -32,5 +33,5 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 16,
   },
-  text: { color: "#fde68a", fontSize: 12, textAlign: "center" },
+  text: { fontFamily: FONTS.body, color: "#fde68a", fontSize: 12, textAlign: "center" },
 });

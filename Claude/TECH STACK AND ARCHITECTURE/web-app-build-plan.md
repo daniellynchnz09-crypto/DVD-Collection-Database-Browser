@@ -35,7 +35,7 @@ The site is public-by-link, so pages must never show: `estimated_value` or any o
 
 **Design system (WEB APP DESIGN.md + `Claude/concept design/`)**
 
-Dark gradient backgrounds; rigid, non-rounded, angular shapes (clipped corners, triangles, chevrons - no pill or rounded buttons); light blue accents; early-2000s "techno chrome" panels in the spirit of the 2Advanced Studios reference (`Design Asthetic/aesthetic-01.webp`) and the banner sheet (`aesthetic-05.webp`): thin rule lines, small uppercase labels, subtle grid/scanline texture. Title pages use a blurred, darkened, zoomed-in copy of the poster as the page background. Logo is the text "DANFLIX 5.0" in light blue, top-left. Light skeuomorphism (the user, 2026-10-06: "it needs a touch more skeuomorphism"): light from above, so raised surfaces (panels, `chrome-bar`, the `chrome-plate` header) get a lit top edge, a shaded bottom edge and a sheen; buttons, selected tabs, badges and bar/meter fills use `gloss` (bright upper half, darker lower half, presses in on click); tracks and the search field are recessed `well`s; poster images get a drop shadow and a plastic-case glare. Keep it subtle - a touch, not a full Aqua-style makeover. Browse rows each end - no infinite looping within a row. All tokens live in `apps/web/src/app/globals.css` (Tailwind v4 `@theme`); components use the tokens, not one-off colours.
+Dark gradient backgrounds; rigid, non-rounded, angular shapes (clipped corners, triangles, chevrons - no pill or rounded buttons); light blue accents; early-2000s "techno chrome" panels in the spirit of the 2Advanced Studios reference (`Design Asthetic/aesthetic-01.webp`) and the banner sheet (`aesthetic-05.webp`): thin rule lines, small uppercase labels, subtle grid/scanline texture. Title pages use a blurred, darkened, zoomed-in copy of the poster as the page background. Logo is the text "DANFLIX 5.0" in light blue, top-left. Light skeuomorphism (the user, 2026-10-06: "it needs a touch more skeuomorphism"): light from above, so raised surfaces (panels, `chrome-bar`, the `chrome-plate` header) get a lit top edge, a shaded bottom edge and a sheen; buttons, selected tabs, badges and bar/meter fills use `gloss` (bright upper half, darker lower half, presses in on click); tracks and the search field are recessed `well`s; poster images get a drop shadow and a plastic-case glare. Keep it subtle - a touch, not a full Aqua-style makeover. The scanner app matches it (2026-10-07, the user's request): `apps/mobile/src/theme.ts` holds the same tokens and fonts (Chakra Petch / Barlow via @expo-google-fonts, loaded in App.tsx). It sets square corners everywhere except true circles, glossy raised buttons, bevelled panels, recessed inputs and tracks, gradient screens and brushed-metal headers (React Native's `experimental_backgroundImage` / `boxShadow`, so no wrapper components), plus the DANFLIX 5.0 logo bar on the camera screen. Corners are square rather than cut, because React Native can't clip a view to a polygon. Browse rows each end - no infinite looping within a row. All tokens live in `apps/web/src/app/globals.css` (Tailwind v4 `@theme`); components use the tokens, not one-off colours.
 
 **Build order and file ownership**
 
@@ -45,7 +45,7 @@ Agents work in the same working tree, so each owns a disjoint set of files. Shar
    - **Foundation** - owns `apps/web/src/app/layout.tsx`, `globals.css`, `robots.ts`, `apps/web/src/components/` (header, search box shell, settings menu, PosterCard, ScrollRow, PageHeader with back button, panel/section primitives), and `apps/web/src/lib/catalog/` (server-only data access: types, Supabase read client, queries for titles/collections/works/franchises, image URL helpers). Home page stub.
    - **Enrichment** - owns `supabase/migrations/0043_title_metadata.sql`, `packages/backend/src/metadata/`, `scripts/src/backfill-title-metadata.ts`, and the post-confirm metadata hook in `apps/web/src/app/api/scan/confirm/route.ts` (fire-and-forget, like the Estimated Value trigger).
 2. Wave 2, in parallel, after Wave 1: **Home/Browse rows**, **Movie/TV + DVD + Collection pages**, **Person + Franchise pages**, **Search** (header dropdown + `/search`). Each owns its own route folder under `apps/web/src/app/` and may add query files under `apps/web/src/lib/catalog/`.
-3. Later phases (not now): Advanced Search filters and taste profiles (Phase 3), Rental Dashboard, Direct Database Access and owner auth (Phase 4), Vercel deployment, then the port to the mobile app.
+3. Later phases (not now): Advanced Search taste profiles (Phase 3; the filters and sorting themselves were built 2026-10-07 - see "Advanced Search filters" below), Rental Dashboard, Direct Database Access and owner auth (Phase 4), Vercel deployment, then the port to the mobile app.
 
 ## Changes after the first review (2026-10-06)
 
@@ -104,3 +104,20 @@ The original plan above is kept as written; these replace parts of it.
   - Scanned titles on the lists so far: Vertigo (Canon) and Capone (Candidate; no IMDb link yet, so not shown on the Film/TV-only home page).
 - **Archive stats** show the total as a big number, then bar charts by format and by type.
 - **Hover effects:** the flowing outline was removed from poster/case images (the user found it distracting) and kept on tiles/links. The circular people/franchise icons keep their spinning arcs. Hover animations were slowed (6 s per lap).
+
+
+**Advanced Search filters (built 2026-10-07, the user's request; spec from WEB APP DESIGN.md's Advanced Search section)**
+
+- **Where it lives:** /search has a "Filters & sort" panel (`components/search/FilterPanel.tsx`). The header search bar has a filter button that opens it. With filters (or a sort) and no search text, /search becomes a browse page ("all 4K horror films").
+- **State:** filters live in the URL (`lib/catalog/searchFilters.ts` parses and writes them), so a filtered view can be bookmarked. Searching again from /search keeps the filters.
+- **Filters:**
+  - result type (films/TV, physical titles, box sets, franchises, directors, actors & crew - people need typed text)
+  - include/block chips for: Movie or TV, format, genre, franchise, age rating, animation/live action, documentary/realism, studio, disc region and release month
+  - two-handled sliders for release year (with decade shortcuts), runtime, IMDb, Rotten Tomatoes and Metacritic
+  - Any/Only/Hide for steelbook, is a box set, and is in a box set
+  - "My score" (titles.personal_rating) - private build only. Its loader `letterboxdScores.ts` is excluded and its call sites are LETTERBOXD sentinel blocks in search.ts and the search page.
+- **Sorts:** best match, alphabetical (ignoring "The"), release date, recently added, popularity (IMDb votes), runtime, IMDb, Rotten Tomatoes, Metacritic, and My score (private) - each either direction.
+- **How filtering works:** the search index (search.ts) carries each row's filterable facts, so filtering costs no extra queries. A film passes when any copy passes. A box set passes on its own steelbook/box-set flags plus any disc inside it passing the rest. Facet values are OR within a facet and AND across facets, and a blocked value removes a title outright.
+- **Not built yet:**
+  - Rotten Tomatoes Audience Score: there's no data source; OMDb only carries the critics' Tomatometer.
+  - Taste profiles (saved filter presets, combined to find a middle ground).

@@ -9,6 +9,7 @@ import {
   getSubmission,
   useSubmissionsVersion,
 } from "../lib/backgroundSubmissions";
+import { FONTS, GLOSS, SCREEN } from "../theme";
 
 /**
  * Shown the moment Confirm is tapped (2026-10-03) - the save itself now runs in the
@@ -99,17 +100,18 @@ export default function SuccessScreen({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#09090b", justifyContent: "center", padding: 24, gap: 16 },
-  title: { color: "#4ade80", fontSize: 24, fontWeight: "700", textAlign: "center" },
-  titleSaving: { color: "#e4e4e7", fontSize: 24, fontWeight: "700", textAlign: "center" },
-  titleFailed: { color: "#f87171", fontSize: 24, fontWeight: "700", textAlign: "center" },
-  entryTitle: { color: "#a1a1aa", fontSize: 16, textAlign: "center" },
-  body: { color: "#e4e4e7", textAlign: "center" },
+  container: { ...SCREEN, flex: 1, backgroundColor: "#070d17", justifyContent: "center", padding: 24, gap: 16 },
+  title: { color: "#4ade80", fontSize: 24, fontFamily: FONTS.displayBold, textAlign: "center" },
+  titleSaving: { color: "#d7e2ee", fontSize: 24, fontFamily: FONTS.displayBold, textAlign: "center" },
+  titleFailed: { color: "#f87171", fontSize: 24, fontFamily: FONTS.displayBold, textAlign: "center" },
+  entryTitle: { fontFamily: FONTS.body, color: "#a9b8cc", fontSize: 16, textAlign: "center" },
+  body: { fontFamily: FONTS.body, color: "#d7e2ee", textAlign: "center" },
   button: {
-    backgroundColor: "#0284c7",
+    ...GLOSS,
+    backgroundColor: "#1d6c9a",
     paddingVertical: 12,
-    borderRadius: 8,
+    borderRadius: 0,
     alignItems: "center",
   },
-  buttonText: { color: "#fff", fontWeight: "600" },
+  buttonText: { letterSpacing: 1, color: "#fff", fontFamily: FONTS.displaySemiBold },
 });

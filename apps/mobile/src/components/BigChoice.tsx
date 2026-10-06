@@ -1,4 +1,5 @@
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { FONTS, PANEL } from "../theme";
 
 type Props = {
   options: string[];
@@ -33,17 +34,18 @@ export default function BigChoice({ options, value, onChange, columns = 2 }: Pro
 const styles = StyleSheet.create({
   grid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   tile: {
+    ...PANEL,
     minHeight: 56,
-    borderRadius: 12,
+    borderRadius: 0,
     borderWidth: 1,
-    borderColor: "#3f3f46",
-    backgroundColor: "#18181b",
+    borderColor: "#24395a",
+    backgroundColor: "#0f1c2f",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 8,
     paddingVertical: 10,
   },
-  tileSelected: { backgroundColor: "#0284c7", borderColor: "#38bdf8" },
-  text: { color: "#e4e4e7", fontSize: 16, fontWeight: "600", textAlign: "center" },
-  textSelected: { color: "#ffffff" },
+  tileSelected: { backgroundColor: "#1d6c9a", borderColor: "#5cc8ff" },
+  text: { color: "#d7e2ee", fontSize: 16, fontFamily: FONTS.displaySemiBold, textAlign: "center" },
+  textSelected: { fontFamily: FONTS.body, color: "#ffffff" },
 });

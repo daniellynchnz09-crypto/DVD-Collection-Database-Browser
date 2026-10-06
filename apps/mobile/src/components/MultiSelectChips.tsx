@@ -1,4 +1,5 @@
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { FONTS, GLOSS } from "../theme";
 
 /**
  * A row of toggle chips for a field with a small, genuinely fixed set of options (Disk
@@ -56,11 +57,11 @@ const styles = StyleSheet.create({
   chip: {
     paddingVertical: 8,
     paddingHorizontal: 14,
-    borderRadius: 16,
+    borderRadius: 0,
     borderWidth: 1,
-    borderColor: "#3f3f46",
+    borderColor: "#24395a",
   },
-  chipSelected: { backgroundColor: "#0284c7", borderColor: "#0284c7" },
-  chipText: { color: "#e4e4e7" },
-  chipTextSelected: { color: "#fff", fontWeight: "600" },
+  chipSelected: { ...GLOSS, backgroundColor: "#1d6c9a", borderColor: "#1d6c9a" },
+  chipText: { fontFamily: FONTS.body, color: "#d7e2ee" },
+  chipTextSelected: { color: "#fff", fontFamily: FONTS.displaySemiBold },
 });

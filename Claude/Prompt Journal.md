@@ -834,3 +834,14 @@ Same session: the user pointed at the person/franchise portrait circle and asked
   - **OMDb:** the backfill fetched the 6 waiting titles. The three Spider-Man films got RT/Metacritic; OMDb has none for the three Abbott & Costello films. The IMDb data-file step refreshed 1,593 ratings/vote counts.
   - **Re-crop:** made backfill-recrop-case-images spend each image's Gemini call once. A dry run now saves a plan + previews, `--apply --plan` applies it with no Gemini calls, originals are backed up locally first, and `--restore --plan` puts them back. 86 stored images were checked: 7 flagged, and 2 were rejected on visual review (The Dark Horse and Hindenburg boxes cut into the cover art). The other 5 were applied (Spider-Verse set, Black Panther, Resident Evil: Retribution, Doctor Who S21, Hitchcock set).
   - **JPEG quality:** the first apply showed Jimp writing JPEGs at quality 100 (380 KB -> 2.5 MB), so imageCrop.ts now writes JPEG at 88 everywhere (this also affects scan uploads). The five were restored from backup and re-cropped.
+- **Search filters (website).** The user asked for search filters and pointed at their planning-doc list. Built from WEB APP DESIGN.md:
+  - filters for result type, every listed facet (include/block chips), range sliders, and the steelbook/box-set flags
+  - the listed sort options
+  - a browse mode with no search text, and a filter button on the header search
+  - My score (Letterboxd) on the private build only, sanitizer updated
+  Rotten Tomatoes Audience Score has no data source. Taste profiles are left for a follow-up.
+- **Scanner app restyle.** The user asked for the scanner app to match the website's look and chose "full match":
+  - new `apps/mobile/src/theme.ts` with the website's tokens, and its fonts bundled via @expo-google-fonts
+  - a one-off codemod (TypeScript AST) across all 22 style sheets: palette swap, square corners except circles, fonts by weight, gloss on buttons, bevel on panels, recessed inputs/tracks, gradient screens, brushed-metal headers
+  - a DANFLIX 5.0 logo bar on the camera screen
+  Gradients and inner shadows use RN 0.86's experimental_backgroundImage/boxShadow, so the two extra packages first installed (expo-linear-gradient, react-native-svg) were removed again. Corners are square, not cut: RN can't clip to a polygon. Verified by typecheck and a full Android Metro bundle; the look itself still needs the user's on-phone check.

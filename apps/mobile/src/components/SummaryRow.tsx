@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { FONTS, PANEL } from "../theme";
 
 type Props = {
   label: string;
@@ -46,27 +47,28 @@ export default function SummaryRow({ label, value, missing, notable, onPress, ch
 
 const styles = StyleSheet.create({
   row: {
+    ...PANEL,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     minHeight: 52,
     paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 10,
+    borderRadius: 0,
     borderWidth: 1,
-    borderColor: "#27272a",
-    backgroundColor: "#18181b",
+    borderColor: "#16294a",
+    backgroundColor: "#0f1c2f",
     gap: 12,
   },
   rowMissing: { borderColor: "#dc2626", backgroundColor: "#2a1215" },
   // Same amber warning family used elsewhere on this screen (ConfirmScreen.tsx's own
   // categoryWarning banner), one notch below rowMissing's red.
   rowNotable: { borderColor: "#d97706", backgroundColor: "#2a1f0a" },
-  valueNotable: { color: "#fbbf24" },
-  chevron: { color: "#a1a1aa", fontSize: 16 },
-  panel: { borderWidth: 1, borderColor: "#27272a", borderTopWidth: 0, borderBottomLeftRadius: 10, borderBottomRightRadius: 10, padding: 12, gap: 12, backgroundColor: "#101012" },
-  label: { color: "#a1a1aa", fontSize: 14 },
+  valueNotable: { fontFamily: FONTS.body, color: "#ffb347" },
+  chevron: { fontFamily: FONTS.body, color: "#a9b8cc", fontSize: 16 },
+  panel: { borderWidth: 1, borderColor: "#16294a", borderTopWidth: 0, borderBottomLeftRadius: 0, borderBottomRightRadius: 0, padding: 12, gap: 12, backgroundColor: "#0b1524" },
+  label: { fontFamily: FONTS.body, color: "#a9b8cc", fontSize: 14 },
   valueWrap: { flexShrink: 1, alignItems: "flex-end" },
-  value: { color: "#f4f4f5", fontSize: 16, fontWeight: "600", textAlign: "right" },
-  valueMissing: { color: "#f87171" },
+  value: { color: "#e9f1f9", fontSize: 16, fontFamily: FONTS.displaySemiBold, textAlign: "right" },
+  valueMissing: { fontFamily: FONTS.body, color: "#f87171" },
 });

@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { FONTS, GLOSS, PANEL, WELL } from "../theme";
 
 /**
  * Replaces TagAutocompleteInput (2026-09-19, same request as SearchableModalInput - the user
@@ -90,7 +91,7 @@ export default function TagSearchableModalInput({
               value={value}
               onChangeText={onChangeText}
               placeholder={placeholder}
-              placeholderTextColor="#71717a"
+              placeholderTextColor="#8193ab"
               autoFocus
               multiline={isMultiline}
             />
@@ -122,19 +123,20 @@ export default function TagSearchableModalInput({
 const styles = StyleSheet.create({
   field: {
     borderWidth: 1,
-    borderColor: "#3f3f46",
-    borderRadius: 8,
+    borderColor: "#24395a",
+    borderRadius: 0,
     padding: 10,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  valueText: { color: "#f4f4f5", flex: 1 },
-  placeholderText: { color: "#71717a", flex: 1 },
-  chevron: { color: "#a1a1aa", marginLeft: 8 },
+  valueText: { fontFamily: FONTS.body, color: "#e9f1f9", flex: 1 },
+  placeholderText: { fontFamily: FONTS.body, color: "#8193ab", flex: 1 },
+  chevron: { fontFamily: FONTS.body, color: "#a9b8cc", marginLeft: 8 },
   modal: {
+    ...PANEL,
     flex: 1,
-    backgroundColor: "#18181b",
+    backgroundColor: "#0f1c2f",
     paddingTop: Platform.OS === "ios" ? 60 : 24,
   },
   header: {
@@ -145,27 +147,30 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   searchInput: {
+    ...WELL,
+    fontFamily: FONTS.body,
     flex: 1,
     borderWidth: 1,
-    borderColor: "#3f3f46",
-    borderRadius: 8,
+    borderColor: "#24395a",
+    borderRadius: 0,
     padding: 10,
-    color: "#f4f4f5",
+    color: "#e9f1f9",
     fontSize: 16,
   },
   doneButton: {
-    backgroundColor: "#0c4a6e",
-    borderRadius: 8,
+    ...GLOSS,
+    backgroundColor: "#0c3554",
+    borderRadius: 0,
     paddingVertical: 10,
     paddingHorizontal: 14,
   },
-  doneButtonText: { color: "#7dd3fc", fontWeight: "600" },
+  doneButtonText: { letterSpacing: 1, color: "#b3e8ff", fontFamily: FONTS.displaySemiBold },
   optionRow: {
     paddingVertical: 14,
     paddingHorizontal: 20,
     borderBottomWidth: 1,
-    borderBottomColor: "#27272a",
+    borderBottomColor: "#16294a",
   },
-  optionText: { color: "#e4e4e7", fontSize: 16 },
-  emptyText: { color: "#71717a", padding: 20, textAlign: "center" },
+  optionText: { fontFamily: FONTS.body, color: "#d7e2ee", fontSize: 16 },
+  emptyText: { fontFamily: FONTS.body, color: "#8193ab", padding: 20, textAlign: "center" },
 });

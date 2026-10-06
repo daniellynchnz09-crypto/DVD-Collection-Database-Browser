@@ -8,6 +8,7 @@ import {
   trySyncOfflineQueue,
   type QueuedSubmission,
 } from "../lib/offlineQueue";
+import { CHROME_BAR, FONTS, GLOSS, SCREEN } from "../theme";
 
 /**
  * Lists every Confirm submission saved on-device while offline (offlineQueue.ts) - added
@@ -177,25 +178,25 @@ export default function OfflineQueueScreen({ onBack }: { onBack: () => void }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#09090b" },
-  header: { padding: 16, borderBottomWidth: 1, borderBottomColor: "#27272a", gap: 8 },
-  backButton: { backgroundColor: "#0284c7", paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, alignSelf: "flex-start" },
-  backButtonText: { color: "#fff", fontSize: 15, fontWeight: "700" },
-  title: { color: "#f4f4f5", fontSize: 18, fontWeight: "700" },
-  syncButton: { backgroundColor: "#78350f", paddingVertical: 10, borderRadius: 8, alignItems: "center" },
+  container: { ...SCREEN, flex: 1, backgroundColor: "#070d17" },
+  header: { ...CHROME_BAR, padding: 16, borderBottomWidth: 1, borderBottomColor: "#16294a", gap: 8 },
+  backButton: { ...GLOSS, backgroundColor: "#1d6c9a", paddingVertical: 10, paddingHorizontal: 16, borderRadius: 0, alignSelf: "flex-start" },
+  backButtonText: { letterSpacing: 1, color: "#fff", fontSize: 15, fontFamily: FONTS.displayBold },
+  title: { color: "#e9f1f9", fontSize: 18, fontFamily: FONTS.displayBold },
+  syncButton: { ...GLOSS, backgroundColor: "#78350f", paddingVertical: 10, borderRadius: 0, alignItems: "center" },
   syncButtonDisabled: { opacity: 0.6 },
-  syncButtonText: { color: "#fde68a", fontSize: 14, fontWeight: "700" },
-  row: { padding: 16, gap: 4, borderBottomWidth: 1, borderBottomColor: "#27272a" },
-  rowTitle: { color: "#f4f4f5", fontSize: 16, fontWeight: "600" },
-  rowStatus: { color: "#a1a1aa", fontSize: 13 },
+  syncButtonText: { letterSpacing: 1, color: "#fde68a", fontSize: 14, fontFamily: FONTS.displayBold },
+  row: { padding: 16, gap: 4, borderBottomWidth: 1, borderBottomColor: "#16294a" },
+  rowTitle: { color: "#e9f1f9", fontSize: 16, fontFamily: FONTS.displaySemiBold },
+  rowStatus: { fontFamily: FONTS.body, color: "#a9b8cc", fontSize: 13 },
   reviewSection: { marginTop: 10, gap: 8 },
-  candidateRow: { gap: 6, borderWidth: 1, borderColor: "#3f3f46", borderRadius: 8, padding: 10 },
-  candidateText: { color: "#e4e4e7", fontSize: 13 },
+  candidateRow: { gap: 6, borderWidth: 1, borderColor: "#24395a", borderRadius: 0, padding: 10 },
+  candidateText: { fontFamily: FONTS.body, color: "#d7e2ee", fontSize: 13 },
   decisionRow: { flexDirection: "row", gap: 8, marginTop: 4 },
-  smallButton: { backgroundColor: "#27272a", paddingVertical: 8, paddingHorizontal: 12, borderRadius: 6, alignItems: "center", flex: 1 },
-  smallButtonGreen: { backgroundColor: "#166534" },
-  smallButtonRed: { backgroundColor: "#7f1d1d" },
-  smallButtonText: { color: "#f4f4f5", fontSize: 12, fontWeight: "600" },
+  smallButton: { ...GLOSS, backgroundColor: "#16294a", paddingVertical: 8, paddingHorizontal: 12, borderRadius: 0, alignItems: "center", flex: 1 },
+  smallButtonGreen: { ...GLOSS, backgroundColor: "#166534" },
+  smallButtonRed: { ...GLOSS, backgroundColor: "#7f1d1d" },
+  smallButtonText: { letterSpacing: 1, color: "#e9f1f9", fontSize: 12, fontFamily: FONTS.displaySemiBold },
   emptyContainer: { flexGrow: 1, justifyContent: "center", alignItems: "center" },
-  empty: { color: "#a1a1aa", padding: 16, textAlign: "center" },
+  empty: { fontFamily: FONTS.body, color: "#a9b8cc", padding: 16, textAlign: "center" },
 });

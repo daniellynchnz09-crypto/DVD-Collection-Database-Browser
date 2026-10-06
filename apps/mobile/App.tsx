@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { StatusBar } from "expo-status-bar";
+import { useFonts } from "expo-font";
+import { Barlow_400Regular, Barlow_500Medium, Barlow_600SemiBold } from "@expo-google-fonts/barlow";
+import { ChakraPetch_500Medium, ChakraPetch_600SemiBold, ChakraPetch_700Bold } from "@expo-google-fonts/chakra-petch";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import ScannerScreen from "./src/screens/ScannerScreen";
 import PendingScansScreen, { type PendingScan } from "./src/screens/PendingScansScreen";
@@ -42,6 +45,16 @@ export default function App() {
   // handful of milliseconds, well before the earliest possible tap into a scan (scanner ->
   // pending -> select one, at least two taps away).
   const [draftsReady, setDraftsReady] = useState(false);
+  // The website's two typefaces (theme.ts's FONTS), bundled with the app so they load from
+  // the device in a moment. A failed load still opens the app, in the system font.
+  const [fontsLoaded, fontError] = useFonts({
+    Barlow_400Regular,
+    Barlow_500Medium,
+    Barlow_600SemiBold,
+    ChakraPetch_500Medium,
+    ChakraPetch_600SemiBold,
+    ChakraPetch_700Bold,
+  });
   useEffect(() => {
     hydrateConfirmDrafts().then(() => setDraftsReady(true));
   }, []);
@@ -89,7 +102,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      {!draftsReady ? null : (
+      {!draftsReady || (!fontsLoaded && !fontError) ? null : (
         <>
           {screen.name === "scanner" && (
             <ScannerScreen

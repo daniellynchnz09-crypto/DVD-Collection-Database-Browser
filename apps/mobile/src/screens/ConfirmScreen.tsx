@@ -70,6 +70,7 @@ import SelectDropdown from "../components/SelectDropdown";
 import OfflineBanner from "../components/OfflineBanner";
 import TitleSearchPicker, { type CollectionMember } from "../components/TitleSearchPicker";
 import type { PendingScan } from "./PendingScansScreen";
+import { FONTS, GLOSS, SCREEN, WELL } from "../theme";
 
 interface OmdbCandidate {
   Title: string;
@@ -2788,7 +2789,7 @@ export default function ConfirmScreen({
                   onChangeText={setManualTitle}
                   onFocus={() => scrollInputRefIntoView(manualTitleInputRef)}
                   placeholder="e.g. Alfred Hitchcock: A Collection of 10 Classic Movies"
-                  placeholderTextColor="#71717a"
+                  placeholderTextColor="#8193ab"
                 />
                 <Text style={styles.hint}>
                   Just the base name - as you add titles below, this automatically becomes &quot;{"<name>"}: Title 1,
@@ -2912,7 +2913,7 @@ export default function ConfirmScreen({
                   onFocus={() => scrollInputRefIntoView(collectionDiscCountInputRef)}
                   keyboardType="number-pad"
                   placeholder="e.g. 2"
-                  placeholderTextColor="#71717a"
+                  placeholderTextColor="#8193ab"
                 />
                 <Text style={styles.hint}>
                   Every physical disc in the box, the collection&apos;s own bonus disc included. Each title you add
@@ -2992,7 +2993,7 @@ export default function ConfirmScreen({
                     onChangeText={setDepictedEraLabel}
                     onFocus={() => scrollInputRefIntoView(depictedEraLabelInputRef)}
                     placeholder="e.g. Spanish Civil War, 1980s"
-                    placeholderTextColor="#71717a"
+                    placeholderTextColor="#8193ab"
                   />
                 </View>
               )}
@@ -3025,7 +3026,7 @@ export default function ConfirmScreen({
                     }}
                     onFocus={() => scrollInputRefIntoView(releaseNameInputRef)}
                     placeholder="e.g. The Coppola Restoration"
-                    placeholderTextColor="#71717a"
+                    placeholderTextColor="#8193ab"
                   />
                 </View>
               )}
@@ -3038,7 +3039,7 @@ export default function ConfirmScreen({
                   onChangeText={setReleaseVariantNote}
                   onFocus={() => scrollInputRefIntoView(releaseVariantNoteInputRef)}
                   placeholder="e.g. numbered slipcover, first pressing"
-                  placeholderTextColor="#71717a"
+                  placeholderTextColor="#8193ab"
                 />
               </View>
               <View style={styles.section}>
@@ -3050,7 +3051,7 @@ export default function ConfirmScreen({
                   onChangeText={setCaseNotes}
                   onFocus={() => scrollInputRefIntoView(caseNotesInputRef)}
                   placeholder="e.g. blank case, wrong disc inside"
-                  placeholderTextColor="#71717a"
+                  placeholderTextColor="#8193ab"
                 />
               </View>
               <TouchableOpacity
@@ -3109,7 +3110,7 @@ export default function ConfirmScreen({
                   <View style={styles.section}>
                     <Text style={styles.label}>Date Rented</Text>
                     <TouchableOpacity style={styles.input} onPress={() => setShowDateRentedPicker(true)}>
-                      <Text style={{ color: dateRented ? "#f4f4f5" : "#71717a" }}>{dateRented || "Select a date"}</Text>
+                      <Text style={{ color: dateRented ? "#e9f1f9" : "#8193ab" }}>{dateRented || "Select a date"}</Text>
                     </TouchableOpacity>
                     {showDateRentedPicker && (
                       <DateTimePicker
@@ -3425,7 +3426,7 @@ export default function ConfirmScreen({
             onChangeText={setTitleSearchQuery}
             onFocus={() => scrollInputRefIntoView(titleSearchInputRef)}
             placeholder="Title"
-            placeholderTextColor="#71717a"
+            placeholderTextColor="#8193ab"
             autoFocus
           />
           <TouchableOpacity
@@ -3587,7 +3588,7 @@ export default function ConfirmScreen({
             onSubmitEditing={handleTitleSearch}
             returnKeyType="search"
             placeholder="Title"
-            placeholderTextColor="#71717a"
+            placeholderTextColor="#8193ab"
           />
           <TouchableOpacity
             style={styles.button}
@@ -3615,7 +3616,7 @@ export default function ConfirmScreen({
               value={seasonNo}
               onChangeText={setSeasonNo}
               placeholder="e.g. 2"
-              placeholderTextColor="#71717a"
+              placeholderTextColor="#8193ab"
             />
           </View>
           <View style={styles.section}>
@@ -3626,7 +3627,7 @@ export default function ConfirmScreen({
               onChangeText={(t) => setPartOfSeasonNo(digitsOnly(t))}
               keyboardType="number-pad"
               placeholder="e.g. 1"
-              placeholderTextColor="#71717a"
+              placeholderTextColor="#8193ab"
             />
           </View>
           <View style={styles.section}>
@@ -3637,7 +3638,7 @@ export default function ConfirmScreen({
               onChangeText={(t) => setEpisodeCount(digitsOnly(t))}
               keyboardType="number-pad"
               placeholder="e.g. 12"
-              placeholderTextColor="#71717a"
+              placeholderTextColor="#8193ab"
             />
           </View>
         </>
@@ -3664,7 +3665,7 @@ export default function ConfirmScreen({
             onChangeText={setManualTitle}
             onFocus={() => scrollInputRefIntoView(manualTitleInputRef)}
             placeholder="Title"
-            placeholderTextColor="#71717a"
+            placeholderTextColor="#8193ab"
           />
           {/* Season/part composition (added 2026-09-19) auto-suggests into this same field
               once a real candidate is matched and Season No. is filled in (e.g. "Breaking Bad"
@@ -3706,7 +3707,7 @@ export default function ConfirmScreen({
               onFocus={() => scrollInputRefIntoView(runningTimeMinsInputRef)}
               keyboardType="number-pad"
               placeholder="e.g. 124"
-              placeholderTextColor="#71717a"
+              placeholderTextColor="#8193ab"
             />
           </View>
           <View style={styles.section}>
@@ -3718,7 +3719,7 @@ export default function ConfirmScreen({
               onChangeText={setDirector}
               onFocus={() => scrollInputRefIntoView(directorInputRef)}
               placeholder="e.g. Steven Spielberg"
-              placeholderTextColor="#71717a"
+              placeholderTextColor="#8193ab"
             />
           </View>
         </>
@@ -3858,7 +3859,7 @@ export default function ConfirmScreen({
             onChangeText={setDepictedEraLabel}
             onFocus={() => scrollInputRefIntoView(depictedEraLabelInputRef)}
             placeholder="e.g. Spanish Civil War, 1980s"
-            placeholderTextColor="#71717a"
+            placeholderTextColor="#8193ab"
           />
         </View>
       )}
@@ -3931,7 +3932,7 @@ export default function ConfirmScreen({
           }}
           onFocus={() => scrollInputRefIntoView(releaseNameInputRef)}
           placeholder="e.g. Gladiator Special Edition"
-          placeholderTextColor="#71717a"
+          placeholderTextColor="#8193ab"
         />
       </View>
       <View style={styles.section}>
@@ -3943,7 +3944,7 @@ export default function ConfirmScreen({
           onChangeText={setReleaseVariantNote}
           onFocus={() => scrollInputRefIntoView(releaseVariantNoteInputRef)}
           placeholder="e.g. numbered slipcover, first pressing"
-          placeholderTextColor="#71717a"
+          placeholderTextColor="#8193ab"
         />
       </View>
       <View style={styles.section}>
@@ -3955,7 +3956,7 @@ export default function ConfirmScreen({
           onChangeText={setCaseNotes}
           onFocus={() => scrollInputRefIntoView(caseNotesInputRef)}
           placeholder="e.g. blank case, wrong disc inside"
-          placeholderTextColor="#71717a"
+          placeholderTextColor="#8193ab"
         />
       </View>
           </>
@@ -4006,7 +4007,7 @@ export default function ConfirmScreen({
               style={styles.input}
               onPress={() => setShowDateRentedPicker(true)}
             >
-              <Text style={{ color: dateRented ? "#f4f4f5" : "#71717a" }}>
+              <Text style={{ color: dateRented ? "#e9f1f9" : "#8193ab" }}>
                 {dateRented || "Select a date"}
               </Text>
             </TouchableOpacity>
@@ -4317,18 +4318,18 @@ export default function ConfirmScreen({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#09090b" },
+  container: { ...SCREEN, flex: 1, backgroundColor: "#070d17" },
   stepper: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 24 },
-  stepperButton: { width: 72, height: 72, borderRadius: 36, backgroundColor: "#27272a", alignItems: "center", justifyContent: "center" },
-  stepperButtonText: { color: "#f4f4f5", fontSize: 36, fontWeight: "700" },
+  stepperButton: { ...GLOSS, width: 72, height: 72, borderRadius: 36, backgroundColor: "#16294a", alignItems: "center", justifyContent: "center" },
+  stepperButtonText: { letterSpacing: 1, color: "#e9f1f9", fontSize: 36, fontFamily: FONTS.displayBold },
   stepperSm: { flexDirection: "row", alignItems: "center", gap: 16 },
-  stepperSmButton: { width: 52, height: 52, borderRadius: 26, backgroundColor: "#27272a", alignItems: "center", justifyContent: "center" },
-  stepperSmText: { color: "#f4f4f5", fontSize: 26, fontWeight: "700" },
-  stepperSmValue: { color: "#f4f4f5", fontSize: 26, fontWeight: "700", minWidth: 36, textAlign: "center" },
-  stepperValue: { color: "#f4f4f5", fontSize: 40, fontWeight: "700", minWidth: 60, textAlign: "center" },
+  stepperSmButton: { ...GLOSS, width: 52, height: 52, borderRadius: 26, backgroundColor: "#16294a", alignItems: "center", justifyContent: "center" },
+  stepperSmText: { color: "#e9f1f9", fontSize: 26, fontFamily: FONTS.displayBold },
+  stepperSmValue: { color: "#e9f1f9", fontSize: 26, fontFamily: FONTS.displayBold, minWidth: 36, textAlign: "center" },
+  stepperValue: { color: "#e9f1f9", fontSize: 40, fontFamily: FONTS.displayBold, minWidth: 60, textAlign: "center" },
   scrollView: { flex: 1 },
   scrollContent: { padding: 16, paddingTop: 48, gap: 12 },
-  title: { color: "#f4f4f5", fontSize: 18, fontWeight: "700" },
+  title: { color: "#e9f1f9", fontSize: 18, fontFamily: FONTS.displayBold },
   // flexShrink: 1 (added 2026-09-20, the "graphics safe area" follow-up) - RN's flexbox
   // defaults every child to flexShrink: 0, so a Text sitting next to a fixed-size Switch/
   // checkbox in a `row` (justifyContent: "space-between") renders at its own full natural
@@ -4340,43 +4341,43 @@ const styles = StyleSheet.create({
   // Android's on-screen nav buttons) - that's about the top/bottom of the screen and was
   // already correctly handled; this is the same "never let a real control get pushed off the
   // visible screen" discipline applied horizontally instead, which nothing had covered before.
-  body: { color: "#e4e4e7", flexShrink: 1 },
-  hint: { color: "#a1a1aa", fontStyle: "italic" },
-  link: { color: "#38bdf8" },
+  body: { fontFamily: FONTS.body, color: "#d7e2ee", flexShrink: 1 },
+  hint: { fontFamily: FONTS.body, color: "#a9b8cc", fontStyle: "italic" },
+  link: { fontFamily: FONTS.body, color: "#5cc8ff" },
   // Same amber warning family as OfflineBanner.tsx, for consistency between the two banners
   // that can appear on this screen.
   // Same amber family as SummaryRow's rowNotable - marks a value the app assumed for the user to
   // check (the bonus-disc format default, 2026-10-04).
-  assumedSection: { borderWidth: 1, borderColor: "#d97706", backgroundColor: "#2a1f0a", borderRadius: 10, padding: 10 },
-  assumedHint: { color: "#fbbf24", fontSize: 13 },
+  assumedSection: { borderWidth: 1, borderColor: "#d97706", backgroundColor: "#2a1f0a", borderRadius: 0, padding: 10 },
+  assumedHint: { fontFamily: FONTS.body, color: "#ffb347", fontSize: 13 },
   categoryWarning: {
     backgroundColor: "#78350f",
-    borderRadius: 8,
+    borderRadius: 0,
     paddingVertical: 8,
     paddingHorizontal: 12,
   },
-  categoryWarningText: { color: "#fde68a", fontSize: 13 },
+  categoryWarningText: { fontFamily: FONTS.body, color: "#fde68a", fontSize: 13 },
   // Same pill shape as MultiSelectChips' own chip, but blue-accented rather than a plain
   // toggle - this one is an action (tap to search/add), not a selection state.
   suggestionChip: {
     paddingVertical: 8,
     paddingHorizontal: 14,
-    borderRadius: 16,
+    borderRadius: 0,
     borderWidth: 1,
-    borderColor: "#38bdf8",
+    borderColor: "#5cc8ff",
     marginRight: 8,
     marginBottom: 8,
   },
-  suggestionChipText: { color: "#38bdf8" },
+  suggestionChipText: { fontFamily: FONTS.body, color: "#5cc8ff" },
   // Small inline poster thumbnail for a Collection member row in the running "Titles in this
   // set" list - added 2026-09-20, deliberately much smaller than the full candidate poster
   // cards above, since this list can grow long (a real box set can hold a dozen+ titles).
-  posterThumbInline: { width: 32, height: 46, borderRadius: 4 },
+  posterThumbInline: { width: 32, height: 46, borderRadius: 0 },
   scannedImage: {
     width: "100%",
     height: 220,
-    borderRadius: 8,
-    backgroundColor: "#18181b",
+    borderRadius: 0,
+    backgroundColor: "#0f1c2f",
   },
   // Separate from scannedImage's fixed-height box, added 2026-09-18 - the real cause of the
   // "grey borders" the user reported wasn't padding baked into the source photo (confirmed by
@@ -4391,76 +4392,79 @@ const styles = StyleSheet.create({
   // as that state's own initial/fallback value before the real size loads.
   scannedItemImage: {
     width: "100%",
-    borderRadius: 8,
-    backgroundColor: "#18181b",
+    borderRadius: 0,
+    backgroundColor: "#0f1c2f",
   },
   section: { gap: 6 },
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 },
-  label: { color: "#a1a1aa", flexShrink: 1 },
+  label: { fontFamily: FONTS.body, color: "#a9b8cc", flexShrink: 1 },
   groupHeader: {
-    color: "#f4f4f5",
+    color: "#e9f1f9",
     fontSize: 15,
-    fontWeight: "700",
+    fontFamily: FONTS.displayBold,
     marginTop: 20,
     borderTopWidth: 1,
-    borderTopColor: "#27272a",
+    borderTopColor: "#16294a",
     paddingTop: 16,
   },
   input: {
+    ...WELL,
+    fontFamily: FONTS.body,
     borderWidth: 1,
-    borderColor: "#3f3f46",
-    borderRadius: 8,
+    borderColor: "#24395a",
+    borderRadius: 0,
     padding: 10,
-    color: "#f4f4f5",
+    color: "#e9f1f9",
   },
   checkboxRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   checkbox: {
     width: 18,
     height: 18,
-    borderRadius: 4,
+    borderRadius: 0,
     borderWidth: 2,
-    borderColor: "#52525b",
+    borderColor: "#56667d",
     alignItems: "center",
     justifyContent: "center",
   },
-  checkboxChecked: { backgroundColor: "#38bdf8", borderColor: "#38bdf8" },
-  checkboxMark: { color: "#09090b", fontSize: 11, fontWeight: "700" },
-  checkboxLabel: { color: "#a1a1aa", fontSize: 13, flexShrink: 1 },
+  checkboxChecked: { backgroundColor: "#5cc8ff", borderColor: "#5cc8ff" },
+  checkboxMark: { color: "#070d17", fontSize: 11, fontFamily: FONTS.displayBold },
+  checkboxLabel: { fontFamily: FONTS.body, color: "#a9b8cc", fontSize: 13, flexShrink: 1 },
   candidateRow: {
     padding: 10,
     borderWidth: 1,
-    borderColor: "#3f3f46",
-    borderRadius: 8,
+    borderColor: "#24395a",
+    borderRadius: 0,
     marginBottom: 6,
   },
-  candidateRowSelected: { borderColor: "#0284c7", backgroundColor: "#0c2a3a" },
-  candidateText: { color: "#f4f4f5" },
+  candidateRowSelected: { borderColor: "#1d6c9a", backgroundColor: "#0b2236" },
+  candidateText: { fontFamily: FONTS.body, color: "#e9f1f9" },
   candidateScroll: { marginTop: 4 },
   posterCard: {
     width: 120,
     marginRight: 10,
     padding: 6,
     borderWidth: 1,
-    borderColor: "#3f3f46",
-    borderRadius: 8,
+    borderColor: "#24395a",
+    borderRadius: 0,
   },
-  posterCardSelected: { borderColor: "#0284c7", backgroundColor: "#0c2a3a" },
+  posterCardSelected: { borderColor: "#1d6c9a", backgroundColor: "#0b2236" },
   autoMatchCard: { width: 160, marginRight: 0 },
   posterImage: {
     width: "100%",
     height: 168,
-    borderRadius: 6,
-    backgroundColor: "#18181b",
+    borderRadius: 0,
+    backgroundColor: "#0f1c2f",
   },
   posterPlaceholder: { alignItems: "center", justifyContent: "center" },
-  posterPlaceholderText: { color: "#71717a", fontSize: 12, textAlign: "center" },
-  posterTitle: { color: "#f4f4f5", fontSize: 13, marginTop: 6 },
-  posterYear: { color: "#a1a1aa", fontSize: 12 },
-  error: { color: "#f87171" },
+  posterPlaceholderText: { fontFamily: FONTS.body, color: "#8193ab", fontSize: 12, textAlign: "center" },
+  posterTitle: { fontFamily: FONTS.body, color: "#e9f1f9", fontSize: 13, marginTop: 6 },
+  posterYear: { fontFamily: FONTS.body, color: "#a9b8cc", fontSize: 12 },
+  error: { fontFamily: FONTS.body, color: "#f87171" },
   button: {
-    backgroundColor: "#0284c7",
+    ...GLOSS,
+    backgroundColor: "#1d6c9a",
     paddingVertical: 12,
-    borderRadius: 8,
+    borderRadius: 0,
     alignItems: "center",
     marginTop: 12,
   },
@@ -4468,7 +4472,7 @@ const styles = StyleSheet.create({
   // choices, not a primary action plus lesser links - all three get full button styling,
   // colored by consequence (green = additive, blue = replaces in place, red = destructive
   // to this scan) rather than all defaulting to the same blue.
-  buttonGreen: { backgroundColor: "#16a34a" },
-  buttonRed: { backgroundColor: "#dc2626" },
-  buttonText: { color: "#fff", fontWeight: "600" },
+  buttonGreen: { ...GLOSS, backgroundColor: "#16a34a" },
+  buttonRed: { ...GLOSS, backgroundColor: "#dc2626" },
+  buttonText: { letterSpacing: 1, color: "#fff", fontFamily: FONTS.displaySemiBold },
 });

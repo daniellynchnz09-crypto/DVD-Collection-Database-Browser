@@ -1,5 +1,6 @@
 import { useRef, type ReactNode } from "react";
 import { Dimensions, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { FONTS, GLOSS } from "../theme";
 
 export type Slide = { key: string; label: string; node: ReactNode };
 
@@ -87,14 +88,14 @@ const styles = StyleSheet.create({
   wrap: { gap: 12 },
   dots: { flexDirection: "row", justifyContent: "center", flexWrap: "wrap" },
   dotHit: { padding: 6 },
-  dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: "#3f3f46" },
-  dotActive: { backgroundColor: "#0ea5e9", width: 22 },
-  slideLabel: { color: "#a1a1aa", textAlign: "center", fontSize: 13 },
+  dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: "#24395a" },
+  dotActive: { backgroundColor: "#5cc8ff", width: 22 },
+  slideLabel: { fontFamily: FONTS.body, color: "#a9b8cc", textAlign: "center", fontSize: 13 },
   body: { gap: 12 },
   nav: { flexDirection: "row", gap: 12, marginTop: 8 },
-  navButton: { flex: 1, minHeight: 56, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  navBack: { backgroundColor: "#27272a" },
-  navNext: { backgroundColor: "#0284c7" },
+  navButton: { flex: 1, minHeight: 56, borderRadius: 0, alignItems: "center", justifyContent: "center" },
+  navBack: { ...GLOSS, backgroundColor: "#16294a" },
+  navNext: { backgroundColor: "#1d6c9a" },
   navDisabled: { opacity: 0.35 },
-  navText: { color: "#f4f4f5", fontSize: 18, fontWeight: "700" },
+  navText: { color: "#e9f1f9", fontSize: 18, fontFamily: FONTS.displayBold },
 });
