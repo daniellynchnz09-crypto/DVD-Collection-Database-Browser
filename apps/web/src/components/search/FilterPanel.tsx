@@ -222,7 +222,7 @@ export function FilterPanel({
               const list = facetOptions(f.key);
               const selection = draft.facets[f.key] ?? {};
               if (f.key === "doc") {
-                // Story values sit on a fiction-to-fact slider; performance/recording values
+                // Story values sit on a fact-to-fiction slider; performance/recording values
                 // (Stand Up, Live Concert...) stay as chips under it.
                 const others = list.filter((o) => realismIndex(o.value) < 0);
                 return (
@@ -546,7 +546,7 @@ function DualRange({
 }
 
 /**
- * Documentary / realism as a notched two-handled slider, fiction to documentary
+ * Documentary / realism as a notched two-handled slider, documentary (left) to fiction (right)
  * (REALISM_LEVELS). The picked span is written as `doc` includes; the full span means "any".
  * Each notch shows its label and how many titles it currently matches.
  */
@@ -606,7 +606,7 @@ function RealismSlider({
           max={last}
           step={1}
           value={lo}
-          aria-label="Least real"
+          aria-label="Most real"
           aria-valuetext={REALISM_LEVELS[lo].label}
           onChange={(e) => set(Math.min(Number(e.target.value), hi), hi)}
         />
@@ -616,7 +616,7 @@ function RealismSlider({
           max={last}
           step={1}
           value={hi}
-          aria-label="Most real"
+          aria-label="Least real"
           aria-valuetext={REALISM_LEVELS[hi].label}
           onChange={(e) => set(lo, Math.max(Number(e.target.value), lo))}
         />

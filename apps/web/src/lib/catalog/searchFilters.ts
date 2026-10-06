@@ -100,22 +100,22 @@ export const EMPTY_FILTERS: SearchFilters = {
 
 export const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
-/** Display text for a facet value (the stored value stays in the URL). */
 /**
- * The documentary column's story values as a fiction-to-fact scale, for the filter panel's
- * realism slider (the user, 2026-10-07: "each documentary type being a notch"; order chosen by
- * the user - a biopic tells a real life freely, a dramatization re-enacts real events closely).
+ * The documentary column's story values as a fact-to-fiction scale, left to right, for the
+ * filter panel's realism slider (the user, 2026-10-07: "each documentary type being a notch";
+ * order chosen by the user - a dramatization re-enacts real events closely, a biopic tells a
+ * real life freely - then flipped at their request so Documentary is on the left).
  * `value` is the column's (normalized) spelling, compared case-insensitively. The slider writes
  * its range as ordinary `doc` includes. Performance/recording values (Reality TV, Stand Up,
  * Live Concert...) aren't on this scale and stay as chips under it.
  */
 export const REALISM_LEVELS = [
-  { value: "n", label: "Fiction" },
-  { value: "Mockumentary", label: "Mockumentary" },
-  { value: "Based on True Events", label: "True events" },
-  { value: "Biography", label: "Biopic" },
-  { value: "Dramatization", label: "Dramatization" },
   { value: "y", label: "Documentary" },
+  { value: "Dramatization", label: "Dramatization" },
+  { value: "Biography", label: "Biopic" },
+  { value: "Based on True Events", label: "True events" },
+  { value: "Mockumentary", label: "Mockumentary" },
+  { value: "n", label: "Fiction" },
 ] as const;
 
 /** Index on the realism scale, or -1 for a value that isn't on it. */
@@ -124,6 +124,7 @@ export function realismIndex(value: string): number {
   return REALISM_LEVELS.findIndex((l) => l.value.toLowerCase() === v);
 }
 
+/** Display text for a facet value (the stored value stays in the URL). */
 export function facetValueLabel(key: FacetKey, value: string): string {
   if (key === "doc") {
     const i = realismIndex(value);
