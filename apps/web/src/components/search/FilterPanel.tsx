@@ -14,8 +14,10 @@ import {
   RESULT_TYPES,
   SORTS,
   type FacetCounts,
+  MATCH_ALL_FACETS,
   type FacetKey,
   type FacetOption,
+  type MatchAllFacet,
   type Flag,
   type RangeKey,
   type ResultType,
@@ -175,7 +177,7 @@ export function FilterPanel({
                   setDraft((d) => ({ ...d, profiles: d.profiles.includes(id) ? d.profiles.filter((x) => x !== id) : [...d.profiles, id] }))
                 }
                 onLoad={(pf) =>
-                  setDraft((d) => ({ ...d, facets: pf.facets, ranges: pf.ranges, steelbook: pf.steelbook, boxSet: pf.boxSet, inBoxSet: pf.inBoxSet }))
+                  setDraft((d) => ({ ...d, facets: pf.facets, ranges: pf.ranges, steelbook: pf.steelbook, boxSet: pf.boxSet, inBoxSet: pf.inBoxSet, matchAll: pf.matchAll }))
                 }
               />
             </Accordion>
@@ -257,6 +259,17 @@ export function FilterPanel({
                   active={Object.keys(selection).length}
                   extra={available === list.length ? `${list.length} options` : `${available} of ${list.length} options`}
                 >
+                  {isMatchAllFacet(f.key) ? (
+                    <MatchSwitch
+                      all={draft.matchAll.includes(f.key)}
+                      picked={Object.values(selection).filter((s) => s === "include").length}
+                      noun={f.key === "genre" ? "genres" : "franchises"}
+                      onChange={(all) => {
+                        const key = f.key as MatchAllFacet;
+                        setDraft((d) => ({ ...d, matchAll: all ? [...d.matchAll.filter((k) => k !== key), key] : d.matchAll.filter((k) => k !== key) }));
+                      }}
+                    />
+                  ) : null}
                   <FacetGroup facet={f.key} title={f.label} options={list} selection={selection} onSet={setFacet} />
                 </Accordion>
               );
@@ -454,6 +467,36 @@ function FacetGroup({
           </span>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+const isMatchAllFacet = (key: FacetKey): key is MatchAllFacet => (MATCH_ALL_FACETS as readonly string[]).includes(key);
+
+/** Any / All for a multi-value facet, with a plain-words line saying what it will find. */
+function MatchSwitch({ all, picked, noun, onChange }: { all: boolean; picked: number; noun: string; onChange: (all: boolean) => void }) {
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+      <div role="radiogroup" aria-label="Match" className="well clip-corner-sm inline-flex border border-rule bg-void/60 p-0.5">
+        {[
+          { v: false, label: "Match any" },
+          { v: true, label: "Match all" },
+        ].map((o) => (
+          <button
+            key={o.label}
+            type="button"
+            role="radio"
+            aria-checked={all === o.v}
+            onClick={() => onChange(o.v)}
+            className={`px-3 py-1 font-display text-[11px] tracking-[0.14em] uppercase ${all === o.v ? "gloss bg-accent-deep text-accent-hi" : "text-mist hover:text-chrome-hi"}`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <span className="label-tech text-mist-dim">
+        {picked < 2 ? `Pick 2+ ${noun} to choose` : all ? `Titles with every picked ${noun.replace(/s$/, "")}` : `Titles with any picked ${noun.replace(/s$/, "")}`}
+      </span>
     </div>
   );
 }
@@ -781,6 +824,14 @@ function ActiveChips({
         delete ranges[r.key];
         return { ...filters, ranges };
       },
+    });
+  }
+  for (const k of filters.matchAll) {
+    if (Object.values(filters.facets[k] ?? {}).filter((s) => s === "include").length < 2) continue;
+    chips.push({
+      key: `match:${k}`,
+      label: `${k === "genre" ? "Genres" : "Franchises"}: match all`,
+      remove: () => ({ ...filters, matchAll: filters.matchAll.filter((x) => x !== k) }),
     });
   }
   const flag = (name: string, value: Flag, clear: () => SearchFilters) => {

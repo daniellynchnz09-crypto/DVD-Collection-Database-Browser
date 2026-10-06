@@ -39,6 +39,14 @@ export const FACETS = [
 ] as const;
 export type FacetKey = (typeof FACETS)[number]["key"];
 
+/**
+ * Facets where one title carries several values at once, so "match all" means something:
+ * Comedy + Action can find films that are both, not just either (the user, 2026-10-07).
+ * Every other facet always matches any of its picked values.
+ */
+export const MATCH_ALL_FACETS = ["genre", "fr"] as const satisfies readonly FacetKey[];
+export type MatchAllFacet = (typeof MATCH_ALL_FACETS)[number];
+
 /** Numeric ranges, shown as two-handled sliders. `year`'s bounds come from the collection. */
 export const RANGES = [
   { key: "year", label: "Release year", min: 1900, max: 2030, step: 1, unit: "" },
@@ -84,6 +92,8 @@ export interface SearchFilters {
   dir: "asc" | "desc" | null;
   /** Taste profile ids (the taste_profiles table) - a title must pass every one. */
   profiles: string[];
+  /** Facets whose picked values must ALL be present (URL `match=genre`); others match any. */
+  matchAll: MatchAllFacet[];
 }
 
 export const EMPTY_FILTERS: SearchFilters = {
@@ -96,6 +106,7 @@ export const EMPTY_FILTERS: SearchFilters = {
   sort: null,
   dir: null,
   profiles: [],
+  matchAll: [],
 };
 
 export const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -190,6 +201,7 @@ export function parseFilters(get: Getter): SearchFilters {
     sort: SORTS.some((s) => s.value === sortRaw) ? (sortRaw as SortKey) : null,
     dir: dirRaw === "asc" || dirRaw === "desc" ? dirRaw : null,
     profiles: [...new Set(get("profile").filter((id) => PROFILE_ID_RE.test(id)))].slice(0, 10),
+    matchAll: MATCH_ALL_FACETS.filter((k) => get("match").includes(k)),
   };
 }
 
@@ -221,6 +233,8 @@ export function filtersToParams(f: SearchFilters, params = new URLSearchParams()
   if (f.sort) params.set("sort", f.sort);
   if (f.dir) params.set("dir", f.dir);
   for (const id of f.profiles) params.append("profile", id);
+  // Only meaningful (and only written) while that facet has values picked.
+  for (const k of f.matchAll) if (Object.keys(f.facets[k] ?? {}).length) params.append("match", k);
   return params;
 }
 

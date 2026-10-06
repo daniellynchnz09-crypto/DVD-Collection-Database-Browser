@@ -440,7 +440,9 @@ async function getIndex(): Promise<SearchIndex | null> {
 // Filters (searchFilters.ts)
 // ---------------------------------------------------------------------------------------------
 
-function facetPasses(values: string[], selection: Record<string, TriState> | undefined): boolean {
+/** Blocked values always remove a title. Picked values need any one present - or, with
+ * `all` (Match all), every one of them. */
+function facetPasses(values: string[], selection: Record<string, TriState> | undefined, all = false): boolean {
   if (!selection) return true;
   const have = new Set(values.map((v) => v.toLowerCase()));
   let wantsSome = false;
@@ -449,6 +451,7 @@ function facetPasses(values: string[], selection: Record<string, TriState> | und
     const present = have.has(value.toLowerCase());
     if (state === "exclude" && present) return false;
     if (state === "include") {
+      if (all && !present) return false;
       wantsSome = true;
       if (present) hasWanted = true;
     }
@@ -462,7 +465,9 @@ function flagPasses(value: boolean, flag: Flag): boolean {
 
 /** Facets and ranges - the parts a box set can pass through any one of its discs. */
 function attributesPass(r: IndexedRow, f: SearchFilters): boolean {
-  for (const { key } of FACETS) if (!facetPasses(r.facts.facets[key], f.facets[key])) return false;
+  for (const { key } of FACETS) {
+    if (!facetPasses(r.facts.facets[key], f.facets[key], (f.matchAll as readonly string[]).includes(key))) return false;
+  }
   for (const [key, range] of Object.entries(f.ranges) as Array<[RangeKey, [number | null, number | null]]>) {
     const v = r.facts.ranges[key];
     if (range[0] === null && range[1] === null) continue;
@@ -547,7 +552,10 @@ export async function getFacetCounts(filters: SearchFilters, profileFilters: Sea
   const counts = {} as FacetCounts;
   const inProfiles = idx.rows.filter((r) => profileFilters.every((p) => rowPasses(r, p, idx)));
   for (const { key } of FACETS) {
-    const others: SearchFilters = { ...filters, facets: { ...filters.facets, [key]: undefined } };
+    // With Match all, the facet's own picks stay in: only values that co-occur with every
+    // picked one are still worth offering. Otherwise they're left out so alternatives show.
+    const all = (filters.matchAll as readonly string[]).includes(key);
+    const others: SearchFilters = all ? filters : { ...filters, facets: { ...filters.facets, [key]: undefined } };
     const tally: Record<string, number> = {};
     for (const r of inProfiles) {
       if (!rowPasses(r, others, idx)) continue;
