@@ -21,16 +21,22 @@ export function BackButton({ fallbackHref = "/", label = "Back" }: { fallbackHre
   }
 
   return (
-    <button
-      type="button"
-      onClick={goBack}
-      aria-label={label}
-      className="gloss clip-chevron-left group flex h-9 shrink-0 items-center gap-2 bg-accent-deep pr-4 pl-5 text-accent-hi transition-colors hover:bg-accent-dim hover:text-chrome-hi"
-    >
-      <svg aria-hidden viewBox="0 0 10 10" className="h-2.5 w-2.5 fill-current">
-        <polygon points="10,0 10,10 0,5" />
-      </svg>
-      <span className="label-tech text-current">{label}</span>
-    </button>
+    // Seated like the Search button: a lit rim (the 1px rule-coloured frame round the chevron)
+    // and a drop shadow on a wrapper, since the chevron's clip-path would cut a shadow off.
+    <span className="case-shadow inline-flex shrink-0">
+      <span className="clip-chevron-left inline-flex bg-rule-strong p-px">
+        <button
+          type="button"
+          onClick={goBack}
+          aria-label={label}
+          className="gloss clip-chevron-left group flex h-9 items-center gap-2 bg-accent-deep pr-4 pl-5 text-accent-hi transition-colors hover:bg-accent-dim hover:text-chrome-hi"
+        >
+          <svg aria-hidden viewBox="0 0 10 10" className="h-2.5 w-2.5 fill-current">
+            <polygon points="10,0 10,10 0,5" />
+          </svg>
+          <span className="label-tech text-current">{label}</span>
+        </button>
+      </span>
+    </span>
   );
 }
