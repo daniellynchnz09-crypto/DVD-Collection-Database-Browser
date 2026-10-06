@@ -146,14 +146,15 @@ function StatsStrip({ stats }: { stats: ArchiveStats }) {
           {stats.total.toLocaleString("en-NZ")}
         </span>
       </div>
-      <BarChart title="By format" bars={formats} />
-      <BarChart title="By type" bars={types} />
+      <BarChart title="By format" bars={formats} total={stats.total} />
+      <BarChart title="By type" bars={types} total={stats.total} />
     </div>
   );
 }
 
-function BarChart({ title, bars }: { title: string; bars: Array<{ label: string; value: number }> }) {
-  const max = Math.max(1, ...bars.map((b) => b.value));
+/** Each bar is a share of the whole archive (the user's request: DVD reads 68 of 116, not 68 of 68). */
+function BarChart({ title, bars, total }: { title: string; bars: Array<{ label: string; value: number }>; total: number }) {
+  const max = Math.max(1, total);
   return (
     <figure className="flex min-w-0 flex-col gap-2">
       <figcaption className="label-tech text-[10px] text-accent">{title}</figcaption>
@@ -163,7 +164,7 @@ function BarChart({ title, bars }: { title: string; bars: Array<{ label: string;
           <span aria-hidden className="clip-tab relative h-3 bg-deep/80">
             <span
               className="absolute inset-y-0 left-0 bg-linear-to-r from-accent-dim to-accent"
-              style={{ width: `${b.value > 0 ? Math.max(3, (b.value / max) * 100) : 0}%` }}
+              style={{ width: `${b.value > 0 ? Math.min(100, Math.max(3, (b.value / max) * 100)) : 0}%` }}
             />
           </span>
           <span className="text-right font-display text-sm font-semibold text-chrome-hi tabular-nums">{b.value.toLocaleString("en-NZ")}</span>

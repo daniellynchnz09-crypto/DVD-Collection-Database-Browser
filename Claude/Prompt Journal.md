@@ -814,3 +814,4 @@ Same session: the user pointed at the person/franchise portrait circle and asked
   - Slow the hover animations (2.4 s to 6 s).
   - Drop the flowing outline from posters/product images but keep the circle animations.
   - Turn the archive stats into a chart with the total kept as a number (now a big total plus "By format" and "By type" bar charts).
+- **Stats bars as shares of the whole archive.** The user asked for each bar to be measured against the archive total (DVD shows 68 of 116, not 68 of 68). `BarChart` now scales by `stats.total`.
