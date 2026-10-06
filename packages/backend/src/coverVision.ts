@@ -1,3 +1,4 @@
+import { generateGeminiJson } from "./geminiRequest";
 import { buildOrientationPreviews } from "./imageCrop";
 
 /**
@@ -37,8 +38,7 @@ import { buildOrientationPreviews } from "./imageCrop";
  * all - the caller already has the bytes in hand via downloadStagedCoverPhoto.
  */
 
-const MODEL = "gemini-flash-lite-latest";
-const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+// Model + quota fallback live in geminiRequest.ts (a chain of free models, 2026-10-06).
 
 // Matches formatVision.ts's own FORMAT_OPTIONS exactly, so a cover-read format guess never
 // disagrees with the barcode-photo vision fallback or a manually-typed value on how the same
@@ -92,16 +92,6 @@ Then, regardless of which side it is, read whatever of the following you can act
 - "collectionMemberTitles": if this case is a box set/collection holding MULTIPLE distinct films or TV seasons (the case's own "title" reads like a collection name - "Collection", "Box Set", "Trilogy", a franchise/person's name, etc. - rather than one film's title), list the individual member titles it actually names, e.g. ["Rear Window", "Psycho", "The Birds", "Vertigo"]. These are usually laid out with real visual separation on the cover - separate lines, a column/grid, or one small poster thumbnail per title - not run together in one sentence, so read each title as its own distinct block of text rather than guessing where one title's words end and the next begins from a comma or "and". Skip any non-title text mixed into that layout (a tagline, year, "Digitally Remastered", a bonus-disc mention). Only include a title here if it's independently legible as a real, complete film/show name - if the list is only partially readable (some thumbnails too small/blurry to read), still report whichever ones genuinely are legible rather than skipping the whole field. Null (not an empty array) if this case isn't a multi-title collection at all, or if it is but no member titles are actually legible anywhere on this side.
 
 Only report what is actually legible in the image - never guess a value that isn't genuinely readable. If almost nothing is legible, answer "unclear" for side and null/"Unclear"/"NONE" for the rest rather than inventing an answer.`;
-
-interface GeminiResponsePart {
-  text?: string;
-}
-interface GeminiCandidate {
-  content?: { parts?: GeminiResponsePart[] };
-}
-interface GeminiGenerateContentResponse {
-  candidates?: GeminiCandidate[];
-}
 
 export interface CoverVisionResult {
   side: (typeof SIDE_OPTIONS)[number];
@@ -214,25 +204,13 @@ export async function detectCoverFromImage(
   imageBytes: Buffer,
   mimeType: string
 ): Promise<CoverVisionResult | null> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  // Same "missing config = no guess, not an error" convention as every scraper's missing-key
-  // handling elsewhere in this codebase.
-  if (!apiKey) return null;
-
   try {
-    const res = await fetch(`${API_URL}?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: PROMPT },
-              { inline_data: { mime_type: mimeType, data: imageBytes.toString("base64") } },
-            ],
-          },
-        ],
-        generationConfig: {
+    const text = await generateGeminiJson(
+      [
+        { text: PROMPT },
+        { inline_data: { mime_type: mimeType, data: imageBytes.toString("base64") } },
+      ],
+      {
           // Same reasoning as formatVision.ts's own temperature: 0 - a borderline front/back
           // or format classification should give the same answer every time, not sample.
           temperature: 0,
@@ -255,13 +233,8 @@ export async function detectCoverFromImage(
             },
             required: ["side", "mediaType", "format", "rating", "artStyle"],
           },
-        },
-      }),
-    });
-    if (!res.ok) return null;
-
-    const data = (await res.json()) as GeminiGenerateContentResponse;
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      }
+    );
     if (!text) return null;
 
     const parsed = JSON.parse(text) as {
@@ -361,23 +334,13 @@ export interface CoverBoundingBox {
  * disclosed limitation, not a guarantee of a tight crop every time.
  */
 export async function detectCoverBoundingBox(imageBytes: Buffer, mimeType: string): Promise<CoverBoundingBox | null> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-
   try {
-    const res = await fetch(`${API_URL}?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: BOUNDING_BOX_PROMPT },
-              { inline_data: { mime_type: mimeType, data: imageBytes.toString("base64") } },
-            ],
-          },
-        ],
-        generationConfig: {
+    const text = await generateGeminiJson(
+      [
+        { text: BOUNDING_BOX_PROMPT },
+        { inline_data: { mime_type: mimeType, data: imageBytes.toString("base64") } },
+      ],
+      {
           temperature: 0,
           responseMimeType: "application/json",
           responseSchema: {
@@ -396,13 +359,8 @@ export async function detectCoverBoundingBox(imageBytes: Buffer, mimeType: strin
             // "no crop" while looking, from the caller's side, like a rare/occasional miss).
             required: ["found", "xMin", "yMin", "xMax", "yMax"],
           },
-        },
-      }),
-    });
-    if (!res.ok) return null;
-
-    const data = (await res.json()) as GeminiGenerateContentResponse;
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      }
+    );
     if (!text) return null;
 
     const parsed = JSON.parse(text) as {
@@ -418,11 +376,7 @@ export async function detectCoverBoundingBox(imageBytes: Buffer, mimeType: strin
       return null;
     }
 
-    const box = normalizeBoxScale({ xMin, yMin, xMax, yMax });
-    if (!box || box.xMin < 0 || box.yMin < 0 || box.xMax > 100 || box.yMax > 100 || box.xMax <= box.xMin || box.yMax <= box.yMin) {
-      return null;
-    }
-    return box;
+    return validBox(xMin, yMin, xMax, yMax);
   } catch {
     return null;
   }
@@ -442,6 +396,16 @@ export async function detectCoverBoundingBox(imageBytes: Buffer, mimeType: strin
  * never applied blindly, since a genuine 0-100 answer with a value just over 100 (a slightly
  * imprecise edge) should be rejected as out-of-range, not silently rescaled.
  */
+/** A model's box answer as a sane 0-100 box, or null (see normalizeBoxScale). */
+function validBox(xMin: unknown, yMin: unknown, xMax: unknown, yMax: unknown): CoverBoundingBox | null {
+  if (typeof xMin !== "number" || typeof yMin !== "number" || typeof xMax !== "number" || typeof yMax !== "number") return null;
+  const box = normalizeBoxScale({ xMin, yMin, xMax, yMax });
+  if (!box || box.xMin < 0 || box.yMin < 0 || box.xMax > 100 || box.yMax > 100 || box.xMax <= box.xMin || box.yMax <= box.yMin) {
+    return null;
+  }
+  return box;
+}
+
 function normalizeBoxScale(box: {
   xMin: number;
   yMin: number;
@@ -460,30 +424,41 @@ const ROTATION_PROMPT = `These are four copies of the SAME photo of a physical m
 
 1. In "textSeen", copy three or four separate pieces of printed text from the case: the title, plus smaller text such as actor names, a tagline, the age-rating label's wording (e.g. "Parental Guidance Recommended"), a price sticker or a logo.
 2. For EACH version, judge how MOST of that printed text appears in it: "upright" (letters stand normally and lines read left to right), "upside_down" (letters inverted, reading right to left), or "sideways" (lines run up or down the image). Go by the majority of the text lines - small print included - not by one large word: some covers print an actor's name or a word vertically along one edge, and that single line must not decide it.
-3. In "upright", give the version where most of the printed text is upright. An upright disc case is normally taller than it is wide, a useful tie-breaker when the text is hard to read.`;
+3. In "upright", give the version where most of the printed text is upright. An upright disc case is normally taller than it is wide, a useful tie-breaker when the text is hard to read.
+4. In the UPRIGHT version you picked, the photo may also show other things around the case - papers, a desk, a keyboard, hands. Give a tight box around just the disc case (or cassette) in that version, as percentages of that version's width and height (0-100, 0 = left/top edge): "xMin", "yMin" (top-left corner), "xMax", "yMax" (bottom-right corner). Set "caseFound" false (and the box to 0, 0, 100, 100) only if no single disc case can be made out.`;
 
 const ORIENTATION = { type: "STRING", enum: ["upright", "upside_down", "sideways"] };
 const VERSION_DEGREES = { A: 0, B: 90, C: 180, D: 270 } as const;
 
+export interface CoverOrientationAndBox {
+  /** Degrees clockwise to turn the photo upright. */
+  rotation: 0 | 90 | 180 | 270;
+  /** Where the case sits in the photo AFTER that rotation (0-100), or null if not found. */
+  box: CoverBoundingBox | null;
+}
+
 /**
- * Detects how far clockwise a freshly-captured cover photo needs to be rotated so the disc case
- * ends up upright. scanResolver.ts rotates FIRST and only then runs detectCoverBoundingBox, since
- * the box percentages only mean something in the final orientation.
+ * One call that both straightens and locates the case in a freshly-captured cover photo, so
+ * scanResolver.ts can rotate, crop, and only then read it (detectCoverFromImage) - the crop
+ * still happens before the read, the user's own rule, "so the scan doesn't get confused with
+ * other documents that might also be in the shot."
  *
- * Rebuilt 2026-10-06 after the user kept finding upside-down product images. Findings: the raw
- * phone photos carry no EXIF orientation tag (so the 2026-10-03 EXIF fix never applied), and the
- * old single-image "how many degrees?" question was unreliable - and most of its calls in a
- * real batch were HTTP 429s, which it silently treated as "no rotation". Now the photo goes in
- * as four small previews (0/90/180/270 clockwise, buildOrientationPreviews) and the model picks
- * the one whose printed text - judged across several separate lines, small print included -
- * reads upright: 38/40 correct on the user's real cover photos, every rotation of each tried,
- * the two misses being one cover with a huge vertical actor name. A 429/5xx is retried twice.
+ * History: rotation and the crop box were two separate calls until 2026-10-06, when the user
+ * asked for fewer Gemini requests per case (free allowance) - merged here, 3 requests per photo
+ * down to 2. The rotation half was itself rebuilt the same day after the user kept finding
+ * upside-down product images: the raw phone photos carry no EXIF orientation tag (so the
+ * 2026-10-03 EXIF fix never applied), and the old single-image "how many degrees?" question
+ * was unreliable - and in a real batch most of its calls were 429s, silently read as "no
+ * rotation". Now the photo goes in as four small previews (0/90/180/270 clockwise,
+ * buildOrientationPreviews) and the model picks the one whose printed text, judged across
+ * several separate lines, small print included, reads upright: 38/40 correct on the user's
+ * real cover photos with every rotation of each tried (the misses: one cover with a huge
+ * vertical actor name). The box is measured in the picked (upright) preview, which is the whole
+ * photo turned, so its percentages apply directly to the full-size rotated photo.
  *
  * Never throws; null on failure, which the caller treats as "leave it as is".
  */
-export async function detectCoverRotation(imageBytes: Buffer, mimeType: string): Promise<0 | 90 | 180 | 270 | null> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
+export async function detectCoverOrientationAndBox(imageBytes: Buffer, mimeType: string): Promise<CoverOrientationAndBox | null> {
   const previews = await buildOrientationPreviews(imageBytes, mimeType);
   if (!previews) return null;
 
@@ -492,9 +467,9 @@ export async function detectCoverRotation(imageBytes: Buffer, mimeType: string):
     parts.push({ text: `Version ${"ABCD"[i]}:` });
     parts.push({ inline_data: { mime_type: "image/jpeg", data: preview.toString("base64") } });
   });
-  const body = JSON.stringify({
-    contents: [{ parts }],
-    generationConfig: {
+
+  try {
+    const text = await generateGeminiJson(parts, {
       temperature: 0,
       responseMimeType: "application/json",
       responseSchema: {
@@ -506,32 +481,30 @@ export async function detectCoverRotation(imageBytes: Buffer, mimeType: string):
           C: ORIENTATION,
           D: ORIENTATION,
           upright: { type: "STRING", enum: ["A", "B", "C", "D"] },
+          caseFound: { type: "BOOLEAN" },
+          xMin: { type: "NUMBER" },
+          yMin: { type: "NUMBER" },
+          xMax: { type: "NUMBER" },
+          yMax: { type: "NUMBER" },
         },
-        required: ["textSeen", "A", "B", "C", "D", "upright"],
-        propertyOrdering: ["textSeen", "A", "B", "C", "D", "upright"],
+        required: ["textSeen", "A", "B", "C", "D", "upright", "caseFound", "xMin", "yMin", "xMax", "yMax"],
+        propertyOrdering: ["textSeen", "A", "B", "C", "D", "upright", "caseFound", "xMin", "yMin", "xMax", "yMax"],
       },
-    },
-  });
-
-  try {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      if (attempt > 0) await new Promise((r) => setTimeout(r, attempt * 4000));
-      const res = await fetch(`${API_URL}?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body });
-      if (res.status === 429 || res.status >= 500) continue;
-      if (!res.ok) return null;
-
-      const data = (await res.json()) as GeminiGenerateContentResponse;
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) return null;
-      const parsed = JSON.parse(text) as { upright?: string } & Record<string, unknown>;
-      const pick = parsed.upright as keyof typeof VERSION_DEGREES | undefined;
-      if (!pick || !(pick in VERSION_DEGREES)) return null;
-      // The pick must agree with its own per-version judgement, or it's a guess.
-      if (parsed[pick] !== "upright") return null;
-      return VERSION_DEGREES[pick];
-    }
-    return null;
+    });
+    if (!text) return null;
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const pick = parsed.upright as keyof typeof VERSION_DEGREES | undefined;
+    // The pick must agree with its own per-version judgement, or it's a guess.
+    const rotation = pick && pick in VERSION_DEGREES && parsed[pick] === "upright" ? VERSION_DEGREES[pick] : null;
+    if (rotation === null) return null;
+    const box = parsed.caseFound === true ? validBox(parsed.xMin, parsed.yMin, parsed.xMax, parsed.yMax) : null;
+    return { rotation, box };
   } catch {
     return null;
   }
+}
+
+/** Just the rotation half of detectCoverOrientationAndBox (the stored-photo repair script). */
+export async function detectCoverRotation(imageBytes: Buffer, mimeType: string): Promise<0 | 90 | 180 | 270 | null> {
+  return (await detectCoverOrientationAndBox(imageBytes, mimeType))?.rotation ?? null;
 }

@@ -776,3 +776,14 @@ Follow-up, 2026-10-04: after another scanning batch the user reported four thing
   Finished it: wired the four-way detector in, live-tested it (180 and 270 degrees detected correctly), and wrote a repair script. The region "ALL" fix from the agent is kept.
 - **Gemini quota.** The repair dry run ran into Gemini's daily free limit (500 requests, used up by the agent's testing). Rotation repair and listing-photo re-crop wait for the reset; scanner cover reads won't work until then either.
 - **Also added:** Estimated Value listing photos are cropped to the case like the user's own photos, and the scanner review screen has a manual title re-search under a rejected cover match.
+
+2026-10-06 (Gemini allowance): User asked how many cases the free Gemini allowance covers. Counted the calls: 3 per cover photo, so about 80 front+back cases a day at 500 requests. They asked to (1) merge the crop into one request and (2) skip rotation on back photos, and to look for a better free model, keeping the current one if none was better.
+- **Merge.** Merging the crop into the read would have broken their crop-before-read rule. Instead, rotation and the crop box became one request, with the read on the cropped photo: 2 requests per photo, 4 per case. That also covers (2): the back photo's rotation check now rides along with the crop request instead of costing a request of its own (the side isn't known until the read).
+- **Models.** Google no longer publishes free limits, and third-party sources disagree. Tested live on the user's photos:
+  - 2.5 models are closed to new users;
+  - 3.5+ Flash gets about 20 free requests a day;
+  - Gemma 4 31B is too slow;
+  - 3.1 Flash-Lite got 9/9 on rotation + box;
+  - Gemma 4 26B got 8/9 on rotation but 4/9 on boxes;
+  - read quality was similar between 3.1 Flash-Lite and Gemma 4 26B.
+- **Result.** Kept the existing model first and added a per-model fallback chain (3.5 Flash-Lite, then 3.1 Flash-Lite, then Gemma 4 26B) in `geminiRequest.ts`. Every Gemini call goes through it. This also restored cover reading the same day, since the first model's quota was used up. Started the stored-photo rotation repair dry run on the chain.

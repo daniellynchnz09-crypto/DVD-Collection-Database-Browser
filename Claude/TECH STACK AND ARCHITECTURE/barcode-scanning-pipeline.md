@@ -339,3 +339,26 @@ Fixed by adding all four coordinates to the schema's `required` array (forces th
 - **DVD "ALL" region badge.** The cover-read prompt now describes the globe/disc badge with "ALL" (or "0") in it. `resolveDiskRegionText` treats a bare "ALL"/"0" region (once PAL/NTSC and filler words are stripped) as All, and `extractDiskRegionHint` handles "Region: ALL".
 - **Listing photos cropped like the user's own photos.** `uploadCaseImage`, used for Estimated Value accepted-listing photos and UPC listing photos, now also crops to the detected case outline. For images already stored: `npm run backfill-recrop-case-images -w scripts -- --include-small`, after the rotation repair. Also pending the Gemini reset.
 - **Manual re-search on the review screen.** When the cover-based best match is rejected (Not this item) or nothing is picked, a "Search for a different title" box under the candidates runs the old typed title search and replaces the candidates.
+
+**FEWER GEMINI REQUESTS + FREE-MODEL CHAIN (2026-10-06, later)**
+The user asked how many cases the free Gemini allowance covers. It was about 80 a day with front and back photos (3 requests per photo, 500 a day on one model). They asked for fewer requests per case, and for another free model if one was better.
+- **Rotation and crop box merged into one request** (`detectCoverOrientationAndBox`):
+  - One request takes the four rotated previews and returns which one is upright *and* the case box measured in that upright version. The read (`detectCoverFromImage`) still runs on the rotated, cropped photo, so the user's crop-before-read rule holds.
+  - That's 2 requests per photo, so 4 per front+back case instead of 6.
+  - The scanner doesn't know which photo is the back until it's read, so there's no separate back-photo saving. With rotation folded into the crop request, the back photo's rotation check no longer costs a request of its own.
+  - `detectCoverRotation` remains as a thin wrapper for the repair script. `detectCoverBoundingBox` remains for listing photos (`uploadCaseImage`), which don't need rotating.
+- **Free-model chain** (`packages/backend/src/geminiRequest.ts`). Every Gemini call (cover read, orientation+box, box, format banner, listing text) goes through it. Free quotas are counted per model, so when one model returns 429, 404 or 5xx, the call moves to the next. A 429'd model is skipped for as long as Google's own `retryDelay` says. Order, from a live comparison on the user's photos:
+
+  | Order | Model | Free allowance | Test result |
+  |---|---|---|---|
+  | 1 | `gemini-flash-lite-latest` (3.5 Flash-Lite) | ~500/day | Original model |
+  | 2 | `gemini-3.1-flash-lite` | ~500/day | 9/9 on rotation + box |
+  | 3 | `gemma-4-26b-a4b-it` | Not published | Rotation 9/9 and 8/9; box 4/9, so last |
+
+  Not used:
+  - **2.5 Flash / Flash-Lite:** closed to new users (404).
+  - **3.5+ Flash:** about 20 free requests a day.
+  - **Gemma 4 31B:** about 45 s per call.
+
+  `GEMINI_MODELS` overrides the order.
+- **Net result:** roughly 125 front+back cases a day per Flash-Lite model, about 250 across both, plus Gemma's separate allowance on top.

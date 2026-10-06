@@ -1,3 +1,4 @@
+import { generateGeminiJson } from "./geminiRequest";
 /**
  * LLM-based fallback for parsing a UPC listing title into its real component parts (title,
  * cast, format, region) - added 2026-09-22 after a real scan of "Bride of the Monster" (1955)
@@ -32,8 +33,7 @@
  * context, never something trusted enough to block or auto-commit a scan.
  */
 
-const MODEL = "gemini-flash-lite-latest";
-const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+// Model + quota fallback live in geminiRequest.ts (a chain of free models, 2026-10-06).
 
 const PROMPT = `You are looking at the raw listing title (and sometimes a short description) of a UPC/barcode lookup for a physical DVD/Blu-ray/4K UHD/CD movie disc, scraped from resale/retail listings. These listings are messy - they often glue actor names, disc format, region, and condition text onto the real film/show title with no consistent separator (commas, hyphens with no surrounding space, pipes, brackets, or nothing at all).
 
@@ -47,16 +47,6 @@ Example input: "Bela Lugosi, Tor Johnson-bride Of The Monster (uk Import) Dvd"
 Example output: {"title": "Bride of the Monster", "actors": ["Bela Lugosi", "Tor Johnson"], "format": "DVD", "region": "UK"}
 
 Only report what the text actually says - never invent an actor, format, or region that isn't genuinely present in it.`;
-
-interface GeminiResponsePart {
-  text?: string;
-}
-interface GeminiCandidate {
-  content?: { parts?: GeminiResponsePart[] };
-}
-interface GeminiGenerateContentResponse {
-  candidates?: GeminiCandidate[];
-}
 
 export interface ListingTextExtraction {
   /** Empty string means the model couldn't isolate a title at all. */
@@ -72,18 +62,12 @@ export async function extractListingTextFields(
   listingTitle: string,
   listingDescription?: string
 ): Promise<ListingTextExtraction | null> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-
   const text = listingDescription ? `${listingTitle}\n${listingDescription}` : listingTitle;
 
   try {
-    const res = await fetch(`${API_URL}?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: `${PROMPT}\n\nText to parse: ${JSON.stringify(text)}` }] }],
-        generationConfig: {
+    const responseText = await generateGeminiJson(
+      [{ text: `${PROMPT}\n\nText to parse: ${JSON.stringify(text)}` }],
+      {
           // Same reasoning as formatVision.ts: pinned to 0 for a consistent, non-creative
           // extraction rather than sampled variation across identical inputs.
           temperature: 0,
@@ -98,13 +82,8 @@ export async function extractListingTextFields(
             },
             required: ["title", "actors"],
           },
-        },
-      }),
-    });
-    if (!res.ok) return null;
-
-    const data = (await res.json()) as GeminiGenerateContentResponse;
-    const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      }
+    );
     if (!responseText) return null;
 
     const parsed = JSON.parse(responseText) as {

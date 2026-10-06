@@ -22,7 +22,7 @@ import { extractListingTextFields, type ListingTextExtraction } from "./listingT
 import { recordUpcRateLimit } from "./upcQuota";
 import { getSignedPosterImageUrl } from "./posterImageStorage";
 import { downloadStagedCoverPhoto, replaceStagedCoverPhoto } from "./coverStagingStorage";
-import { detectCoverBoundingBox, detectCoverFromImage, detectCoverRotation, type StagedCoverAnalysis } from "./coverVision";
+import { detectCoverFromImage, detectCoverOrientationAndBox, type StagedCoverAnalysis } from "./coverVision";
 import { cropImageBufferToBox, normalizeImageOrientation, rotateImageBuffer } from "./imageCrop";
 import { searchTitleCandidates } from "./titleTextSearch";
 import { matchClassicWhoSerial } from "./classicWhoSerials";
@@ -183,16 +183,18 @@ async function analyzeStagedCoverPhotos(
     let bytes = await normalizeImageOrientation(staged.bytes, staged.contentType);
     let changed = bytes !== staged.bytes;
 
-    const rotation = await detectCoverRotation(bytes, staged.contentType);
-    if (rotation) {
-      const rotated = await rotateImageBuffer(bytes, staged.contentType, rotation);
+    // One request for both: which way is up, and where the case is once it's upright
+    // (2026-10-06 - was two separate requests; see detectCoverOrientationAndBox).
+    const oriented = await detectCoverOrientationAndBox(bytes, staged.contentType);
+    if (oriented?.rotation) {
+      const rotated = await rotateImageBuffer(bytes, staged.contentType, oriented.rotation);
       if (rotated !== bytes) {
         bytes = rotated;
         changed = true;
       }
     }
 
-    const box = await detectCoverBoundingBox(bytes, staged.contentType);
+    const box = oriented?.box;
     if (box) {
       const cropped = await cropImageBufferToBox(bytes, staged.contentType, box);
       if (cropped !== bytes) {

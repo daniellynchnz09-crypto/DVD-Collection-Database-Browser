@@ -1,3 +1,4 @@
+import { generateGeminiJson } from "./geminiRequest";
 /**
  * Detects a disc's format (DVD/Blu-Ray/4K UHD Blu-Ray/etc.) and whether the case is a
  * Steelbook by asking a vision-capable AI model to read the standardized format banner
@@ -68,8 +69,7 @@
  * extend if a different combination ever turns up.
  */
 
-const MODEL = "gemini-flash-lite-latest";
-const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+// Model + quota fallback live in geminiRequest.ts (a chain of free models, 2026-10-06).
 
 // Matches packages/shared/src/titleParsing.ts's FORMAT_ALIASES canonical spellings, so a
 // vision guess never disagrees with a manually-typed or text-hint-derived value on how the
@@ -108,16 +108,6 @@ Also state whether the case is a "Steelbook" - a metal (not cardboard/plastic) c
 
 If the image is too unclear, cropped, or doesn't show enough of the packaging to tell the primary format, answer "Unclear" for format rather than guessing (in that case, answer "NONE" for extraDiscs too).`;
 
-interface GeminiResponsePart {
-  text?: string;
-}
-interface GeminiCandidate {
-  content?: { parts?: GeminiResponsePart[] };
-}
-interface GeminiGenerateContentResponse {
-  candidates?: GeminiCandidate[];
-}
-
 export interface FormatVisionResult {
   format: "DVD" | "Blu-Ray" | "4K UHD Blu-Ray" | "VHS" | "CD Movie";
   steelbook: boolean;
@@ -145,25 +135,15 @@ async function fetchImageAsBase64(imageUrl: string): Promise<{ mimeType: string;
 }
 
 export async function detectFormatFromImage(imageUrl: string): Promise<FormatVisionResult | null> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  // Same "missing config = no guess, not an error" convention as every scraper's missing-key
-  // handling elsewhere in this codebase.
-  if (!apiKey) return null;
+  if (!process.env.GEMINI_API_KEY) return null;
 
   const image = await fetchImageAsBase64(imageUrl);
   if (!image) return null;
 
   try {
-    const res = await fetch(`${API_URL}?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [{ text: PROMPT }, { inline_data: { mime_type: image.mimeType, data: image.data } }],
-          },
-        ],
-        generationConfig: {
+    const text = await generateGeminiJson(
+      [{ text: PROMPT }, { inline_data: { mime_type: image.mimeType, data: image.data } }],
+      {
           // Pinned to 0 (added 2026-09-18) after finding the exact same prompt against the
           // exact same real product photo returned "ONE_EXTRA" on one call and "TWO_EXTRA" on
           // another, confirmed live via two direct raw API calls - Gemini's default sampling
@@ -182,13 +162,8 @@ export async function detectFormatFromImage(imageUrl: string): Promise<FormatVis
             },
             required: ["format", "extraDiscs", "steelbook"],
           },
-        },
-      }),
-    });
-    if (!res.ok) return null;
-
-    const data = (await res.json()) as GeminiGenerateContentResponse;
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      }
+    );
     if (!text) return null;
 
     const parsed = JSON.parse(text) as { format?: string; extraDiscs?: string; steelbook?: boolean };
