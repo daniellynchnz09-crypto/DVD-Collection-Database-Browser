@@ -70,7 +70,7 @@ import SelectDropdown from "../components/SelectDropdown";
 import OfflineBanner from "../components/OfflineBanner";
 import TitleSearchPicker, { type CollectionMember } from "../components/TitleSearchPicker";
 import type { PendingScan } from "./PendingScansScreen";
-import { FONTS, GLOSS, SCREEN, WELL } from "../theme";
+import { FONTS, GLOSS, PLATE, SCREEN, WELL } from "../theme";
 
 interface OmdbCandidate {
   Title: string;
@@ -2588,16 +2588,14 @@ export default function ConfirmScreen({
           onPress={() => resolveCollectionMatch(null)}
           disabled={submitting}
         >
-          <Text style={styles.buttonText}>Is a new entry - I genuinely own a separate collection</Text>
+          <ActionLabel action="New Entry" detail="I genuinely own a separate collection" />
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.button}
           onPress={() => resolveCollectionMatch(chosenMatch)}
           disabled={submitting || !chosenMatch}
         >
-          <Text style={styles.buttonText}>
-            {submitting ? "Saving..." : "Overwrite - replace it with this scan"}
-          </Text>
+          <ActionLabel action={submitting ? "Saving..." : "Overwrite"} detail={submitting ? null : "replace it with this scan"} />
         </TouchableOpacity>
         <TouchableOpacity style={[styles.button, styles.buttonRed]} onPress={handleDiscard} disabled={submitting}>
           <Text style={styles.buttonText}>Reject this whole scan - don&apos;t add any of it</Text>
@@ -2694,21 +2692,21 @@ export default function ConfirmScreen({
           onPress={handleTreatAsNew}
           disabled={submitting}
         >
-          <Text style={styles.buttonText}>Is a new entry - I genuinely own a separate copy</Text>
+          <ActionLabel action="New Entry" detail="I genuinely own a separate copy" />
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.button}
           onPress={handleOverwriteExisting}
           disabled={submitting || !chosenExistingId}
         >
-          <Text style={styles.buttonText}>{submitting ? "Saving..." : "Overwrite - replace it with this scan"}</Text>
+          <ActionLabel action={submitting ? "Saving..." : "Overwrite"} detail={submitting ? null : "replace it with this scan"} />
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.button, styles.buttonRed]}
           onPress={handleDiscard}
           disabled={submitting}
         >
-          <Text style={styles.buttonText}>Reject - this scan shouldn&apos;t be added at all</Text>
+          <ActionLabel action="Reject" detail="this scan shouldn't be added at all" />
         </TouchableOpacity>
       </ScrollView>
     );
@@ -4360,6 +4358,7 @@ const styles = StyleSheet.create({
   // Same pill shape as MultiSelectChips' own chip, but blue-accented rather than a plain
   // toggle - this one is an action (tap to search/add), not a selection state.
   suggestionChip: {
+    ...PLATE,
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 0,
@@ -4475,4 +4474,17 @@ const styles = StyleSheet.create({
   buttonGreen: { ...GLOSS, backgroundColor: "#16a34a" },
   buttonRed: { ...GLOSS, backgroundColor: "#dc2626" },
   buttonText: { letterSpacing: 1, color: "#fff", fontFamily: FONTS.displaySemiBold },
+  buttonDetail: { color: "rgba(255,255,255,0.8)", fontFamily: FONTS.body, fontSize: 12, marginTop: 2, textAlign: "center" },
 });
+
+/** A New Entry / Overwrite / Reject button's text: the action on one line, what it means
+ * underneath, smaller and in brackets (2026-10-07, the user found the one-line versions oddly
+ * spaced). */
+function ActionLabel({ action, detail }: { action: string; detail: string | null }) {
+  return (
+    <>
+      <Text style={styles.buttonText}>{action}</Text>
+      {detail ? <Text style={styles.buttonDetail}>({detail})</Text> : null}
+    </>
+  );
+}

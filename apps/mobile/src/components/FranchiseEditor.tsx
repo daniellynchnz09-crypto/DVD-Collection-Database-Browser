@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import SearchableModalInput from "./SearchableModalInput";
-import { FONTS, GLOSS } from "../theme";
+import { FONTS, GLOSS, PLATE } from "../theme";
 
 type Props = {
   /** Comma-separated franchise tags, same string the form state already holds. */
@@ -100,11 +100,11 @@ const styles = StyleSheet.create({
   blocks: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   // maxWidth keeps a long franchise name inside the panel (2026-10-03, user-reported: a long
   // name pushed the chip past the panel's edge) - the text wraps onto extra lines instead.
-  block: { flexDirection: "row", alignItems: "center", backgroundColor: "#1d6c9a", borderRadius: 0, paddingLeft: 14, minHeight: 48, maxWidth: "100%" },
+  block: { ...GLOSS, flexDirection: "row", alignItems: "center", backgroundColor: "#1d6c9a", borderRadius: 0, paddingLeft: 14, minHeight: 48, maxWidth: "100%" },
   blockText: { color: "#fff", fontSize: 16, fontFamily: FONTS.displaySemiBold, flexShrink: 1, paddingVertical: 8 },
   remove: { paddingHorizontal: 14, height: 48, alignItems: "center", justifyContent: "center" },
   removeText: { color: "#fff", fontSize: 24, fontFamily: FONTS.displayBold },
-  suggestion: { borderWidth: 1, borderColor: "#5cc8ff", borderRadius: 0, paddingHorizontal: 14, minHeight: 48, alignItems: "center", justifyContent: "center", maxWidth: "100%" },
+  suggestion: { ...PLATE, borderWidth: 1, borderColor: "#5cc8ff", borderRadius: 0, paddingHorizontal: 14, minHeight: 48, alignItems: "center", justifyContent: "center", maxWidth: "100%" },
   suggestionText: { color: "#5cc8ff", fontSize: 16, fontFamily: FONTS.displaySemiBold, flexShrink: 1, paddingVertical: 8 },
   addButton: { ...GLOSS, minHeight: 52, borderRadius: 0, backgroundColor: "#16294a", alignItems: "center", justifyContent: "center" },
   addDisabled: { opacity: 0.4 },

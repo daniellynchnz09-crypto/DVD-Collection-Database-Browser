@@ -1,5 +1,5 @@
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { FONTS, GLOSS } from "../theme";
+import { FONTS, GLOSS, PLATE } from "../theme";
 
 /**
  * A row of toggle chips for a field with a small, closed set of options where exactly one
@@ -37,6 +37,7 @@ export default function SingleSelectChips({
 const styles = StyleSheet.create({
   row: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: {
+    ...PLATE,
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 0,

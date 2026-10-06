@@ -82,6 +82,35 @@ export const WELL = {
   boxShadow: "inset 0 2px 4px rgba(0,0,0,0.7), inset 0 -1px 0 rgba(255,255,255,0.07)",
 } as const;
 
+/** An unselected chip or tag: a raised plate (a darker cousin of GLOSS) so it reads as
+ * something to press, not a flat outline. */
+export const PLATE = {
+  backgroundColor: COLORS.panelHi,
+  borderWidth: 1,
+  borderColor: COLORS.steel,
+  experimental_backgroundImage:
+    "linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.03) 49%, rgba(0,0,0,0.08) 50%, rgba(0,0,0,0.2) 100%)",
+  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.14), inset 0 -1px 0 rgba(0,0,0,0.4), 0 2px 4px rgba(0,0,0,0.5)",
+} as const;
+
+/** A list entry as its own bevelled card over the screen gradient. */
+export const CARD = {
+  ...PANEL,
+  backgroundColor: "rgba(15,28,47,0.88)",
+  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.09), inset 0 -1px 0 rgba(0,0,0,0.55), 0 3px 8px rgba(0,0,0,0.5)",
+} as const;
+
+/** Glare off a plastic case sleeve, laid over a poster image (the website's case-glare). */
+export const GLARE = {
+  position: "absolute",
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  experimental_backgroundImage: "linear-gradient(115deg, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0.05) 32%, rgba(255,255,255,0) 33%)",
+  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.25), inset 0 -1px 0 rgba(0,0,0,0.5)",
+} as const;
+
 /** Small uppercase technical label (the website's label-tech). */
 export const LABEL_TECH = {
   fontFamily: FONTS.display,

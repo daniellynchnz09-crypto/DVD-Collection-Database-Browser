@@ -847,3 +847,10 @@ Same session: the user pointed at the person/franchise portrait circle and asked
   Gradients and inner shadows use RN 0.86's experimental_backgroundImage/boxShadow, so the two extra packages first installed (expo-linear-gradient, react-native-svg) were removed again. Corners are square, not cut: RN can't clip to a polygon. Verified by typecheck and a full Android Metro bundle; the look itself still needs the user's on-phone check.
 
 - **Rescans update the site at once.** The user asked whether an overwriting re-scan updates the website or duplicates. Checked: Overwrite updates the same titles row (same unique_id), so there is never a duplicate. Pages and the search index were cached for up to 5 minutes, though. The confirm route now refreshes both straight after writing (cacheRefresh.ts: revalidatePath("/", "layout") plus a search index reset), and again after the metadata refresh, which now runs in after().
+- **Scanner app polish (round 2), per the user:**
+  - The camera-screen banner now starts at the top edge and pads past the selfie-camera gap; the logo stays put. The user later said plain black there would also be fine; kept the banner.
+  - Franchise tags, chips and suggestion tags became raised plates (new PLATE token).
+  - New Entry / Overwrite / Reject now show the action on one line with "(explanation)" smaller underneath.
+  - Pending Value is now a glossy header button.
+  - Pending-scan rows are bevelled cards over the gradient, with translucent section headers.
+  - Pending Value candidates were redesigned: framed photo with glare, glossy price tag, source/match labels, an Accept strip, and a green glow when accepted.

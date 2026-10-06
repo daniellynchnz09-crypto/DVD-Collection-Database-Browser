@@ -13,7 +13,7 @@ import type { Title } from "@danflix/shared";
 import { createManualPendingScan, discardScan, fetchPendingScans, fetchUpcQuotaStatus, type UpcQuotaStatus } from "../lib/scanApi";
 import { clearConfirmDraft } from "../lib/confirmDrafts";
 import { getHiddenPendingScanIds, useSubmissionsVersion } from "../lib/backgroundSubmissions";
-import { CHROME_BAR, FONTS, GLOSS, SCREEN, WELL } from "../theme";
+import { CARD, CHROME_BAR, COLORS, FONTS, GLOSS, SCREEN, WELL } from "../theme";
 
 export interface PendingScan {
   id: string;
@@ -410,6 +410,8 @@ const styles = StyleSheet.create({
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   headerActions: { flexDirection: "row", alignItems: "center", gap: 14 },
   link: { fontFamily: FONTS.body, color: "#5cc8ff" },
+  headerButton: { ...GLOSS, backgroundColor: COLORS.accentDeep, borderWidth: 1, borderColor: COLORS.accentDim, paddingVertical: 6, paddingHorizontal: 10 },
+  headerButtonText: { fontFamily: FONTS.displaySemiBold, color: COLORS.accentHi, fontSize: 12, letterSpacing: 1, textTransform: "uppercase" },
   addButton: {
     ...GLOSS,
     backgroundColor: "#1d6c9a",
@@ -436,21 +438,23 @@ const styles = StyleSheet.create({
   quotaBarFill: { height: "100%", backgroundColor: "#eab308", borderRadius: 0 },
   quotaBarFillExhausted: { backgroundColor: "#f87171" },
   quotaCount: { fontFamily: FONTS.body, color: "#8193ab", fontSize: 11 },
+  // A translucent strip, so the screen gradient shows through behind the list.
   sectionHeader: {
-    color: "#a9b8cc",
-    fontSize: 13,
+    color: COLORS.accent,
+    fontSize: 12,
     fontFamily: FONTS.displaySemiBold,
     textTransform: "uppercase",
-    letterSpacing: 0.5,
-    backgroundColor: "#070d17",
+    letterSpacing: 2,
+    backgroundColor: "rgba(7,13,23,0.82)",
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 8,
   },
   row: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#16294a",
+    ...CARD,
+    padding: 14,
+    marginHorizontal: 12,
+    marginBottom: 8,
   },
   rowContent: { flexDirection: "row", alignItems: "center", gap: 12 },
   rowText: { flex: 1 },

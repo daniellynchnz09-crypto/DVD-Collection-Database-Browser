@@ -275,10 +275,11 @@ export default function ScannerScreen({
         barcodeScannerSettings={{ barcodeTypes: ["ean13", "upc_a", "upc_e"] }}
         onBarcodeScanned={handleBarcodeScanned}
       />
-      <View style={[styles.topOverlay, { top: insets.top }]}>
-        <OfflineBanner />
-        {/* The website's header: logo left, settings right, on a brushed-metal strip. */}
-        <View style={styles.brandBar}>
+      <View style={[styles.topOverlay, { top: 0 }]}>
+        {/* The website's header: logo left, settings right, on a brushed-metal strip. It
+            starts at the very top of the screen and pads down past the camera cut-out, so
+            the strip fills that gap while the logo sits where it always did. */}
+        <View style={[styles.brandBar, { paddingTop: insets.top + 8 }]}>
           <View style={styles.brandMark} />
           <Text style={styles.brandText}>
             DANFLIX<Text style={styles.brandVersion}> 5.0</Text>
@@ -287,6 +288,7 @@ export default function ScannerScreen({
             <Text style={styles.settingsButtonText}>Settings</Text>
           </TouchableOpacity>
         </View>
+        <OfflineBanner />
       </View>
 
       <Modal visible={showSettings} transparent animationType="fade" onRequestClose={() => setShowSettings(false)}>

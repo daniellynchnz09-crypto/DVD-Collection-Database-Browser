@@ -1,5 +1,5 @@
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { FONTS, GLOSS } from "../theme";
+import { FONTS, GLOSS, PLATE } from "../theme";
 
 /**
  * A row of toggle chips for a field with a small, genuinely fixed set of options (Disk
@@ -55,6 +55,7 @@ export default function MultiSelectChips({
 const styles = StyleSheet.create({
   row: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: {
+    ...PLATE,
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 0,
