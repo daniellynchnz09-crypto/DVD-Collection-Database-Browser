@@ -83,7 +83,7 @@ export function InfiniteRows({
             <button
               type="button"
               onClick={() => void loadMore()}
-              className="clip-chevron-right bg-accent-deep py-1.5 pr-5 pl-3 font-display text-[11px] font-semibold tracking-[0.18em] text-accent-hi uppercase hover:bg-accent-dim"
+              className="gloss clip-chevron-right bg-accent-deep py-1.5 pr-5 pl-3 font-display text-[11px] font-semibold tracking-[0.18em] text-accent-hi uppercase hover:bg-accent-dim"
             >
               Retry
             </button>

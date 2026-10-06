@@ -30,7 +30,13 @@ export function TitleHero({
           sizes="(max-width: 640px) 192px, 272px"
           preload
           className="clip-corner bg-void/80 shadow-glow ring-1 ring-rule-strong ring-inset"
-        />
+        >
+          {/* Glare off a plastic case sleeve, as on the poster cards */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 bg-[linear-gradient(115deg,rgb(255_255_255/0.16)_0%,rgb(255_255_255/0.05)_32%,transparent_33%)] shadow-[inset_0_1px_0_rgb(255_255_255/0.25),inset_0_-1px_0_rgb(0_0_0/0.5)]"
+          />
+        </ImageFrame>
         {/* Corner tick marks under the poster - part of the chrome frame language */}
         <div aria-hidden className="mt-2 flex items-center gap-2">
           <span className="h-px flex-1 bg-rule-strong" />

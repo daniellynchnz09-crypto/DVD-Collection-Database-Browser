@@ -73,7 +73,7 @@ export function ConnectedTabs({ tabs, emptyText = "Nothing in the collection yet
                 onClick={() => setActive(tab.id)}
                 onKeyDown={(e) => onTabKey(e, i)}
                 className={`clip-tab flex items-center gap-2 px-3 py-2 font-display text-xs font-semibold tracking-[0.16em] uppercase transition-colors sm:px-4 sm:text-sm ${
-                  selected ? "bg-accent-deep text-accent-hi shadow-[inset_0_-2px_0_var(--color-accent)]" : "bg-panel/70 text-mist hover:bg-panel-hi hover:text-chrome"
+                  selected ? "gloss bg-accent-deep text-accent-hi" : "bg-panel/70 text-mist hover:bg-panel-hi hover:text-chrome"
                 }`}
               >
                 {tab.label}

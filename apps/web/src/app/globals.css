@@ -42,6 +42,12 @@
   --cut-sm: 6px;
 
   --shadow-glow: 0 0 0 1px rgb(92 200 255 / 0.35), 0 0 18px rgb(92 200 255 / 0.25);
+
+  /* Skeuomorphic depth (2026-10-06, the user: "it needs a touch more skeuomorphism"). Light
+     comes from above: raised surfaces catch a highlight on their top edge and shade on the
+     bottom; recessed ones the reverse. */
+  --shadow-bevel: inset 0 1px 0 rgb(255 255 255 / 0.09), inset 0 -1px 0 rgb(0 0 0 / 0.55), inset 1px 0 0 rgb(255 255 255 / 0.03);
+  --shadow-well: inset 0 2px 4px rgb(0 0 0 / 0.7), inset 0 -1px 0 rgb(255 255 255 / 0.07);
 }
 
 /* next/font CSS variables are set on <html> in layout.tsx */
@@ -115,7 +121,10 @@ body {
   background:
     linear-gradient(135deg, transparent calc(var(--cut) * 0.7071 - 1px), var(--panel-line) calc(var(--cut) * 0.7071 - 1px), var(--panel-line) calc(var(--cut) * 0.7071), transparent calc(var(--cut) * 0.7071)),
     linear-gradient(315deg, transparent calc(var(--cut) * 0.7071 - 1px), var(--panel-line) calc(var(--cut) * 0.7071 - 1px), var(--panel-line) calc(var(--cut) * 0.7071), transparent calc(var(--cut) * 0.7071)),
+    /* sheen across the top half, like light on a curved metal plate */
+    linear-gradient(180deg, rgb(255 255 255 / 0.05), rgb(255 255 255 / 0.015) 45%, transparent 46%),
     linear-gradient(180deg, rgb(22 41 74 / 0.85), rgb(11 21 36 / 0.92));
+  box-shadow: var(--shadow-bevel);
 }
 
 /* Flowing outline light (2026-10-06, the user: the hover glow should have light circling the
@@ -179,9 +188,42 @@ body {
 /* Brushed-metal header strip, like the 2Advanced section bars */
 @utility chrome-bar {
   background:
-    repeating-linear-gradient(90deg, rgb(255 255 255 / 0.025) 0 2px, transparent 2px 4px),
-    linear-gradient(180deg, #2a4266 0%, #1a2d4a 48%, #12223a 52%, #1a2d4a 100%);
+    repeating-linear-gradient(90deg, rgb(255 255 255 / 0.03) 0 2px, transparent 2px 4px),
+    linear-gradient(180deg, #34507a 0%, #1d3252 48%, #11203a 52%, #1a2d4a 100%);
   border-bottom: 1px solid var(--color-rule-strong);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18), 0 1px 0 rgb(0 0 0 / 0.5);
+}
+
+/* The site header: a darker brushed-metal plate with a specular top edge */
+@utility chrome-plate {
+  background:
+    repeating-linear-gradient(90deg, rgb(255 255 255 / 0.018) 0 2px, transparent 2px 4px),
+    linear-gradient(180deg, rgb(36 57 90 / 0.92) 0%, rgb(15 28 47 / 0.92) 50%, rgb(7 13 23 / 0.94) 51%, rgb(11 21 36 / 0.94) 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 6px 18px rgb(0 0 0 / 0.55);
+}
+
+/* Glossy raised face for buttons, bar fills and badges: a bright upper half and a darker lower
+   half meeting at a hard line, like moulded plastic or lacquered metal. Sits on top of the
+   element's own background colour, so bg-accent / bg-accent-deep keep their hue. Presses in on
+   click. */
+@utility gloss {
+  background-image: linear-gradient(180deg, rgb(255 255 255 / 0.34) 0%, rgb(255 255 255 / 0.1) 49%, rgb(0 0 0 / 0.1) 50%, rgb(0 0 0 / 0.22) 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.45), inset 0 -1px 0 rgb(0 0 0 / 0.35);
+  &:active {
+    background-image: linear-gradient(180deg, rgb(0 0 0 / 0.2) 0%, rgb(0 0 0 / 0.05) 100%);
+    box-shadow: inset 0 2px 3px rgb(0 0 0 / 0.45);
+  }
+}
+
+/* Recessed track / input well, cut into the surface */
+@utility well {
+  background-image: linear-gradient(180deg, rgb(0 0 0 / 0.35), rgb(0 0 0 / 0.05));
+  box-shadow: var(--shadow-well);
+}
+
+/* Raised bevel on its own (for boxes that aren't a full panel) */
+@utility bevel {
+  box-shadow: var(--shadow-bevel);
 }
 
 /* Small uppercase technical label */

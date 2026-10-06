@@ -129,8 +129,8 @@ function Tile({
         <span className="label-tech text-accent">{label}</span>
       </span>
       <span className="font-display text-3xl leading-none font-bold text-chrome-hi">{children}</span>
-      <span aria-hidden className="clip-tab relative h-1.5 w-full overflow-hidden bg-void/80">
-        <span className="absolute inset-y-0 left-0" style={{ width: `${Math.round(Math.min(1, Math.max(0, fill)) * 100)}%`, backgroundColor: color }} />
+      <span aria-hidden className="well clip-tab relative h-1.5 w-full overflow-hidden bg-void/80">
+        <span className="gloss absolute inset-y-0 left-0" style={{ width: `${Math.round(Math.min(1, Math.max(0, fill)) * 100)}%`, backgroundColor: color }} />
       </span>
       {footnote ? <span className="label-tech text-[9px] text-mist-dim">{footnote}</span> : null}
     </>

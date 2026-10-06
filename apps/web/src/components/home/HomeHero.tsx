@@ -89,7 +89,7 @@ export function HomeHero({ feature, stats }: { feature: HomeFeature | null; stat
               <div className="mt-5 flex flex-wrap items-center gap-2">
                 <Link
                   href={feature.href}
-                  className="clip-chevron-right flex h-10 items-center bg-accent pr-7 pl-4 font-display text-xs font-bold tracking-[0.2em] text-void uppercase transition-colors hover:bg-accent-hi"
+                  className="gloss clip-chevron-right flex h-10 items-center bg-accent pr-7 pl-4 font-display text-xs font-bold tracking-[0.2em] text-void uppercase transition-colors hover:bg-accent-hi"
                 >
                   View title
                 </Link>
@@ -141,7 +141,7 @@ function StatsStrip({ stats }: { stats: ArchiveStats }) {
     { label: "Box sets", value: stats.boxSets, length: stats.boxSetMovies },
   ];
   return (
-    <div className="mt-6 grid gap-4 border border-rule bg-void/50 p-4 backdrop-blur-sm sm:mt-8 sm:grid-cols-[auto_1fr_1fr] sm:gap-8 sm:p-5">
+    <div className="panel mt-6 grid gap-4 p-4 backdrop-blur-sm sm:mt-8 sm:grid-cols-[auto_1fr_1fr] sm:gap-8 sm:p-5">
       <div className="flex flex-col justify-center sm:border-r sm:border-rule sm:pr-8">
         <span className="label-tech text-[10px]">Titles in the archive</span>
         <span className="font-display text-5xl leading-none font-bold text-accent-hi tabular-nums sm:text-6xl">
@@ -163,9 +163,9 @@ function BarChart({ title, bars, total }: { title: string; bars: Array<{ label: 
       {bars.map((b) => (
         <div key={b.label} className="grid grid-cols-[4.5rem_1fr_2.5rem] items-center gap-2">
           <span className="label-tech truncate text-[10px]">{b.label}</span>
-          <span aria-hidden className="clip-tab relative h-3 bg-deep/80">
+          <span aria-hidden className="well clip-tab relative h-3 bg-deep/80">
             <span
-              className="absolute inset-y-0 left-0 bg-linear-to-r from-accent-dim to-accent"
+              className="gloss absolute inset-y-0 left-0 bg-accent"
               style={{ width: `${(b.length ?? b.value) > 0 ? Math.min(100, Math.max(3, ((b.length ?? b.value) / max) * 100)) : 0}%` }}
             />
           </span>

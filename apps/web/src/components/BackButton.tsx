@@ -25,7 +25,7 @@ export function BackButton({ fallbackHref = "/", label = "Back" }: { fallbackHre
       type="button"
       onClick={goBack}
       aria-label={label}
-      className="clip-chevron-left group flex h-9 shrink-0 items-center gap-2 bg-accent-deep pr-4 pl-5 text-accent-hi transition-colors hover:bg-accent-dim hover:text-chrome-hi"
+      className="gloss clip-chevron-left group flex h-9 shrink-0 items-center gap-2 bg-accent-deep pr-4 pl-5 text-accent-hi transition-colors hover:bg-accent-dim hover:text-chrome-hi"
     >
       <svg aria-hidden viewBox="0 0 10 10" className="h-2.5 w-2.5 fill-current">
         <polygon points="10,0 10,10 0,5" />

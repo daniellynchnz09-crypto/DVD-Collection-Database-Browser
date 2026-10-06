@@ -70,7 +70,7 @@ export function Badge({ children, tone = "accent" }: { children: ReactNode; tone
     signal: "bg-signal/15 text-signal border-signal/50",
   } as const;
   return (
-    <span className={`clip-tab inline-flex items-center border px-1.5 py-px font-display text-[10px] font-semibold tracking-[0.14em] uppercase ${tones[tone]}`}>
+    <span className={`gloss clip-tab inline-flex items-center border px-1.5 py-px font-display text-[10px] font-semibold tracking-[0.14em] uppercase ${tones[tone]}`}>
       {children}
     </span>
   );

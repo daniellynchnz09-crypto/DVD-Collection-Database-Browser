@@ -73,7 +73,7 @@ export function SearchBox({
           e.preventDefault();
           submit();
         }}
-        className="clip-corner-sm flex h-10 items-center border border-rule bg-void/70 focus-within:border-accent focus-within:bg-void"
+        className="well clip-corner-sm flex h-10 items-center border border-rule bg-void/70 focus-within:border-accent focus-within:bg-void"
       >
         <svg aria-hidden viewBox="0 0 16 16" className="ml-3 h-4 w-4 shrink-0 fill-none stroke-accent" strokeWidth="1.5">
           {/* Angular magnifier: square lens + diagonal handle */}
@@ -108,7 +108,7 @@ export function SearchBox({
         />
         <button
           type="submit"
-          className="clip-chevron-right h-full shrink-0 bg-accent-deep px-4 pr-5 font-display text-[11px] font-semibold tracking-[0.18em] text-accent-hi uppercase hover:bg-accent-dim"
+          className="gloss clip-chevron-right h-full shrink-0 bg-accent-deep px-4 pr-5 font-display text-[11px] font-semibold tracking-[0.18em] text-accent-hi uppercase hover:bg-accent-dim"
         >
           Search
         </button>

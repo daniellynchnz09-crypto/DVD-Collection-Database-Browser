@@ -51,7 +51,7 @@ export function TvSeriesBrowser({
               aria-controls={`${baseId}-panel`}
               onClick={() => setActive(i)}
               className={`clip-tab shrink-0 border-r border-rule px-4 py-2 font-display text-xs font-semibold tracking-[0.16em] whitespace-nowrap uppercase transition-colors ${
-                selected ? "bg-accent-deep text-accent-hi shadow-[inset_0_-2px_0_var(--color-accent)]" : "text-mist hover:bg-panel-hi hover:text-chrome-hi"
+                selected ? "gloss bg-accent-deep text-accent-hi" : "text-mist hover:bg-panel-hi hover:text-chrome-hi"
               }`}
             >
               {s.label}
