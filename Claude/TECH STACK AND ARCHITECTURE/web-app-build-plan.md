@@ -120,4 +120,9 @@ The original plan above is kept as written; these replace parts of it.
 - **How filtering works:** the search index (search.ts) carries each row's filterable facts, so filtering costs no extra queries. A film passes when any copy passes. A box set passes on its own steelbook/box-set flags plus any disc inside it passing the rest. Facet values are OR within a facet and AND across facets, and a blocked value removes a title outright.
 - **Not built yet:**
   - Rotten Tomatoes Audience Score: there's no data source; OMDb only carries the critics' Tomatometer.
-  - Taste profiles (saved filter presets, combined to find a middle ground).
+- **Taste profiles (built 2026-10-07):**
+  - **Storage:** saved Advanced Search filters with a name, in the `taste_profiles` table that migration 0001 created long ago. Its `filters` jsonb holds the /search URL-parameter string as a JSON string, re-parsed on every read.
+  - **Using them:** in the filter panel, anyone with the link can pick profiles (`?profile=<id>`, up to 10). Picking several shows only titles that pass every one - the user's "suit everyone" choice - on top of the panel's own filters.
+  - **Changing them:** "Manage profiles" saves the current filters as a profile, loads a profile's filters back into the panel, saves over one, renames or deletes. These go through /api/taste-profiles and need the owner passcode (`OWNER_PASSCODE` in the web app's env, checked in constant time, 8 wrong tries per address locks it for 15 minutes). The user chose this over browser-only or anyone-can-edit.
+  - **Names:** the private build uses real names; the public demo will get made-up ones when its data is seeded.
+- **Rotten Tomatoes Audience Score (researched 2026-10-07):** OMDb doesn't carry it. MDBList (mdblist.com, free account, 1,000 requests/day, lookup by IMDb id) returns it as the "popcorn" rating source, alongside the Tomatometer, Metacritic and Letterboxd scores. The user is getting a key; wiring it into title_metadata, the score tiles, filters and sorts comes next. (Paid scrapers like Apify's Rotten Tomatoes actors were the only other option found.)

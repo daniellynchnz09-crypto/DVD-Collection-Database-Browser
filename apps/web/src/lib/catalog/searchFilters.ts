@@ -10,6 +10,7 @@
  *   flags          ?steel=1  ?set=only|no  ?inset=only|no
  *   result types   ?type=film&type=item
  *   sorting        ?sort=released&dir=asc
+ *   taste profiles ?profile=<id>&profile=<id>   (titles must suit every chosen profile)
  */
 
 export type ResultType = "film" | "item" | "collection" | "franchise" | "director" | "person";
@@ -79,6 +80,8 @@ export interface SearchFilters {
   inBoxSet: Flag;
   sort: SortKey | null;
   dir: "asc" | "desc" | null;
+  /** Taste profile ids (the taste_profiles table) - a title must pass every one. */
+  profiles: string[];
 }
 
 export const EMPTY_FILTERS: SearchFilters = {
@@ -90,6 +93,7 @@ export const EMPTY_FILTERS: SearchFilters = {
   inBoxSet: null,
   sort: null,
   dir: null,
+  profiles: [],
 };
 
 export const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -106,6 +110,7 @@ export function facetValueLabel(key: FacetKey, value: string): string {
 
 // Bounds on what the URL can ask for - a filter link is user input like any other.
 const MAX_VALUES_PER_KEY = 40;
+const PROFILE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_VALUE_LENGTH = 80;
 
 type Getter = (key: string) => string[];
@@ -158,6 +163,7 @@ export function parseFilters(get: Getter): SearchFilters {
     inBoxSet: parseFlag(get("inset")[0]),
     sort: SORTS.some((s) => s.value === sortRaw) ? (sortRaw as SortKey) : null,
     dir: dirRaw === "asc" || dirRaw === "desc" ? dirRaw : null,
+    profiles: [...new Set(get("profile").filter((id) => PROFILE_ID_RE.test(id)))].slice(0, 10),
   };
 }
 
@@ -188,12 +194,14 @@ export function filtersToParams(f: SearchFilters, params = new URLSearchParams()
   if (f.inBoxSet) params.set("inset", f.inBoxSet);
   if (f.sort) params.set("sort", f.sort);
   if (f.dir) params.set("dir", f.dir);
+  for (const id of f.profiles) params.append("profile", id);
   return params;
 }
 
 /** True when anything narrows which titles show (sorting and result types don't count). */
 export function hasTitleFilters(f: SearchFilters): boolean {
   return (
+    f.profiles.length > 0 ||
     Object.values(f.facets).some((m) => m && Object.keys(m).length > 0) ||
     Object.values(f.ranges).some((r) => r && (r[0] !== null || r[1] !== null)) ||
     !!f.steelbook ||
@@ -204,6 +212,7 @@ export function hasTitleFilters(f: SearchFilters): boolean {
 
 export function activeFilterCount(f: SearchFilters): number {
   return (
+    f.profiles.length +
     f.types.length +
     Object.values(f.facets).reduce((n, m) => n + Object.keys(m ?? {}).length, 0) +
     Object.values(f.ranges).filter((r) => r && (r[0] !== null || r[1] !== null)).length +

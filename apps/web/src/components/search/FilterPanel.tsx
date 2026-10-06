@@ -20,6 +20,7 @@ import {
   type SortKey,
   type TriState,
 } from "@/lib/catalog/searchFilters";
+import { TasteProfiles, type ClientTasteProfile } from "./TasteProfiles";
 
 /**
  * Advanced Search's filter + sort panel (WEB APP DESIGN.md: filters that find entries or
@@ -33,6 +34,7 @@ export function FilterPanel({
   options,
   extraRanges = [],
   extraSorts = [],
+  profiles = [],
   defaultOpen,
 }: {
   query: string;
@@ -41,6 +43,8 @@ export function FilterPanel({
   /** Ranges only some builds offer (the private build's "My score"). */
   extraRanges?: RangeKey[];
   extraSorts?: SortKey[];
+  /** Saved taste profiles (the taste_profiles table). */
+  profiles?: ClientTasteProfile[];
   defaultOpen: boolean;
 }) {
   const router = useRouter();
@@ -101,7 +105,7 @@ export function FilterPanel({
         />
       </header>
 
-      <ActiveChips filters={filters} options={options} onChange={go} />
+      <ActiveChips filters={filters} options={options} profiles={profiles} onChange={go} />
 
       {open ? (
         <div className="space-y-6 p-4">
@@ -123,6 +127,20 @@ export function FilterPanel({
               })}
             </div>
             <p className="label-tech mt-1.5 text-mist-dim">None picked = everything. Actors &amp; crew only appear for a typed search.</p>
+          </Group>
+
+          <Group title="Taste profiles">
+            <TasteProfiles
+              profiles={profiles}
+              selected={draft.profiles}
+              draft={draft}
+              onToggle={(id) =>
+                setDraft((d) => ({ ...d, profiles: d.profiles.includes(id) ? d.profiles.filter((x) => x !== id) : [...d.profiles, id] }))
+              }
+              onLoad={(pf) =>
+                setDraft((d) => ({ ...d, facets: pf.facets, ranges: pf.ranges, steelbook: pf.steelbook, boxSet: pf.boxSet, inBoxSet: pf.inBoxSet }))
+              }
+            />
           </Group>
 
           <div className="grid gap-6 lg:grid-cols-2">
@@ -437,8 +455,25 @@ function SortControls({
 }
 
 /** The applied filters as removable chips, so they stay visible with the panel closed. */
-function ActiveChips({ filters, options, onChange }: { filters: SearchFilters; options: SearchFacetOptions; onChange: (f: SearchFilters) => void }) {
+function ActiveChips({
+  filters,
+  options,
+  profiles,
+  onChange,
+}: {
+  filters: SearchFilters;
+  options: SearchFacetOptions;
+  profiles: ClientTasteProfile[];
+  onChange: (f: SearchFilters) => void;
+}) {
   const chips: Array<{ key: string; label: string; exclude?: boolean; remove: () => SearchFilters }> = [];
+  for (const id of filters.profiles) {
+    chips.push({
+      key: `profile:${id}`,
+      label: `Suits ${profiles.find((p) => p.id === id)?.name ?? "a deleted profile"}`,
+      remove: () => ({ ...filters, profiles: filters.profiles.filter((x) => x !== id) }),
+    });
+  }
   for (const t of filters.types) {
     chips.push({
       key: `type:${t}`,

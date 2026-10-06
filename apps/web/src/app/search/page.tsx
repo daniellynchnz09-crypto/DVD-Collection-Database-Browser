@@ -6,6 +6,7 @@ import { PosterImage } from "@/components/PosterImage";
 import { FilterPanel } from "@/components/search/FilterPanel";
 import { cleanSearchQuery, getSearchFacetOptions, searchCatalog, SEARCH_MIN_LENGTH, type SearchGroup, type SearchHit } from "@/lib/catalog/search";
 import { activeFilterCount, filtersToParams, parseFiltersFromRecord, type RangeKey, type SortKey } from "@/lib/catalog/searchFilters";
+import { listTasteProfiles } from "@/lib/catalog/tasteProfiles";
 
 /** Per-group cap on the full results page (the dropdown shows 4); `?all=1` lifts it. */
 const PAGE_PER_GROUP = 60;
@@ -25,9 +26,14 @@ export default async function SearchPage({ searchParams }: Props) {
   const showAll = params.all === "1";
   const tooShort = query.length < SEARCH_MIN_LENGTH;
   const filtered = activeFilterCount(filters) > 0 || !!filters.sort;
+  // Taste profiles: the chosen ones' filters are applied on top of the panel's own.
+  const profiles = await listTasteProfiles();
+  const profileFilters = profiles.filter((p) => filters.profiles.includes(p.id)).map((p) => p.filters);
   // With filters or a sort, an empty search browses the whole collection.
   const [results, options] = await Promise.all([
-    tooShort && !filtered ? null : searchCatalog(tooShort ? "" : query, { perGroup: showAll ? PAGE_PER_GROUP_ALL : PAGE_PER_GROUP, posterSize: "w342", filters }),
+    tooShort && !filtered
+      ? null
+      : searchCatalog(tooShort ? "" : query, { perGroup: showAll ? PAGE_PER_GROUP_ALL : PAGE_PER_GROUP, posterSize: "w342", filters, profileFilters }),
     getSearchFacetOptions(),
   ]);
   const browsing = tooShort && filtered;
@@ -67,6 +73,7 @@ export default async function SearchPage({ searchParams }: Props) {
           options={options}
           extraRanges={extraRanges}
           extraSorts={extraSorts}
+          profiles={profiles.map((p) => ({ id: p.id, name: p.name, filters: p.filters }))}
           defaultOpen={!results || params.filters === "1"}
         />
       ) : null}

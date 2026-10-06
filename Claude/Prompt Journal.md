@@ -854,3 +854,9 @@ Same session: the user pointed at the person/franchise portrait circle and asked
   - Pending Value is now a glossy header button.
   - Pending-scan rows are bevelled cards over the gradient, with translucent section headers.
   - Pending Value candidates were redesigned: framed photo with glare, glossy price tag, source/match labels, an Accept strip, and a green glow when accepted.
+- **RT audience score research.** OMDb has no audience score. MDBList is the free source (1,000/day, by IMDb id, "popcorn" rating). The user will get an API key.
+- **Taste profiles.** The user chose database storage with an owner passcode, and "suit everyone" combining.
+  - Found the `taste_profiles` table already existed since 0001 (unused), so a planned 0050 migration was dropped and the code fitted to it.
+  - Built `?profile=` filtering, a profiles section in the filter panel (pick / save / load / save-over / rename / delete), and passcode-gated /api/taste-profiles routes (lib/ownerAuth.ts: constant-time compare, lockout after 8 misses).
+  - Generated an OWNER_PASSCODE into apps/web/.env.local and told the user.
+  - Tested end to end with two test profiles (51 + 75 matches -> 27 combined), then deleted them.

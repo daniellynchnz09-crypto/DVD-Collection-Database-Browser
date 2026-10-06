@@ -582,6 +582,9 @@ export interface SearchOptions {
   posterSize?: TmdbPosterSize;
   /** Advanced Search filters and sort. With filters, an empty query browses the collection. */
   filters?: SearchFilters;
+  /** The chosen taste profiles' own filters (filters.profiles, loaded by the caller). A
+   * title must pass the filters AND every profile - the "middle ground". */
+  profileFilters?: SearchFilters[];
 }
 
 /** Values a candidate can be sorted by (null = unknown, always listed last). */
@@ -692,7 +695,11 @@ export async function searchCatalog(rawQuery: string, opts: SearchOptions = {}):
   const query = cleanSearchQuery(rawQuery);
   const q = normalizeSearchText(query);
   const filters = opts.filters ?? EMPTY_FILTERS;
+  // Every set of filters a title has to pass: the panel's own, plus each chosen profile's.
+  const filterSets = [filters, ...(opts.profileFilters ?? [])].filter((f) => hasTitleFilters({ ...f, profiles: [] }));
   const titleFilters = hasTitleFilters(filters);
+  const filmOk = (film: IndexedFilm) => filterSets.every((f) => filmPasses(film, f, idx!));
+  const rowOk = (r: IndexedRow) => filterSets.every((f) => rowPasses(r, f, idx!));
   // No query: a browse, which needs something to browse by.
   const browsing = q.length < SEARCH_MIN_LENGTH;
   const sort: SortKey = filters.sort && !(browsing && filters.sort === "relevance") ? filters.sort : browsing ? "title" : "relevance";
@@ -725,7 +732,7 @@ export async function searchCatalog(rawQuery: string, opts: SearchOptions = {}):
   for (const film of idx.films) {
     const tier = browsing ? 0 : bestTier(film.names, q, qWords);
     if (tier === null) continue;
-    if (titleFilters && !filmPasses(film, filters, idx)) continue;
+    if (titleFilters && !filmOk(film)) continue;
     matchedFilms.push({ film, tier });
     const owned = film.rows.filter((r) => !r.row.is_collection).length || film.rows.length;
     add({
@@ -762,7 +769,7 @@ export async function searchCatalog(rawQuery: string, opts: SearchOptions = {}):
       }
     }
     if (score === null) continue;
-    if (titleFilters && !rowPasses(r, filters, idx)) continue;
+    if (titleFilters && !rowOk(r)) continue;
     addRow(r, score, false);
   }
 
@@ -839,7 +846,7 @@ export async function searchCatalog(rawQuery: string, opts: SearchOptions = {}):
         if (d) addDirector(d, relScore, true);
       }
       const header = r.collectionName ? idx.headerByCollection.get(r.collectionName) : undefined;
-      if (header && (!titleFilters || rowPasses(header, filters, idx))) addRow(header, relScore, true);
+      if (header && (!titleFilters || rowOk(header))) addRow(header, relScore, true);
     }
   }
 
