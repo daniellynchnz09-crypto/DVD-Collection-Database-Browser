@@ -8,6 +8,10 @@ The concrete plan for building WEB APP DESIGN.md's website (Vercel-hosted Next.j
 - Viewing needs no login: anyone with the link can browse. Every page is `noindex`/`nofollow` and `robots.txt` disallows everything, so search engines skip it. A login may be added later if other users want saved preferences. Editing features (rental controls, Direct Database Access) are owner-only and come later.
 - Film metadata (posters, synopsis, cast, crew) comes from TMDb, and scores (IMDb rating, Rotten Tomatoes, Metacritic) from OMDb. The IMDb link already saved on 2,790 titles is only used as the ID to look each film up - nothing is taken from IMDb itself. Metadata is stored in the database (not fetched live), so search can find titles by actor and person pages can list everything owned.
 - OMDb's free tier is 1,000 requests/day, so the score backfill for all ~2,800 IMDb-linked titles runs over ~3 days. Titles that went through the scanner are done first. New confirms get their metadata immediately.
+- OMDb credit savings (2026-10-06, after the first backfill's accidental whole-collection run spent ~800 requests on unscanned titles):
+  - A scan confirm saves the scores from the OMDb record it has already fetched, and skips OMDb when the stored scores are still fresh, so a confirm costs no extra metadata request. `omdbGetById` also keeps successful answers for an hour, so the scan's lookup and the confirm's lookup of the same film share one request.
+  - Scores are re-checked every 90 days for films under two years old and once a year for older ones (`omdbRefreshAgeMs`).
+  - IMDb ratings and vote counts come from IMDb's free daily data file (`datasets.imdbws.com/title.ratings.tsv.gz`, personal non-commercial licence) via `import-imdb-ratings`, which the backfill runs first. So an IMDb score never waits on OMDb; OMDb remains the only free source for Rotten Tomatoes and Metacritic.
 
 **Data model - how rows become pages**
 

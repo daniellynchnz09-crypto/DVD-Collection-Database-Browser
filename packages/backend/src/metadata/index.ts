@@ -1,10 +1,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { fetchOmdbScores, type OmdbScoresResult } from "./omdbScores";
+import { fetchOmdbScores, omdbRefreshAgeMs, omdbScoresFromResponse, type OmdbScoreResponse, type OmdbScoresResult } from "./omdbScores";
 import { saveOmdbScores, savePersonDetails, saveTmdbMetadata } from "./storage";
 import { fetchTmdbMetadata, fetchTmdbPerson } from "./tmdbMetadata";
 
 export { fetchTmdbMetadata, fetchTmdbPerson, findTmdbByImdbId, type TmdbMetadataResult } from "./tmdbMetadata";
-export { fetchOmdbScores, parseOmdbDecimal, parseOmdbInteger, type OmdbScoresResult } from "./omdbScores";
+export {
+  fetchOmdbScores,
+  omdbRefreshAgeMs,
+  omdbScoresFromResponse,
+  parseOmdbDecimal,
+  parseOmdbInteger,
+  type OmdbScoreResponse,
+  type OmdbScoresResult,
+} from "./omdbScores";
 export { saveTmdbMetadata, saveOmdbScores, savePersonDetails } from "./storage";
 export type { CreditRow, PersonRow, TitleMetadataOmdbFields, TitleMetadataTmdbFields } from "./types";
 
@@ -12,7 +20,9 @@ export interface RefreshTitleMetadataResult {
   imdbId: string;
   /** "saved" | "no_match" (TMDb has no entry) | "error". */
   tmdb: "saved" | "no_match" | "error";
-  omdb: OmdbScoresResult["status"] | "saved_error";
+  /** "from_scan": saved from the OMDb record the confirm already had; "fresh": skipped, the
+   * stored scores are within omdbRefreshAgeMs. Neither spends an OMDb request. */
+  omdb: OmdbScoresResult["status"] | "saved_error" | "from_scan" | "fresh";
   castCount: number;
   crewCount: number;
 }
@@ -56,10 +66,32 @@ export async function refreshOmdbScores(
 /**
  * Single entry point used after a scan confirm: refreshes one film's TMDb details/credits and
  * OMDb scores. TMDb runs first so the OMDb upsert lands on a populated row. Never throws.
+ *
+ * OMDb is only asked when it has to be: `omdbDetail` (the record the confirm already fetched)
+ * is saved directly, and scores still within omdbRefreshAgeMs - e.g. a second copy of a film -
+ * are left alone.
  */
-export async function refreshTitleMetadata(supabase: SupabaseClient, imdbId: string): Promise<RefreshTitleMetadataResult> {
+export async function refreshTitleMetadata(
+  supabase: SupabaseClient,
+  imdbId: string,
+  options: { omdbDetail?: OmdbScoreResponse | null } = {}
+): Promise<RefreshTitleMetadataResult> {
   const tmdb = await refreshTmdbMetadata(supabase, imdbId);
-  const omdb = await refreshOmdbScores(supabase, imdbId);
+  let omdb: RefreshTitleMetadataResult["omdb"];
+  if (options.omdbDetail) {
+    try {
+      await saveOmdbScores(supabase, omdbScoresFromResponse(imdbId, options.omdbDetail));
+      omdb = "from_scan";
+    } catch (err) {
+      console.error(`[metadata] OMDb save failed for ${imdbId}:`, err);
+      omdb = "saved_error";
+    }
+  } else {
+    const { data: existing } = await supabase.from("title_metadata").select("omdb_fetched_at, release_date").eq("imdb_id", imdbId).maybeSingle();
+    const fetchedAt = existing?.omdb_fetched_at ? Date.parse(existing.omdb_fetched_at) : NaN;
+    const fresh = Number.isFinite(fetchedAt) && Date.now() - fetchedAt < omdbRefreshAgeMs(existing?.release_date);
+    omdb = fresh ? "fresh" : await refreshOmdbScores(supabase, imdbId);
+  }
   return { imdbId, tmdb: tmdb.status, omdb, castCount: tmdb.castCount, crewCount: tmdb.crewCount };
 }
 

@@ -18,7 +18,8 @@ export type OmdbScoresResult =
   | { status: "limit_reached" }
   | { status: "error"; message: string };
 
-interface OmdbScoreResponse {
+/** The score fields of an OMDb `?i=` response - also satisfied by @danflix/shared's OmdbDetail. */
+export interface OmdbScoreResponse {
   Response?: string;
   Error?: string;
   imdbRating?: string;
@@ -50,18 +51,37 @@ export async function fetchOmdbScores(imdbId: string): Promise<OmdbScoresResult>
     return { status: "error", message: error || "OMDb returned Response=False" };
   }
 
+  return { status: "ok", scores: omdbScoresFromResponse(imdbId, data, fetchedAt) };
+}
+
+/**
+ * Scores out of an OMDb response that's already in hand - the scan confirm has just fetched the
+ * film's full OMDb record, so saving its scores from that costs no extra request (2026-10-06,
+ * the user asked for OMDb credits to be used more efficiently).
+ */
+export function omdbScoresFromResponse(imdbId: string, data: OmdbScoreResponse, fetchedAt = new Date().toISOString()): TitleMetadataOmdbFields {
   const rt = data.Ratings?.find((r) => r.Source === "Rotten Tomatoes")?.Value;
   return {
-    status: "ok",
-    scores: {
-      imdb_id: imdbId,
-      imdb_rating: parseOmdbDecimal(data.imdbRating),
-      imdb_votes: parseOmdbInteger(data.imdbVotes),
-      rotten_tomatoes_score: clampPercent(parseOmdbInteger(rt)),
-      metacritic_score: clampPercent(parseOmdbInteger(data.Metascore)),
-      omdb_fetched_at: fetchedAt,
-    },
+    imdb_id: imdbId,
+    imdb_rating: parseOmdbDecimal(data.imdbRating),
+    imdb_votes: parseOmdbInteger(data.imdbVotes),
+    rotten_tomatoes_score: clampPercent(parseOmdbInteger(rt)),
+    metacritic_score: clampPercent(parseOmdbInteger(data.Metascore)),
+    omdb_fetched_at: fetchedAt,
   };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How long a film's OMDb scores count as fresh: 90 days while it's under two years old (critics
+ * and votes are still coming in), a year after that (they barely move). Unknown release date
+ * gets the short window.
+ */
+export function omdbRefreshAgeMs(releaseDate: string | null | undefined): number {
+  const released = releaseDate ? Date.parse(releaseDate) : NaN;
+  const old = Number.isFinite(released) && Date.now() - released > 2 * 365 * DAY_MS;
+  return (old ? 365 : 90) * DAY_MS;
 }
 
 function emptyScores(imdbId: string, fetchedAt: string): TitleMetadataOmdbFields {

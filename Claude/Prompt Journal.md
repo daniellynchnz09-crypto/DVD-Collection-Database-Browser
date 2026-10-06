@@ -824,3 +824,7 @@ Same session: the user pointed at the person/franchise portrait circle and asked
 - **Search button gap.** The user circled dark corners showing round the Search button's chevron tip. The search field now uses `clip-search` (its right end follows the chevron, no right border), so the button fills the end flush.
 - The user asked for a rundown of everything held back today by API/Gemini limits and when each resets (answered in chat: Gemini free tier, OMDb daily cap, UPCitemdb).
 - **Back button depth.** The user said the Back buttons looked flatter than the Search button. Same gloss, but Search sits in a framed recess; Back now gets a lit 1px chevron rim and a drop shadow (BackButton.tsx, used on every page).
+- **OMDb credits.** The user asked why OMDb ran out. Records showed 901 requests on 2026-10-05 UTC: ~800 for unscanned titles from the first backfill (Claude's mistake, run over the whole collection against the user's scanned-only instruction) and 99 for scanned ones. The user then chose three fixes:
+  1. A confirm saves scores from the OMDb record it already fetched, plus a 1-hour cache on omdbGetById.
+  2. Yearly re-checks for films over two years old.
+  3. IMDb ratings from IMDb's free data file (new import-imdb-ratings script; it also runs in the backfill). Applied: 2,285 rows updated, and the 6 scanned titles stuck on OMDb now show IMDb ratings.

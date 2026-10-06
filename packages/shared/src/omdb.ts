@@ -52,6 +52,8 @@ export interface OmdbDetail {
   Plot: string;
   Poster: string;
   imdbRating: string;
+  imdbVotes?: string;
+  Metascore?: string;
   imdbID: string;
   Type: string;
   // Multi-source aggregate scores OMDB already bundles in - includes a "Rotten Tomatoes"
@@ -75,12 +77,27 @@ export async function omdbSearch(query: string): Promise<OmdbSearchCandidate[]> 
   return data.Search ?? [];
 }
 
+// Recent detail lookups, so one scan doesn't pay OMDb twice for the same film: the scan
+// resolver fetches each candidate's record, and the confirm a few minutes later fetches the
+// chosen one again (2026-10-06, the user asked for OMDb credits to go further). Per process,
+// successful answers only, kept an hour.
+const DETAIL_CACHE_MS = 60 * 60 * 1000;
+const DETAIL_CACHE_MAX = 500;
+const detailCache = new Map<string, { at: number; detail: OmdbDetail }>();
+
 /** Fetches full OMDB detail for a chosen imdbID. */
 export async function omdbGetById(imdbId: string): Promise<OmdbDetail | null> {
+  const cached = detailCache.get(imdbId);
+  if (cached && Date.now() - cached.at < DETAIL_CACHE_MS) return cached.detail;
   const url = `https://www.omdbapi.com/?i=${encodeURIComponent(imdbId)}&apikey=${getApiKey()}`;
   const res = await fetch(url);
   const data = (await res.json()) as { Response: string } & OmdbDetail;
   if (data.Response === "False") return null;
+  if (detailCache.size >= DETAIL_CACHE_MAX) {
+    const oldest = detailCache.keys().next().value;
+    if (oldest !== undefined) detailCache.delete(oldest);
+  }
+  detailCache.set(imdbId, { at: Date.now(), detail: data });
   return data;
 }
 

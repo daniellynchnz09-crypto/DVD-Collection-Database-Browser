@@ -17,8 +17,13 @@
  * 950). The budget is per rolling 24h, not per run: rows whose omdb_fetched_at falls in the
  * last 24h (including scan-confirm refreshes) count against it, so re-running the same day
  * can't overspend. Resumable: ids fetched recently are skipped (TMDb within ~5 months - under
- * TMDb's 6-month cache limit; OMDb within 90 days), so just re-run daily until it reports
- * nothing left. TMDb has no meaningful daily cap and always runs for every due id.
+ * TMDb's 6-month cache limit; OMDb per omdbRefreshAgeMs - 90 days for a film under two years
+ * old, a year otherwise, since older films' scores barely move), so just re-run daily until it
+ * reports nothing left. TMDb has no meaningful daily cap and always runs for every due id.
+ *
+ * IMDb ratings/votes come first from IMDb's own free data file (import-imdb-ratings.ts, no
+ * API calls), so a film waiting on OMDb still shows its IMDb score. `--skip-imdb-ratings`
+ * leaves that step out.
  *
  * Dry run by default: prints the plan and fetches/shapes a few sample ids WITHOUT writing
  * (each sample spends one OMDb request). `--apply` writes.
@@ -26,7 +31,7 @@
  *   npm run backfill-title-metadata -w scripts                       # dry run, 3 samples
  *   npm run backfill-title-metadata -w scripts -- --ids=tt0052357,tt1642620
  *   npm run backfill-title-metadata -w scripts -- --apply [--omdb-budget=950] [--limit=N]
- *       [--skip-tmdb] [--skip-omdb] [--force] [--bios] [--all]
+ *       [--skip-tmdb] [--skip-omdb] [--skip-imdb-ratings] [--force] [--bios] [--all]
  *
  * --bios also fills biography/birthday/etc. for directors and the top 5 billed cast whose
  * people row has never been fully fetched (TMDb only, one request each).
@@ -41,14 +46,15 @@ import { extractImdbIdFromPage } from "@danflix/shared";
 import {
   fetchOmdbScores,
   fetchTmdbMetadata,
+  omdbRefreshAgeMs,
   refreshOmdbScores,
   refreshPersonDetails,
   refreshTmdbMetadata,
 } from "@danflix/backend";
+import { importImdbRatings } from "./import-imdb-ratings";
 
 const PAGE_SIZE = 1000; // PostgREST's per-request row cap.
 const TMDB_STALE_MS = 150 * 24 * 60 * 60 * 1000;
-const OMDB_STALE_MS = 90 * 24 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TMDB_WORKERS = 4; // Requests are still capped by the shared TMDb rate limiter.
 const BIO_CAST_DEPTH = 5;
@@ -61,6 +67,7 @@ interface Args {
   sample: number;
   skipTmdb: boolean;
   skipOmdb: boolean;
+  skipImdbRatings: boolean;
   force: boolean;
   bios: boolean;
   all: boolean;
@@ -82,6 +89,7 @@ function parseArgs(argv: string[]): Args {
     sample: intValue("sample", 3) ?? 3,
     skipTmdb: argv.includes("--skip-tmdb"),
     skipOmdb: argv.includes("--skip-omdb"),
+    skipImdbRatings: argv.includes("--skip-imdb-ratings"),
     force: argv.includes("--force"),
     bios: argv.includes("--bios"),
     all: argv.includes("--all"),
@@ -141,13 +149,14 @@ interface ExistingMeta {
   imdb_id: string;
   tmdb_fetched_at: string | null;
   omdb_fetched_at: string | null;
+  release_date: string | null;
 }
 
 /** Existing title_metadata freshness. Returns null if the table doesn't exist yet. */
 async function loadExisting(supabase: SupabaseClient): Promise<Map<string, ExistingMeta> | null> {
   try {
     const rows = await fetchAll<ExistingMeta>((from, to) =>
-      supabase.from("title_metadata").select("imdb_id, tmdb_fetched_at, omdb_fetched_at").order("imdb_id").range(from, to)
+      supabase.from("title_metadata").select("imdb_id, tmdb_fetched_at, omdb_fetched_at, release_date").order("imdb_id").range(from, to)
     );
     return new Map(rows.map((r) => [r.imdb_id, r]));
   } catch (err) {
@@ -239,7 +248,7 @@ async function main() {
   const existing = await loadExisting(supabase);
   const meta = existing ?? new Map<string, ExistingMeta>();
   const tmdbDue = args.skipTmdb ? [] : ordered.filter((id) => args.force || !isFresh(meta.get(id)?.tmdb_fetched_at, TMDB_STALE_MS));
-  const omdbDue = args.skipOmdb ? [] : ordered.filter((id) => args.force || !isFresh(meta.get(id)?.omdb_fetched_at, OMDB_STALE_MS));
+  const omdbDue = args.skipOmdb ? [] : ordered.filter((id) => args.force || !isFresh(meta.get(id)?.omdb_fetched_at, omdbRefreshAgeMs(meta.get(id)?.release_date)));
   const omdbUsedToday = [...meta.values()].filter((m) => isFresh(m.omdb_fetched_at, DAY_MS)).length;
   let omdbRemaining = Math.max(0, args.omdbBudget - omdbUsedToday);
 
@@ -266,6 +275,16 @@ async function main() {
     if ((i + 1) % 50 === 0 || i + 1 === tmdbDue.length) console.log(`  TMDb ${i + 1}/${tmdbDue.length} ${JSON.stringify(tmdbCounts)}`);
   });
   console.log(`TMDb done: ${JSON.stringify(tmdbCounts)}`);
+
+  // IMDb ratings from IMDb's own data file - free, and covers films still waiting on OMDb.
+  if (!args.skipImdbRatings) {
+    try {
+      const r = await importImdbRatings(supabase, true);
+      console.log(`IMDb ratings: ${r.changed} updated (${r.checked} films found in IMDb's file).`);
+    } catch (err) {
+      console.warn(`IMDb ratings step failed (${err instanceof Error ? err.message : err}) - carrying on with OMDb.`);
+    }
+  }
 
   // OMDb sequentially, in priority order, until the budget or OMDb's own limit stops it.
   const omdbCounts: Record<string, number> = {};

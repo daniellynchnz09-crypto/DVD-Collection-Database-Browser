@@ -404,6 +404,9 @@ export async function POST(request: Request) {
   // source URL, scoped to just this one confirm request/loop - reused across entries only
   // when they genuinely share the same source image, never across unrelated scans.
   const uploadedCaseImagePathByUrl = new Map<string, string | null>();
+  // OMDb records fetched below, reused for title_metadata's scores so the metadata refresh at
+  // the end doesn't spend a second OMDb request on the same film.
+  const omdbDetailById = new Map<string, NonNullable<Awaited<ReturnType<typeof omdbGetById>>>>();
 
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i];
@@ -418,6 +421,7 @@ export async function POST(request: Request) {
     if (entry.imdbId) {
       const detail = await omdbGetById(entry.imdbId);
       if (detail) {
+        omdbDetailById.set(entry.imdbId, detail);
         synopsis = detail.Plot;
 
         // Only set for a genuine classic-serial match (entry.imdbId is one of that serial's
@@ -440,7 +444,10 @@ export async function POST(request: Request) {
         let showLevelDetail = detail;
         if (detail.Type === "episode" && detail.seriesID) {
           const seriesDetail = await omdbGetById(detail.seriesID);
-          if (seriesDetail) showLevelDetail = seriesDetail;
+          if (seriesDetail) {
+            showLevelDetail = seriesDetail;
+            omdbDetailById.set(detail.seriesID, seriesDetail);
+          }
         }
 
         // Director vs. Creator/Head-Writer (same section, "Director vs. Creator/Head-
@@ -938,7 +945,7 @@ export async function POST(request: Request) {
     try {
       const { data: rows } = await supabase.from("titles").select("imdb_page").in("unique_id", createdIds);
       const imdbIds = new Set((rows ?? []).map((r) => extractImdbIdFromPage(r.imdb_page)).filter((id): id is string => !!id));
-      for (const imdbId of imdbIds) await refreshTitleMetadata(supabase, imdbId);
+      for (const imdbId of imdbIds) await refreshTitleMetadata(supabase, imdbId, { omdbDetail: omdbDetailById.get(imdbId) });
     } catch (err) {
       console.error("[metadata] Failed to refresh metadata for newly confirmed title(s):", err);
     }
