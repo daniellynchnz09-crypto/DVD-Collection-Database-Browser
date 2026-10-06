@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { extractImdbIdFromPage } from "@danflix/shared";
 import { getCatalogClient, PAGE_SIZE, reportQueryError } from "./client";
 import { TITLE_CARD_COLUMNS } from "./columns";
 import { collectionHref, discHref, franchiseHref, slugify, workHref, yearOf, shortFormatLabel, displayTitle } from "./display";
@@ -467,23 +468,40 @@ export interface ArchiveStats {
   boxSetMovies: number;
 }
 
-/** A random title that has real artwork (only ~200 of 3,000 rows do until the TMDb backfill
- * lands), so the hero never opens on a placeholder. */
+/** A random scanned title with full TMDb details, so the hero never opens on a placeholder. */
 export async function loadHomeFeature(seed: number): Promise<HomeFeature | null> {
   const supabase = getCatalogClient();
   if (!supabase) return null;
   const { data, error } = await supabase
     .from("titles")
-    .select("unique_id")
+    .select("unique_id, imdb_page")
     .eq("scanned", true)
     .eq("is_collection", false)
-    // A scanned film with art (it's shown as a Film/TV entry, so it needs an IMDb id).
+    // Shown as a Film/TV entry, so it needs an IMDb id.
     .not("imdb_page", "is", null)
-    .or("case_image_path.not.is.null,movie_poster_path.not.is.null")
     .order("unique_id")
-    .limit(500);
+    .limit(1000);
   reportQueryError("loadHomeFeature", error);
-  const ids = ((data ?? []) as Array<{ unique_id: string }>).map((r) => r.unique_id);
+  const rows = (data ?? []) as Array<{ unique_id: string; imdb_page: string | null }>;
+
+  // Only well-documented titles (the user's request, 2026-10-06: no "Elvis at the Movies" with
+  // no poster or synopsis): a TMDb poster, backdrop and synopsis. Scores aren't required -
+  // OMDb's daily cap can leave a well-known film briefly without one.
+  const imdbIds = [...new Set(rows.map((r) => extractImdbIdFromPage(r.imdb_page)).filter((id): id is string => !!id))];
+  const rich = new Set<string>();
+  for (let i = 0; i < imdbIds.length; i += 300) {
+    const { data: meta, error: metaError } = await supabase
+      .from("title_metadata")
+      .select("imdb_id")
+      .in("imdb_id", imdbIds.slice(i, i + 300))
+      .not("poster_path", "is", null)
+      .not("backdrop_path", "is", null)
+      .not("overview", "is", null)
+      .neq("overview", "");
+    reportQueryError("loadHomeFeature metadata", metaError);
+    for (const m of (meta ?? []) as Array<{ imdb_id: string }>) rich.add(m.imdb_id);
+  }
+  const ids = rows.filter((r) => rich.has(extractImdbIdFromPage(r.imdb_page) ?? "")).map((r) => r.unique_id);
   if (ids.length === 0) return null;
 
   const disc = await getDisc(ids[Math.floor(rngFor(seed, "hero")() * ids.length)]);
