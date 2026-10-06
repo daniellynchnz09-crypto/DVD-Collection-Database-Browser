@@ -159,7 +159,7 @@ function BarChart({ title, bars, total }: { title: string; bars: Array<{ label: 
   const max = Math.max(1, total);
   return (
     <figure className="flex min-w-0 flex-col gap-2">
-      <figcaption className="label-tech text-[10px] text-accent">{title}</figcaption>
+      <figcaption className="label-tech text-[13px] text-accent">{title}</figcaption>
       {bars.map((b) => (
         <div key={b.label} className="grid grid-cols-[4.5rem_1fr_2.5rem] items-center gap-2">
           <span className="label-tech truncate text-[10px]">{b.label}</span>
