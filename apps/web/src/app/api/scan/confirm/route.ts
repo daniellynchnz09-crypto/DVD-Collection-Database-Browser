@@ -10,6 +10,7 @@ import {
   buildSheetRowFromTitle,
   cleanFreeText,
   deriveDocumentaryValue,
+  extractImdbIdFromPage,
   inferDepictedEraStart,
   normalizeAnimationOrLiveAction,
   normalizeDocumentary,
@@ -33,6 +34,7 @@ import {
   lookupTmdbFields,
   pickFrontCoverPath,
   promoteStagedCoverToCaseImage,
+  refreshTitleMetadata,
   uploadCaseImage,
   uploadPosterImage,
   type StagedCoverAnalysis,
@@ -305,6 +307,10 @@ export async function POST(request: Request) {
       if (promotedPath) {
         await supabase.from("titles").update({ case_image_path: promotedPath }).eq("unique_id", existingMatchTitleId);
       }
+    }
+    // A re-scan still counts as scanned - the website only lists scanned rows (migration 0046).
+    if (existingMatchTitleId) {
+      await supabase.from("titles").update({ scanned: true }).eq("unique_id", existingMatchTitleId);
     }
     await deleteStagedCoverPhotos(supabase, stagedCoverPaths);
 
@@ -884,6 +890,11 @@ export async function POST(request: Request) {
   // (no front-classified photo, and more than one ambiguous "unclear" candidate - see
   // pickFrontCoverPath's own comment for why that's left alone rather than guessed).
   const frontCoverPath = pickFrontCoverPath(coverAnalysis);
+  // Every row this confirm wrote now shows on the website, which lists scanned rows only
+  // (migration 0046). Kept out of `title` itself so the Sheet writes above never see it.
+  if (createdIds.length > 0) {
+    await supabase.from("titles").update({ scanned: true }).in("unique_id", createdIds);
+  }
   if (frontCoverPath && createdIds[0]) {
     const promotedPath = await promoteStagedCoverToCaseImage(supabase, frontCoverPath, createdIds[0]);
     if (promotedPath) {
@@ -910,6 +921,22 @@ export async function POST(request: Request) {
   });
 
 
+
+  // Fire-and-forget film metadata (TMDb details/cast/crew + OMDb scores into title_metadata/
+  // people/title_credits - see web-app-build-plan.md) so a newly confirmed film gets its web
+  // app page data immediately instead of waiting for the backfill. Reads imdb_page back from
+  // the saved rows rather than entry.imdbId, since the confirm may have rewritten it (e.g. an
+  // episode match resolved to its series). Same long-running-process caveat as the hooks
+  // above; refreshTitleMetadata never throws, and the catch only guards the lookup query.
+  void (async () => {
+    try {
+      const { data: rows } = await supabase.from("titles").select("imdb_page").in("unique_id", createdIds);
+      const imdbIds = new Set((rows ?? []).map((r) => extractImdbIdFromPage(r.imdb_page)).filter((id): id is string => !!id));
+      for (const imdbId of imdbIds) await refreshTitleMetadata(supabase, imdbId);
+    } catch (err) {
+      console.error("[metadata] Failed to refresh metadata for newly confirmed title(s):", err);
+    }
+  })();
 
   return NextResponse.json({
     success: true,

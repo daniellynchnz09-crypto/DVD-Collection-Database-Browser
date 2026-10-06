@@ -1266,7 +1266,10 @@ export default function ConfirmScreen({
       const result = await searchTitleOnOmdb(query, isCustomDisc);
       setCandidates(result.candidates);
       setHasSearchedOrSkipped(true);
-      if (result.candidates.length === 1) setSelected(new Set([result.candidates[0].imdbID]));
+      // A re-search from under a rejected best match lists its results in full rather than
+      // collapsing back to the cover-photo match.
+      setShowAllCandidates(true);
+      setSelected(result.candidates.length === 1 ? new Set([result.candidates[0].imdbID]) : new Set());
       if (!manualTitle) setManualTitle(query);
     } catch (err) {
       setError((err as Error).message);
@@ -3568,6 +3571,32 @@ export default function ConfirmScreen({
         </View>
       ) : (
         <Text style={styles.hint}>No match found - enter this title manually.</Text>
+      )}
+      {/* Manual re-search (2026-10-06, the user's request): when the cover read got the title
+          wrong, rejecting/ignoring its best match offers the same typed title search the
+          pre-cover-scan flow used, instead of leaving only manual entry. */}
+      {selected.size === 0 && !(autoMatchedCandidate && !showAllCandidates) && (
+        <View style={styles.section}>
+          <Text style={styles.label}>Search for a different title</Text>
+          <TextInput
+            ref={titleSearchInputRef}
+            style={styles.input}
+            value={titleSearchQuery}
+            onChangeText={setTitleSearchQuery}
+            onFocus={() => scrollInputRefIntoView(titleSearchInputRef)}
+            onSubmitEditing={handleTitleSearch}
+            returnKeyType="search"
+            placeholder="Title"
+            placeholderTextColor="#71717a"
+          />
+          <TouchableOpacity
+            style={styles.button}
+            onPress={handleTitleSearch}
+            disabled={titleSearching || !titleSearchQuery.trim()}
+          >
+            <Text style={styles.buttonText}>{titleSearching ? "Searching..." : "Search"}</Text>
+          </TouchableOpacity>
+        </View>
       )}
       <View style={styles.section}>
         <Text style={styles.label}>Movie or TV</Text>

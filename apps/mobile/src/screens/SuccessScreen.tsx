@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import IndeterminateBar from "../components/IndeterminateBar";
-import { supabase } from "../lib/supabase";
+import { fetchPendingScanIds } from "../lib/scanApi";
 import {
   acknowledgeSubmission,
   getHiddenPendingScanIds,
@@ -47,10 +47,12 @@ export default function SuccessScreen({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data } = await supabase.from("pending_scans").select("id").in("status", ["resolved", "needs_manual"]);
+      const scans = await fetchPendingScanIds()
+        .then((r) => r.scans)
+        .catch(() => [] as { id: string }[]);
       if (cancelled) return;
       const saving = getHiddenPendingScanIds();
-      setRemainingPending((data ?? []).filter((row) => !saving.has(row.id as string)).length);
+      setRemainingPending(scans.filter((row) => !saving.has(row.id)).length);
     })();
     return () => {
       cancelled = true;

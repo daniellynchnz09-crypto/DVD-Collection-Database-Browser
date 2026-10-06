@@ -25,6 +25,10 @@
  * photo like Eddington, re-analyzed here for completeness) would otherwise get needlessly
  * re-uploaded for a crop that changes essentially nothing.
  *
+ * `--include-small` (2026-10-06) skips that pre-filter, for the listing photos the Estimated
+ * Value feature and UPC lookups stored (small files, but often a case on a table or at an
+ * angle) - the user asked for those to be cropped to the case like their own photos.
+ *
  * Dry run by default - only writes to the `case-images` bucket with `--apply`, same
  * convention as this project's other backfill scripts. Safe to re-run: a title that no
  * longer needs cropping (already fixed by a previous --apply run) is skipped the same way an
@@ -46,6 +50,7 @@ async function main() {
     process.exit(1);
   }
   const apply = process.argv.includes("--apply");
+  const includeSmall = process.argv.includes("--include-small");
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
   const { data: titles, error } = await supabase.from("titles").select("unique_id,title,case_image_path").not("case_image_path", "is", null);
@@ -70,7 +75,7 @@ async function main() {
     const contentType = fileData.type || "image/jpeg";
     const bytes = Buffer.from(await fileData.arrayBuffer());
 
-    if (bytes.length < MIN_SIZE_BYTES) {
+    if (!includeSmall && bytes.length < MIN_SIZE_BYTES) {
       skippedSmall++;
       continue;
     }

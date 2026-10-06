@@ -10,8 +10,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { Title } from "@danflix/shared";
-import { supabase } from "../lib/supabase";
-import { createManualPendingScan, discardScan, fetchUpcQuotaStatus, type UpcQuotaStatus } from "../lib/scanApi";
+import { createManualPendingScan, discardScan, fetchPendingScans, fetchUpcQuotaStatus, type UpcQuotaStatus } from "../lib/scanApi";
 import { clearConfirmDraft } from "../lib/confirmDrafts";
 import { getHiddenPendingScanIds, useSubmissionsVersion } from "../lib/backgroundSubmissions";
 
@@ -192,12 +191,14 @@ export default function PendingScansScreen({
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from("pending_scans")
-      .select("*")
-      .in("status", ["resolved", "needs_manual"])
-      .order("scanned_at", { ascending: true });
-    setLoadedScans((data as PendingScan[] | null) ?? []);
+    // Via the web server since 2026-10-06 (migration 0044 removed the public key's direct read
+    // access to pending_scans). A failed load keeps whatever list was already showing.
+    try {
+      const { scans } = await fetchPendingScans<PendingScan>();
+      setLoadedScans(scans);
+    } catch {
+      // Offline or server unreachable - leave the current list in place.
+    }
     setLoading(false);
     // Refreshed alongside the scan list (every mount, pull-to-refresh and post-delete reload),
     // not on a timer - the server-side resolver (the one real spender of UPC quota) runs

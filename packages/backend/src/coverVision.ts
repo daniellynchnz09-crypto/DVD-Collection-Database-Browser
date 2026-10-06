@@ -1,3 +1,5 @@
+import { buildOrientationPreviews } from "./imageCrop";
+
 /**
  * Reads a cover-photo scan's captured image (front and/or back of a disc case) and extracts
  * whatever cataloguing signal is printed on it - title, primary format, disc count,
@@ -84,7 +86,7 @@ Then, regardless of which side it is, read whatever of the following you can act
 - "rating": this collection's classification scheme is New Zealand's OFLC system, printed as a small logo (a coloured box with the letter/code in it) usually in a bottom corner of the cover - one of "G", "PG", "M", "R12", "R13", "R15", "R16", "R18". If the logo shown is a different country's classification system (e.g. a US MPAA rating like "PG-13", a UK BBFC logo like "15"), do not translate it - answer "Unclear" instead, since only a genuine NZ/OFLC logo should be reported here. Null if no rating logo is visible at all.
 - "extraDiscs": ONLY relevant when you can see the top-edge format banner described above (a back cover usually has no such banner). Check whether the banner lists MORE than one disc format together (e.g. "4K UHD + BLU-RAY", "BLU-RAY + DVD", "4K UHD + BLU-RAY + BONUS DISC"): "ONE_EXTRA" if it names exactly one additional format/disc alongside the primary one, "TWO_EXTRA" if it names two additional real discs (a second format word plus a generic "BONUS DISC" mention both count as the two extras), "NONE" if the banner only names the one primary format, or if no banner is visible at all. Do NOT guess what format an unlabeled "BONUS DISC" itself is - just report that it's there. IMPORTANT: "DIGITAL DOWNLOAD"/"DIGITAL COPY"/"DIGITAL" is NOT a disc - never count it as one of the extras (a banner reading "4K UHD + BLU-RAY + DIGITAL DOWNLOAD" is "ONE_EXTRA", the same as "4K UHD + BLU-RAY" alone).
 - "specialFeaturesListed": true if this side indicates the disc includes ANY bonus content beyond the main feature - not only the classic "Special Features"/"Bonus Features"/"Extras" heading followed by an itemized list (deleted scenes, making-of, commentary, featurettes, gag reel, etc.), typically part of a back cover's spec block, but ALSO any shorter banner-style callout woven into other cover text that gives the same impression without a heading+list of its own - e.g. "Includes Exclusive Bonus", "Bonus Content", "Plus Bonus Features", "Exclusive Extras", "Featuring an all-new interview with...", or similar wording naming or implying even just one extra mini-featurette/interview/behind-the-scenes piece. Treat any of these phrasings as equivalent - the disc doesn't need its own dedicated "Special Features" section printed for this to be true. false if this side is legible enough to be confident NO such heading, list, or bonus-content callout of any kind is printed on it. Null if you genuinely can't tell (too blurry/cropped, or a front cover with no spec block/callout visible at all to judge from).
-- "region": the disc region coding printed anywhere on this side - a small logo or line of text (e.g. "Region 4", "Region A", "Region Free", "All Regions", "Region 0"). Also include a video-standard mark if one is printed - "PAL" or "NTSC", often in the spec block or beside the region mark (e.g. report "PAL Region 0", or just "PAL" if that's all there is). On a BACK cover specifically, look just above the rating logo (that logo itself usually sits in the bottom-right corner - see "rating" above) - the region mark is commonly a small icon/text directly above it, easy to miss if you only scan the main spec block. It can also appear near the format banner, or on the front cover instead of the back, so check whichever side this actually is rather than assuming it's back-cover-only or spec-block-only. IMPORTANT - a Blu-ray region-free disc is very often marked with a COMBINED badge: three small hexagons joined together in a honeycomb/triangle cluster, each with one letter inside ("A", "B", "C" - typically A on top, B and C below it) - this single combined icon means the disc plays in ALL THREE Blu-ray regions, not just whichever one letter happens to be most visible or centred. If you see this three-hexagon cluster badge (regardless of which single letter you can read most clearly within it), report "Region Free" - never report just one of its three letters, since that would wrongly describe a disc as single-region-locked when it's actually region-free. A genuinely single-region disc shows only ONE hexagon/letter on its own, with no honeycomb cluster of three. Report exactly what's printed, verbatim - do not translate/resolve a country name yourself, just report it as printed if that's genuinely all that's shown (e.g. "UK"). Null if no region information is printed anywhere on this side at all.
+- "region": the disc region coding printed anywhere on this side - a small logo or line of text (e.g. "Region 4", "Region A", "Region Free", "All Regions", "Region 0"). Also include a video-standard mark if one is printed - "PAL" or "NTSC", often in the spec block or beside the region mark (e.g. report "PAL Region 0", or just "PAL" if that's all there is). On a BACK cover specifically, look just above the rating logo (that logo itself usually sits in the bottom-right corner - see "rating" above) - the region mark is commonly a small icon/text directly above it, easy to miss if you only scan the main spec block. It can also appear near the format banner, or on the front cover instead of the back, so check whichever side this actually is rather than assuming it's back-cover-only or spec-block-only. IMPORTANT - a Blu-ray region-free disc is very often marked with a COMBINED badge: three small hexagons joined together in a honeycomb/triangle cluster, each with one letter inside ("A", "B", "C" - typically A on top, B and C below it) - this single combined icon means the disc plays in ALL THREE Blu-ray regions, not just whichever one letter happens to be most visible or centred. If you see this three-hexagon cluster badge (regardless of which single letter you can read most clearly within it), report "Region Free" - never report just one of its three letters, since that would wrongly describe a disc as single-region-locked when it's actually region-free. A genuinely single-region disc shows only ONE hexagon/letter on its own, with no honeycomb cluster of three. Likewise, a DVD region-free disc is often marked with a small region badge (usually a globe, or a disc/circle shape, sometimes with a DVD logo) that has the word "ALL" printed inside or right beside it where a region number would normally be - that badge means the disc plays in every region. If you see it, report "Region ALL" (add PAL/NTSC if printed, e.g. "Region ALL PAL") - never null just because the badge has a word instead of a number. The same kind of badge showing "0" means region 0, also every region - report "Region 0". Report exactly what's printed, verbatim - do not translate/resolve a country name yourself, just report it as printed if that's genuinely all that's shown (e.g. "UK"). Null if no region information is printed anywhere on this side at all.
 - "releaseName": a distinct packaging/marketing EDITION name printed on the case, separate from the film's own base title - e.g. "Night Shift Edition", "Special Edition", "Collector's Edition", "Ultimate Edition", "Steelbook Edition". This is different from a specific CUT of the film (e.g. "The Final Cut", "Director's Cut", "Theatrical Cut") - a cut name belongs in "title" instead, per the rule above, not here. Report the edition name only, exactly as printed (e.g. "Night Shift Edition", not "Five Nights at Freddy's Night Shift Edition"). Null if no such edition/release name is printed anywhere on this side, or if the only relevant wording found is a cut name already reported in "title".
 - "artStyle": the main cover art's style - "drawn" if it's an illustrated/painted/animated-style image (flat colours, visible linework, a cel/comic-book look - not a photo of real actors, even if stylized), "photographic" if it's a real photo or photorealistic render of the actors/scene (the ordinary case for almost every live-action release), or "unclear" if you can't tell (too blurry/cropped) or this side has no real cover art to judge at all (e.g. a back cover that's just text).
 - "collectionMemberTitles": if this case is a box set/collection holding MULTIPLE distinct films or TV seasons (the case's own "title" reads like a collection name - "Collection", "Box Set", "Trilogy", a franchise/person's name, etc. - rather than one film's title), list the individual member titles it actually names, e.g. ["Rear Window", "Psycho", "The Birds", "Vertigo"]. These are usually laid out with real visual separation on the cover - separate lines, a column/grid, or one small poster thumbnail per title - not run together in one sentence, so read each title as its own distinct block of text rather than guessing where one title's words end and the next begins from a comma or "and". Skip any non-title text mixed into that layout (a tagline, year, "Digitally Remastered", a bonus-disc mention). Only include a title here if it's independently legible as a real, complete film/show name - if the list is only partially readable (some thumbnails too small/blurry to read), still report whichever ones genuinely are legible rather than skipping the whole field. Null (not an empty array) if this case isn't a multi-title collection at all, or if it is but no member titles are actually legible anywhere on this side.
@@ -454,68 +456,80 @@ function normalizeBoxScale(box: {
   return null;
 }
 
-const ROTATION_PROMPT = `You are looking at a photo taken to catalogue a physical movie/TV disc case (DVD/Blu-ray/4K UHD/VHS/CD). The photo may have been taken with the phone held sideways or upside down, so the case may not appear upright.
+const ROTATION_PROMPT = `These are four copies of the SAME photo of a physical movie/TV disc case (DVD/Blu-ray/4K UHD/VHS/CD), each turned a different way, labelled Version A, B, C and D. Exactly one of them shows the case the right way up.
 
-A disc case held upright is TALLER than it is wide (portrait), with its title text reading normally left-to-right along the top/spine. Report how many degrees CLOCKWISE the whole photo must be rotated so the case ends up upright and its title text reads normally left-to-right: one of 0, 90, 180, 270.
+1. In "textSeen", copy three or four separate pieces of printed text from the case: the title, plus smaller text such as actor names, a tagline, the age-rating label's wording (e.g. "Parental Guidance Recommended"), a price sticker or a logo.
+2. For EACH version, judge how MOST of that printed text appears in it: "upright" (letters stand normally and lines read left to right), "upside_down" (letters inverted, reading right to left), or "sideways" (lines run up or down the image). Go by the majority of the text lines - small print included - not by one large word: some covers print an actor's name or a word vertically along one edge, and that single line must not decide it.
+3. In "upright", give the version where most of the printed text is upright. An upright disc case is normally taller than it is wide, a useful tie-breaker when the text is hard to read.`;
 
-If you cannot confidently tell the case's orientation (no case clearly visible, or it's already ambiguous which way is "up"), answer "confident": false and leave "degreesClockwise" null rather than guessing.`;
+const ORIENTATION = { type: "STRING", enum: ["upright", "upside_down", "sideways"] };
+const VERSION_DEGREES = { A: 0, B: 90, C: 180, D: 270 } as const;
 
 /**
  * Detects how far clockwise a freshly-captured cover photo needs to be rotated so the disc case
- * ends up upright (portrait, title reading left-to-right) - added 2026-09-29 alongside
- * detectCoverBoundingBox, after the user found their Eddington cover photo was stored landscape
- * (phone held sideways) instead of portrait. A third, separate Gemini call rather than folded
- * into detectCoverBoundingBox's own response, deliberately: scanResolver.ts needs to rotate the
- * image FIRST and only then run bounding-box detection on the now-upright result, since the
- * bounding box's xMin/yMin/xMax/yMax percentages are meaningless unless they're measured against
- * the same orientation the final stored/analyzed image will actually be in. Same house
- * conventions as every other vision call in this file: `gemini-flash-lite-latest`,
- * `temperature: 0`, never throws, `null` on any failure or low-confidence read - the caller must
- * treat that as "no rotation needed" and continue with the original orientation unchanged.
+ * ends up upright. scanResolver.ts rotates FIRST and only then runs detectCoverBoundingBox, since
+ * the box percentages only mean something in the final orientation.
+ *
+ * Rebuilt 2026-10-06 after the user kept finding upside-down product images. Findings: the raw
+ * phone photos carry no EXIF orientation tag (so the 2026-10-03 EXIF fix never applied), and the
+ * old single-image "how many degrees?" question was unreliable - and most of its calls in a
+ * real batch were HTTP 429s, which it silently treated as "no rotation". Now the photo goes in
+ * as four small previews (0/90/180/270 clockwise, buildOrientationPreviews) and the model picks
+ * the one whose printed text - judged across several separate lines, small print included -
+ * reads upright: 38/40 correct on the user's real cover photos, every rotation of each tried,
+ * the two misses being one cover with a huge vertical actor name. A 429/5xx is retried twice.
+ *
+ * Never throws; null on failure, which the caller treats as "leave it as is".
  */
 export async function detectCoverRotation(imageBytes: Buffer, mimeType: string): Promise<0 | 90 | 180 | 270 | null> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
+  const previews = await buildOrientationPreviews(imageBytes, mimeType);
+  if (!previews) return null;
+
+  const parts: Array<Record<string, unknown>> = [{ text: ROTATION_PROMPT }];
+  previews.forEach((preview, i) => {
+    parts.push({ text: `Version ${"ABCD"[i]}:` });
+    parts.push({ inline_data: { mime_type: "image/jpeg", data: preview.toString("base64") } });
+  });
+  const body = JSON.stringify({
+    contents: [{ parts }],
+    generationConfig: {
+      temperature: 0,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "OBJECT",
+        properties: {
+          textSeen: { type: "STRING" },
+          A: ORIENTATION,
+          B: ORIENTATION,
+          C: ORIENTATION,
+          D: ORIENTATION,
+          upright: { type: "STRING", enum: ["A", "B", "C", "D"] },
+        },
+        required: ["textSeen", "A", "B", "C", "D", "upright"],
+        propertyOrdering: ["textSeen", "A", "B", "C", "D", "upright"],
+      },
+    },
+  });
 
   try {
-    const res = await fetch(`${API_URL}?key=${apiKey}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: ROTATION_PROMPT },
-              { inline_data: { mime_type: mimeType, data: imageBytes.toString("base64") } },
-            ],
-          },
-        ],
-        generationConfig: {
-          temperature: 0,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: "OBJECT",
-            properties: {
-              confident: { type: "BOOLEAN" },
-              degreesClockwise: { type: "NUMBER", nullable: true },
-            },
-            required: ["confident"],
-          },
-        },
-      }),
-    });
-    if (!res.ok) return null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, attempt * 4000));
+      const res = await fetch(`${API_URL}?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body });
+      if (res.status === 429 || res.status >= 500) continue;
+      if (!res.ok) return null;
 
-    const data = (await res.json()) as GeminiGenerateContentResponse;
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) return null;
-
-    const parsed = JSON.parse(text) as { confident?: boolean; degreesClockwise?: number | null };
-    if (!parsed.confident) return null;
-    if (parsed.degreesClockwise === 0) return 0;
-    if (parsed.degreesClockwise === 90) return 90;
-    if (parsed.degreesClockwise === 180) return 180;
-    if (parsed.degreesClockwise === 270) return 270;
+      const data = (await res.json()) as GeminiGenerateContentResponse;
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) return null;
+      const parsed = JSON.parse(text) as { upright?: string } & Record<string, unknown>;
+      const pick = parsed.upright as keyof typeof VERSION_DEGREES | undefined;
+      if (!pick || !(pick in VERSION_DEGREES)) return null;
+      // The pick must agree with its own per-version judgement, or it's a guess.
+      if (parsed[pick] !== "upright") return null;
+      return VERSION_DEGREES[pick];
+    }
     return null;
   } catch {
     return null;

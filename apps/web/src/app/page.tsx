@@ -1,25 +1,50 @@
-import type { Title } from "@danflix/shared";
+import { HomeHero } from "@/components/home/HomeHero";
+import { HomeRow } from "@/components/home/HomeRow";
+import { InfiniteRows } from "@/components/home/InfiniteRows";
+import {
+  HOME_INITIAL_PLAN_ROWS,
+  loadArchiveStats,
+  loadHomeFeature,
+  loadHomeHeadRows,
+  loadHomePlanRows,
+  randomHomeSeed,
+} from "@/lib/catalog/home";
 
-// Placeholder home page confirming the monorepo/shared-package wiring works.
-// The real Home/Browse page (rows, search bar, settings) is Phase 2 -
-// see Claude/TECH STACK AND ARCHITECTURE.md's Phased Build Order.
-const EXAMPLE_TITLE: Pick<Title, "title" | "format"> = {
-  title: "Nothing logged yet",
-  format: "n/a",
-};
+// Re-rendered at most every 5 minutes: new scans show up without every visit hitting
+// Supabase, and each re-render draws a new seed, so the featured title and row shuffle rotate.
+export const revalidate = 300;
 
-export default function Home() {
+/**
+ * Home / Browse (WEB APP DESIGN.md): Netflix-style rows that each END, on a page that keeps
+ * loading new rows as you scroll. The server renders the hero, the fixed head rows and the
+ * first few plan rows; <InfiniteRows> continues the same seeded plan via /home-rows.
+ */
+export default async function Home() {
+  const seed = randomHomeSeed();
+  const [feature, stats, headRows, planStart] = await Promise.all([
+    loadHomeFeature(seed),
+    loadArchiveStats(),
+    loadHomeHeadRows(seed),
+    loadHomePlanRows(seed, 0, HOME_INITIAL_PLAN_ROWS),
+  ]);
+  const rows = [...headRows, ...planStart.rows];
+
   return (
-    <div className="flex min-h-screen flex-col bg-gradient-to-b from-black to-zinc-900 text-zinc-100">
-      <header className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
-        <span className="text-xl font-bold tracking-wide text-sky-400">DANFLIX 5.0</span>
-        <span className="text-sm text-zinc-500">search (phase 2)</span>
-        <span className="text-sm text-zinc-500">settings (phase 4)</span>
-      </header>
-      <main className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-        <p className="text-zinc-400">Phase 0 scaffold - browse/search UI lands in Phase 2.</p>
-        <p className="text-sm text-zinc-600">Example type from @danflix/shared: {EXAMPLE_TITLE.title}</p>
-      </main>
+    <div className="flex flex-col">
+      <HomeHero feature={feature} stats={stats} />
+
+      <div className="flex flex-col gap-8 py-6 sm:gap-10 sm:py-8">
+        {rows.length === 0 ? (
+          <p className="px-4 text-mist sm:px-6">The collection couldn&apos;t be loaded right now.</p>
+        ) : (
+          <>
+            {rows.map((row, i) => (
+              <HomeRow key={row.id} row={row} preloadCount={i === 0 ? 4 : 0} />
+            ))}
+            <InfiniteRows seed={seed} startCursor={planStart.nextCursor} shownIds={rows.map((r) => r.id)} />
+          </>
+        )}
+      </div>
     </div>
   );
 }

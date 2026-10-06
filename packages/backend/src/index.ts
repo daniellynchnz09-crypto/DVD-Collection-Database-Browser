@@ -15,3 +15,4 @@ export * from "./iso639";
 export * from "./spellcheck";
 export * from "./wikidata";
 export * from "./upcQuota";
+export * from "./metadata";

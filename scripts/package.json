@@ -12,10 +12,12 @@
     "refresh-tmdb-tv-title-index": "tsx src/refresh-tmdb-tv-title-index.ts",
     "build-classic-who-serial-index": "tsx src/build-classic-who-serial-index.ts",
     "backfill-recrop-case-images": "tsx src/backfill-recrop-case-images.ts",
+    "repair-case-image-rotation": "tsx src/repair-case-image-rotation.ts",
     "backfill-doctor-who-shelf-order": "tsx src/backfill-doctor-who-shelf-order.ts",
     "backfill-classic-who-missing-episodes": "tsx src/backfill-classic-who-missing-episodes.ts",
     "backfill-classic-who-serial-release-dates": "tsx src/backfill-classic-who-serial-release-dates.ts",
-    "find-missing-rotten-tomatoes": "tsx src/find-missing-rotten-tomatoes.ts"
+    "find-missing-rotten-tomatoes": "tsx src/find-missing-rotten-tomatoes.ts",
+    "backfill-title-metadata": "tsx src/backfill-title-metadata.ts"
   },
   "dependencies": {
     "@danflix/backend": "*",

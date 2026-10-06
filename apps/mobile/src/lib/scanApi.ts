@@ -86,6 +86,23 @@ export function getStagedCoverImageSource(stagedPath: string): { uri: string; he
   };
 }
 
+/** The Pending Scans list, via the web server (2026-10-06) - the database's public key can no
+ * longer read `pending_scans` directly (migration 0044; see /api/scan/pending's own comment). */
+export function fetchPendingScans<T>() {
+  return post<{ scans: T[] }>("/api/scan/pending", {});
+}
+
+/** Just the ids of scans still waiting in Pending Scans (SuccessScreen's "how many left"). */
+export function fetchPendingScanIds() {
+  return post<{ scans: { id: string }[] }>("/api/scan/pending", { idsOnly: true });
+}
+
+/** Distinct "rented to" names for the Rented By autocomplete - private names the public key
+ * can't read since migration 0044, so they come through the scan-secret-gated server route. */
+export function fetchRentedByOptions() {
+  return post<{ names: string[] }>("/api/scan/rented-by-options", {});
+}
+
 export interface ManualPendingScan {
   id: string;
   barcode: null;

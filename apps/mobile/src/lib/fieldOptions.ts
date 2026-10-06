@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import { getAllConfirmDrafts } from "./confirmDrafts";
+import { fetchRentedByOptions } from "./scanApi";
 
 export interface FieldOptions {
   format: string[];
@@ -94,8 +95,11 @@ function buildRatingsByFranchise(
   return out;
 }
 
+// rented_by_who is deliberately absent (2026-10-06): the public key can no longer read it
+// (migration 0044 - real third parties' names), so those options come from the scan-secret-gated
+// /api/scan/rented-by-options route instead (fetchRentedByOptions below).
 const COLUMNS =
-  "format, disk_region, genre_location, rating, studio, animation_or_live_action, genre, franchise, rented_by_who, original_language, movie_or_tv";
+  "format, disk_region, genre_location, rating, studio, animation_or_live_action, genre, franchise, original_language, movie_or_tv";
 const PAGE_SIZE = 1000;
 
 /**
@@ -179,6 +183,11 @@ async function loadSavedFieldOptions(forceRefresh: boolean): Promise<FieldOption
 
   inflight = (async () => {
     const rows: Record<string, string | string[] | null>[] = [];
+    // Started alongside the paged reads below; a failure (offline, old server) just means no
+    // Rented By suggestions rather than breaking every other field's options.
+    const rentedByPromise = fetchRentedByOptions()
+      .then((r) => r.names)
+      .catch(() => [] as string[]);
     for (let from = 0; ; from += PAGE_SIZE) {
       const { data } = await supabase
         .from("titles")
@@ -204,7 +213,7 @@ async function loadSavedFieldOptions(forceRefresh: boolean): Promise<FieldOption
       // distinctSorted, not distinctSortedFlat, matching Format/Studio/Rating rather than
       // Genre/Franchise. TagSearchableModalInput is deliberately NOT used for either - neither
       // is a comma-separated multi-value list.
-      rentedByWho: distinctSorted(rows.map((r) => r.rented_by_who as string | null)),
+      rentedByWho: await rentedByPromise,
       originalLanguage: distinctSorted(rows.map((r) => r.original_language as string | null)),
       movieOrTv: distinctSorted(rows.map((r) => r.movie_or_tv as string | null)),
       franchiseCooccurrence: buildCooccurrence(rows.map((r) => r.franchise as string[] | null)),

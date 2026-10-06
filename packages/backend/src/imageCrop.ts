@@ -107,6 +107,58 @@ export async function rotateImageBuffer(
   }
 }
 
+/**
+ * The four small JPEG previews coverVision.ts's detectCoverRotation compares side by side
+ * (added 2026-10-06): the photo turned 0, 90, 180 and 270 degrees clockwise, in that order,
+ * each downscaled so its long side is at most `maxSide` px - plenty to read a case's title,
+ * and keeps the one four-image request cheap. Downscaling is a plain box average by a whole-
+ * number factor rather than @jimp/plugin-resize, which this package doesn't depend on directly.
+ * Null on any failure (the caller then leaves the photo unrotated).
+ */
+export async function buildOrientationPreviews(
+  buffer: Buffer,
+  contentType: string,
+  maxSide = 768
+): Promise<Buffer[] | null> {
+  if (!/^image\/(jpe?g|png)$/i.test(contentType)) return null;
+  try {
+    const image = await Jimp.fromBuffer(buffer);
+    const { width, height, data } = image.bitmap;
+    const factor = Math.max(1, Math.ceil(Math.max(width, height) / maxSide));
+    const w = Math.floor(width / factor);
+    const h = Math.floor(height / factor);
+    const out = Buffer.alloc(w * h * 4);
+    const area = factor * factor;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let r = 0, g = 0, b = 0;
+        for (let dy = 0; dy < factor; dy++) {
+          let i = ((y * factor + dy) * width + x * factor) * 4;
+          for (let dx = 0; dx < factor; dx++, i += 4) {
+            r += data[i];
+            g += data[i + 1];
+            b += data[i + 2];
+          }
+        }
+        const o = (y * w + x) * 4;
+        out[o] = r / area;
+        out[o + 1] = g / area;
+        out[o + 2] = b / area;
+        out[o + 3] = 255;
+      }
+    }
+    const previews: Buffer[] = [];
+    for (const degreesClockwise of [0, 90, 180, 270]) {
+      const small = Jimp.fromBitmap({ width: w, height: h, data: out });
+      const turned = degreesClockwise === 0 ? small : rotateMethods.rotate(small, -degreesClockwise);
+      previews.push(await turned.getBuffer("image/jpeg", { quality: 85 }));
+    }
+    return previews;
+  } catch {
+    return null;
+  }
+}
+
 export async function cropImageBufferToBox(
   buffer: Buffer,
   contentType: string,

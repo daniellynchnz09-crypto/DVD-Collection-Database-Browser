@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { autocropImageBuffer } from "./imageCrop";
+import { detectCoverBoundingBox } from "./coverVision";
+import { autocropImageBuffer, cropImageBufferToBox } from "./imageCrop";
 
 /**
  * Storage helper for `titles.case_image_path` (0026_add_case_image_path.sql) - the physical
@@ -14,6 +15,10 @@ import { autocropImageBuffer } from "./imageCrop";
 
 const BUCKET = "case-images";
 
+/** A detected case box covering at least this much of the frame is already tight - same
+ * threshold as scripts/src/backfill-recrop-case-images.ts. */
+const MAX_UNCROPPED_AREA_FRACTION = 0.85;
+
 /** Fetches a remote image, auto-crops a uniform-color border off it (see imageCrop.ts - added
  * 2026-09-22 after a real UPCitemdb/reseller listing photo turned out to have a wide white
  * border baked into the image itself), and uploads the result to the private bucket at the
@@ -23,14 +28,23 @@ const BUCKET = "case-images";
  * at scan-resolve time - the live review-screen preview still fetches the UPC listing's raw
  * image directly, so it can still show its own white border until the scan is actually
  * confirmed; only the asset that persists into the collection (and everywhere it's shown
- * from then on) is cropped. */
+ * from then on) is cropped.
+ *
+ * Since 2026-10-06 the result is also cropped to the case itself (detectCoverBoundingBox, the
+ * same crop the user's own cover photos get) - the user asked for the Estimated Value
+ * feature's listing photos, which often show the case on a table or at an angle, to match their
+ * own. Best-effort: no box (or a Gemini failure) keeps the border-trimmed image. */
 export async function uploadCaseImage(supabase: SupabaseClient, path: string, imageUrl: string): Promise<string | null> {
   try {
     const res = await fetch(imageUrl);
     if (!res.ok) return null;
     const contentType = res.headers.get("content-type") ?? "image/jpeg";
     const rawBytes = Buffer.from(await res.arrayBuffer());
-    const bytes = await autocropImageBuffer(rawBytes, contentType);
+    let bytes = await autocropImageBuffer(rawBytes, contentType);
+    const box = await detectCoverBoundingBox(bytes, contentType);
+    if (box && ((box.xMax - box.xMin) / 100) * ((box.yMax - box.yMin) / 100) < MAX_UNCROPPED_AREA_FRACTION) {
+      bytes = await cropImageBufferToBox(bytes, contentType, box);
+    }
 
     const { error } = await supabase.storage.from(BUCKET).upload(path, bytes, { contentType, upsert: true });
     return error ? null : path;

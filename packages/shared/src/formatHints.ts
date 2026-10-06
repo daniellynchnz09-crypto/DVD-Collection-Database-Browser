@@ -99,6 +99,19 @@ export function isRegionFreeFormat(format: string): boolean {
 const REGION_FREE_WORDS = /\bregion[- ]?free\b|\ball regions?\b|\bregion\s*0\b|\bR0\b|\bno region(al)? cod(e|ing)\b/i;
 
 /**
+ * A region field that, once video-standard and "region"/"code" filler words are stripped, is
+ * nothing but "ALL" or "0" - the DVD region-free badge (a globe/disc logo with "ALL" or "0" in
+ * it). Added 2026-10-06: a real "Anne of the Thousand Days" cover read came back as just "ALL",
+ * and "0 PAL"/"PAL 0" (Apollo 13, Death on the Amazon) fell through to PAL's 2+4 guess. Only
+ * for an already-isolated region field (cover read / listing extraction), never free listing
+ * text, where a bare "all" or "0" means nothing.
+ */
+function isBareRegionFreeBadge(regionText: string): boolean {
+  const stripped = regionText.replace(/\b(pal|ntsc|secam|regions?|code|zones?|dvd|video)\b/gi, " ");
+  return /^\W*(all|0)\W*$/i.test(stripped);
+}
+
+/**
  * DVD regions implied by an analog video-standard mark printed instead of a region number
  * (added 2026-10-03, per the user's own request: "find out what regions are included in these
  * ... and auto select the numbers"). PAL/NTSC are TV standards, not region codes, so this is
@@ -258,7 +271,7 @@ function listsEveryRegionCode(regionText: string, isBluRay: boolean): boolean {
  * file - otherwise always an array (even a single code comes back as a one-element array), so
  * every caller treats "one region" and "several regions" the same way. */
 export function resolveDiskRegionText(regionText: string, format: string): string[] | null {
-  if (REGION_FREE_WORDS.test(regionText)) return ["All"];
+  if (REGION_FREE_WORDS.test(regionText) || isBareRegionFreeBadge(regionText)) return ["All"];
   const normalized = format.toLowerCase();
   if (isRegionFreeFormat(normalized)) return null;
 
@@ -287,6 +300,8 @@ export function extractDiskRegionHint(text: string, format: string): string | nu
   if (!regionMatch) return regionsFromVideoStandard(text, isBluRay)?.join(", ") ?? null;
   const windowStart = (regionMatch.index ?? 0) + regionMatch[0].length;
   const window = text.slice(windowStart, windowStart + 20);
+  // "Region: ALL" - the word right after "Region" is the code itself, so this is safe here.
+  if (/^all\b/i.test(window)) return "All";
 
   const tokenPattern = isBluRay ? /\b[A-Ca-c]\b/g : /\b[1-6]\b/g;
 
