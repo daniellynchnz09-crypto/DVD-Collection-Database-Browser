@@ -59,7 +59,7 @@ export default async function TitlePage(props: PageProps<"/title/[imdbId]">) {
       : distinctCi(rows.flatMap((r) => r.director ?? [])).map((name) => ({ name, tmdbPersonId: null, imageSrc: null }));
   const crew = groupCrew(credits.crew.filter((c) => c.job !== "Director"));
 
-  const rtUrl = rows.map((r) => r.rotten_tomatoes_page).find((u) => !!u && /^https:\/\/(www\.)?rottentomatoes\.com\//i.test(u)) ?? null;
+  const rtUrl = rows.map((r) => r.rotten_tomatoes_page).find((u) => !!u && /^https:\/\/(www\.)?rottentomatoes\.com\//i.test(u)) ?? meta?.rotten_tomatoes_url ?? null;
   const usesTmdb = !!meta || work.poster?.source === "tmdb" || !!series?.usedTmdb;
   let ownScoreTile: ReactNode = null;
   let ownReview: ReactNode = null;
@@ -86,6 +86,7 @@ export default async function TitlePage(props: PageProps<"/title/[imdbId]">) {
             metacritic={meta?.metacritic_score ?? null}
             imdbUrl={`https://www.imdb.com/title/${imdbId}/`}
             rottenTomatoesUrl={rtUrl}
+            metacriticUrl={meta?.metacritic_url ?? null}
             extraTiles={ownScoreTile}
           />
           {ownReview}

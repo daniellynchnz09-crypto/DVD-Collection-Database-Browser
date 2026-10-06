@@ -14,6 +14,7 @@ export function ScoreTiles({
   metacritic,
   imdbUrl,
   rottenTomatoesUrl,
+  metacriticUrl = null,
   extraTiles,
 }: {
   imdbRating: number | null;
@@ -24,6 +25,8 @@ export function ScoreTiles({
   metacritic: number | null;
   imdbUrl: string | null;
   rottenTomatoesUrl: string | null;
+  /** From MDBList (title_metadata.metacritic_url) - OMDb gives only the score. */
+  metacriticUrl?: string | null;
   extraTiles?: ReactNode;
 }) {
   const tiles: ReactNode[] = [];
@@ -56,6 +59,7 @@ export function ScoreTiles({
       <Tile
         key="mc"
         label="Metacritic"
+        href={metacriticUrl}
         icon={<span className="block h-3.5 w-3.5" style={{ backgroundColor: color }} />}
         color={color}
         fill={metacritic / 100}
@@ -70,6 +74,7 @@ export function ScoreTiles({
   const links = [
     imdbUrl && imdbRating === null ? { href: imdbUrl, label: "IMDb" } : null,
     rottenTomatoesUrl && rottenTomatoes === null && (rtAudience ?? null) === null ? { href: rottenTomatoesUrl, label: "Rotten Tomatoes" } : null,
+    metacriticUrl && metacritic === null ? { href: metacriticUrl, label: "Metacritic" } : null,
   ].filter((l): l is { href: string; label: string } => !!l);
 
   if (extraTiles) tiles.push(<span key="extra" className="contents">{extraTiles}</span>);

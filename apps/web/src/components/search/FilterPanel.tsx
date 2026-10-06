@@ -9,6 +9,8 @@ import {
   facetValueLabel,
   filtersToParams,
   RANGES,
+  REALISM_LEVELS,
+  realismIndex,
   RESULT_TYPES,
   SORTS,
   type FacetCounts,
@@ -219,6 +221,34 @@ export function FilterPanel({
               if (!options.facets[f.key]?.length) return null;
               const list = facetOptions(f.key);
               const selection = draft.facets[f.key] ?? {};
+              if (f.key === "doc") {
+                // Story values sit on a fiction-to-fact slider; performance/recording values
+                // (Stand Up, Live Concert...) stay as chips under it.
+                const others = list.filter((o) => realismIndex(o.value) < 0);
+                return (
+                  <Accordion
+                    key={f.key}
+                    title={f.label}
+                    // The slider's span counts once, however many notches it covers.
+                    active={
+                      Object.keys(selection).filter((v) => realismIndex(v) < 0).length +
+                      (Object.entries(selection).some(([v, s]) => s === "include" && realismIndex(v) >= 0) ? 1 : 0)
+                    }
+                  >
+                    <RealismSlider
+                      selection={selection}
+                      counts={REALISM_LEVELS.map((l) => list.find((o) => o.value.toLowerCase() === l.value.toLowerCase())?.count ?? 0)}
+                      onChange={(next) => setDraft((d) => ({ ...d, facets: { ...d.facets, doc: next } }))}
+                    />
+                    {others.length ? (
+                      <div className="mt-4">
+                        <p className="label-tech mb-2 text-accent">Performances &amp; recordings</p>
+                        <FacetGroup facet={f.key} title="type" options={others} selection={selection} onSet={setFacet} />
+                      </div>
+                    ) : null}
+                  </Accordion>
+                );
+              }
               const available = list.filter((o) => o.count > 0 || selection[o.value]).length;
               return (
                 <Accordion
@@ -515,6 +545,107 @@ function DualRange({
   );
 }
 
+/**
+ * Documentary / realism as a notched two-handled slider, fiction to documentary
+ * (REALISM_LEVELS). The picked span is written as `doc` includes; the full span means "any".
+ * Each notch shows its label and how many titles it currently matches.
+ */
+function RealismSlider({
+  selection,
+  counts,
+  onChange,
+}: {
+  selection: Record<string, TriState>;
+  counts: number[];
+  onChange: (next: Record<string, TriState>) => void;
+}) {
+  const last = REALISM_LEVELS.length - 1;
+  const picked = Object.entries(selection)
+    .filter(([, state]) => state === "include")
+    .map(([value]) => realismIndex(value))
+    .filter((i) => i >= 0);
+  const lo = picked.length ? Math.min(...picked) : 0;
+  const hi = picked.length ? Math.max(...picked) : last;
+  const any = lo === 0 && hi === last;
+  const pct = (i: number) => (i / last) * 100;
+  // A notch's centre, matching where the 14px-wide thumb sits on the track.
+  const at = (i: number) => `calc(7px + (100% - 14px) * ${i / last})`;
+
+  const set = (nextLo: number, nextHi: number) => {
+    const next: Record<string, TriState> = {};
+    for (const [value, state] of Object.entries(selection)) if (realismIndex(value) < 0) next[value] = state;
+    if (!(nextLo === 0 && nextHi === last)) for (let i = nextLo; i <= nextHi; i++) next[REALISM_LEVELS[i].value] = "include";
+    onChange(next);
+  };
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between font-display text-sm text-chrome-hi">
+        <span>{any ? <span className="text-mist">Any realism</span> : lo === hi ? REALISM_LEVELS[lo].label : `${REALISM_LEVELS[lo].label} to ${REALISM_LEVELS[hi].label}`}</span>
+        {!any ? (
+          <button type="button" onClick={() => set(0, last)} className="label-tech text-accent hover:text-accent-hi">
+            Reset
+          </button>
+        ) : null}
+      </div>
+      <div className="dual-range relative mt-2 h-6">
+        <span aria-hidden className="well clip-tab absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 bg-deep/80" />
+        <span aria-hidden className="gloss absolute top-1/2 h-2 -translate-y-1/2 bg-accent" style={{ left: `${pct(lo)}%`, width: `${pct(hi) - pct(lo)}%` }} />
+        {/* Notch ticks */}
+        {REALISM_LEVELS.map((l, i) => (
+          <span
+            key={l.value}
+            aria-hidden
+            className={`absolute top-1/2 h-3.5 w-px -translate-y-1/2 ${i >= lo && i <= hi ? "bg-accent-hi" : "bg-rule-strong"}`}
+            style={{ left: at(i) }}
+          />
+        ))}
+        <input
+          type="range"
+          min={0}
+          max={last}
+          step={1}
+          value={lo}
+          aria-label="Least real"
+          aria-valuetext={REALISM_LEVELS[lo].label}
+          onChange={(e) => set(Math.min(Number(e.target.value), hi), hi)}
+        />
+        <input
+          type="range"
+          min={0}
+          max={last}
+          step={1}
+          value={hi}
+          aria-label="Most real"
+          aria-valuetext={REALISM_LEVELS[hi].label}
+          onChange={(e) => set(lo, Math.max(Number(e.target.value), lo))}
+        />
+      </div>
+      {/* Notch labels - click one to jump both handles to just that level. On phones every
+          other label drops to a second row so neighbours don't overlap. */}
+      <div className="relative mt-1 h-[3.75rem] sm:h-9">
+        {REALISM_LEVELS.map((l, i) => (
+          <button
+            key={l.value}
+            type="button"
+            onClick={() => set(i, i)}
+            className={`absolute flex flex-col items-center leading-tight whitespace-nowrap ${i % 2 ? "top-6 sm:top-0" : "top-0"} ${
+              i === 0 ? "" : i === last ? "-translate-x-full" : "-translate-x-1/2"
+            } ${i === 0 ? "items-start" : i === last ? "items-end" : ""}`}
+            style={{ left: i === 0 ? 0 : i === last ? "100%" : at(i) }}
+            title={`Only ${l.label.toLowerCase()}`}
+          >
+            <span className={`font-display text-[10px] tracking-wider uppercase ${i >= lo && i <= hi && !any ? "text-accent-hi" : "text-mist"} hover:text-accent-hi`}>
+              {l.label}
+            </span>
+            <span className={`text-[10px] ${counts[i] ? "text-mist-dim" : "text-mist-dim/50"}`}>{counts[i]}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DecadeChips({ bounds, onPick }: { bounds: [number, number]; onPick: (v: [number, number]) => void }) {
   const decades: number[] = [];
   for (let d = Math.floor(bounds[0] / 10) * 10; d <= bounds[1]; d += 10) decades.push(d);
@@ -607,8 +738,25 @@ function ActiveChips({
       remove: () => ({ ...filters, types: filters.types.filter((x) => x !== t) }),
     });
   }
+  // The realism slider's span reads as one chip.
+  const realism = Object.entries(filters.facets.doc ?? {})
+    .filter(([v, state]) => state === "include" && realismIndex(v) >= 0)
+    .map(([v]) => realismIndex(v));
+  if (realism.length) {
+    const lo = REALISM_LEVELS[Math.min(...realism)].label;
+    const hi = REALISM_LEVELS[Math.max(...realism)].label;
+    chips.push({
+      key: "doc:realism",
+      label: `Realism: ${lo === hi ? lo : `${lo} to ${hi}`}`,
+      remove: () => {
+        const map = Object.fromEntries(Object.entries(filters.facets.doc ?? {}).filter(([v, s]) => !(s === "include" && realismIndex(v) >= 0)));
+        return { ...filters, facets: { ...filters.facets, doc: map } };
+      },
+    });
+  }
   for (const f of FACETS) {
     for (const [value, state] of Object.entries(filters.facets[f.key] ?? {})) {
+      if (f.key === "doc" && state === "include" && realismIndex(value) >= 0) continue;
       chips.push({
         key: `${f.key}:${value}`,
         label: facetValueLabel(f.key, options.facets[f.key]?.find((o) => o.value.toLowerCase() === value.toLowerCase())?.value ?? value),

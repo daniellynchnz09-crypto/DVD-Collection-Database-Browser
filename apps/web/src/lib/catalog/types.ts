@@ -75,6 +75,9 @@ export interface TitleMetadata {
   rotten_tomatoes_score: number | null;
   /** Rotten Tomatoes audience score (MDBList's "popcorn"), migration 0050. */
   rt_audience_score: number | null;
+  /** Score-site pages from MDBList (migration 0052). */
+  metacritic_url: string | null;
+  rotten_tomatoes_url: string | null;
   metacritic_score: number | null;
   number_of_seasons: number | null;
   number_of_episodes: number | null;

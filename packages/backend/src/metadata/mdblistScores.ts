@@ -23,6 +23,9 @@ export type MdblistMediaType = "movie" | "show";
 export interface MdblistScores {
   /** RT audience score, 0-100 (null when MDBList has the title but no audience score). */
   audience: number | null;
+  /** The film's Metacritic / Rotten Tomatoes pages (migration 0052), when MDBList knows them. */
+  metacriticUrl: string | null;
+  rottenTomatoesUrl: string | null;
 }
 
 export type MdblistBatchResult =
@@ -33,7 +36,16 @@ export type MdblistBatchResult =
 
 interface MdblistItem {
   ids?: { imdb?: string | null };
-  ratings?: { source?: string; value?: number | null; score?: number | null }[];
+  ratings?: { source?: string; value?: number | null; score?: number | null; url?: string | number | null }[];
+}
+
+/** MDBList gives site-relative paths ("/the-godfather", "/m/the_godfather"); only well-formed
+ * slugs become links. Metacritic's path has no movie/TV prefix, so the media type adds it. */
+function metacriticUrl(path: unknown, mediaType: MdblistMediaType): string | null {
+  return typeof path === "string" && /^\/[a-z0-9][a-z0-9-]*$/i.test(path) ? `https://www.metacritic.com/${mediaType === "show" ? "tv" : "movie"}${path}/` : null;
+}
+function rottenTomatoesUrl(path: unknown): string | null {
+  return typeof path === "string" && /^\/(m|tv)\/[a-z0-9_-]+$/i.test(path) ? `https://www.rottentomatoes.com${path}` : null;
 }
 
 /** Audience scores for up to MDBLIST_BATCH_SIZE ids of one media type - one request. */
@@ -74,7 +86,11 @@ export async function fetchMdblistAudienceScores(imdbIds: string[], mediaType: M
     if (!imdbId || !wanted.has(imdbId)) continue;
     const popcorn = item.ratings?.find((r) => r.source === "popcorn");
     const value = popcorn?.score ?? popcorn?.value ?? null;
-    const entry: MdblistScores = { audience: typeof value === "number" && value >= 0 && value <= 100 ? Math.round(value) : null };
+    const entry: MdblistScores = {
+      audience: typeof value === "number" && value >= 0 && value <= 100 ? Math.round(value) : null,
+      metacriticUrl: metacriticUrl(item.ratings?.find((r) => r.source === "metacritic")?.url, mediaType),
+      rottenTomatoesUrl: rottenTomatoesUrl(item.ratings?.find((r) => r.source === "tomatoes")?.url ?? popcorn?.url),
+    };
     scores.set(imdbId, entry);
   }
   return { status: "ok", scores };
@@ -103,7 +119,13 @@ export async function refreshMdblistAudienceScores(
     const fetchedAt = new Date().toISOString();
     const rows = batch.map((imdbId) => {
       const found = result.scores.get(imdbId);
-      const row: Record<string, string | number | null> = { imdb_id: imdbId, rt_audience_score: found?.audience ?? null, mdblist_fetched_at: fetchedAt };
+      const row: Record<string, string | number | null> = {
+        imdb_id: imdbId,
+        rt_audience_score: found?.audience ?? null,
+        metacritic_url: found?.metacriticUrl ?? null,
+        rotten_tomatoes_url: found?.rottenTomatoesUrl ?? null,
+        mdblist_fetched_at: fetchedAt,
+      };
       return row;
     });
     const { error } = await supabase.from("title_metadata").upsert(rows, { onConflict: "imdb_id" });
