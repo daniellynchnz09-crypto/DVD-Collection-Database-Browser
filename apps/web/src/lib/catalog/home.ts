@@ -433,22 +433,25 @@ async function listNewReleases(): Promise<{ rows: TitleCardRow[]; title: string;
 }
 
 export async function loadHomeHeadRows(seed: number): Promise<HomeRowData[]> {
-  const [recent, fresh, classics, tv, weird] = await Promise.all([
+  const [recent, fresh, classics, tv, mini, weird] = await Promise.all([
     // Box-set members are left out here (the set itself shows) so one new box set doesn't
     // fill the whole row with its own discs.
     listRecentlyAdded({ limit: 24, excludeCollectionMembers: true }),
     listNewReleases(),
     windowedRows("classics", (q) => q.lt("release_date", "1970-01-01").in("movie_or_tv", ["Movie", "TV Movie"]), byReleaseAsc, rngFor(seed, "classics")),
-    windowedRows("tv", (q) => q.in("movie_or_tv", ["TV Series", "TV Mini-Series"]), byTitle, rngFor(seed, "tv")),
+    // Separate rows for series and mini-series (the user, 2026-10-06).
+    windowedRows("tv", (q) => q.eq("movie_or_tv", "TV Series"), byTitle, rngFor(seed, "tv")),
+    windowedRows("miniseries", (q) => q.eq("movie_or_tv", "TV Mini-Series"), byTitle, rngFor(seed, "miniseries")),
     listWeirdAndWonderful(seed),
   ]);
-  const [recentCards, freshCards, classicCards, tvCards, weirdCards] = await toCardGroups([recent, fresh.rows, classics, tv, weird]);
+  const [recentCards, freshCards, classicCards, tvCards, miniCards, weirdCards] = await toCardGroups([recent, fresh.rows, classics, tv, mini, weird]);
 
   const rows: HomeRowData[] = [
     { id: "head:recent", title: "Recently Added", label: "New In", href: null, cards: recentCards },
     { id: "head:new", title: fresh.title, label: fresh.label, href: null, cards: freshCards },
     { id: "head:classics", title: "Classics", label: "Pre-1970", href: null, cards: classicCards },
     { id: "head:tv", title: "TV Series", label: "TV", href: null, cards: tvCards },
+    { id: "head:mini", title: "TV Mini-Series", label: "TV", href: null, cards: miniCards },
     { id: "head:weird", title: "Weird and Wonderful", label: "Oddities", href: null, cards: weirdCards },
   ];
   return rows.filter((r) => r.cards.length > 0);

@@ -47,6 +47,17 @@ export function shortFormatLabel(format: string | null | undefined): string | nu
   return format;
 }
 
+/** An episode or disc title reduced to its story: "The Savages (2)" and "The Savages" both
+ * become "the savages". Episode numbers, "Part N" and "Episode N" are dropped. Shared by the
+ * Series browser's owned-episode filter and its per-serial grouping. */
+export function storyKeyOf(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\(\d+\)|part\s*\d+|episode\s*\d+/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 /** Poster frame shape (width / height). */
 export const POSTER_ASPECT = 2 / 3;
 

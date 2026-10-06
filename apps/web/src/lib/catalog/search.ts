@@ -395,7 +395,10 @@ interface Candidate {
   /** Row whose poster/case image represents it (null for people/directors without one). */
   imageRow: IndexedRow | null;
   build: () => Omit<SearchHit, "image" | "kind" | "key" | "related">;
-  personImage?: CatalogImage | null;
+  /** An image that isn't a disc's: a person's photo, or a film's own TMDb poster. Wins over
+   * imageRow - a Film/TV result shows the film's poster, not one copy's case photo (the user,
+   * 2026-10-06: disc images put the case photo first, which leaked into film results). */
+  ownImage?: CatalogImage | null;
 }
 
 const FORMAT_RANK = (format: string | null | undefined) => {
@@ -459,6 +462,7 @@ export async function searchCatalog(rawQuery: string, opts: SearchOptions = {}):
       sortName: film.title,
       related: false,
       imageRow: film.rows.find((r) => !r.row.is_collection && r.row.movie_poster_path) ?? film.rows.find((r) => !r.row.is_collection) ?? film.rows[0],
+      ownImage: tmdbImage(idx.metadata.get(film.imdbId)?.poster_path, opts.posterSize ?? "w342"),
       build: () => ({
         href: workHref(film.imdbId),
         title: film.title,
@@ -569,7 +573,7 @@ export async function searchCatalog(rawQuery: string, opts: SearchOptions = {}):
       sortName: p.name,
       related: false,
       imageRow: null,
-      personImage: tmdbImage(p.profile_path, "w185"),
+      ownImage: tmdbImage(p.profile_path, "w185"),
       build: () => ({ href: personHref(p.tmdb_person_id), title: p.name, year: null, format: null, subtitle: p.known_for_department }),
     });
   }
@@ -619,7 +623,7 @@ export async function searchCatalog(rawQuery: string, opts: SearchOptions = {}):
       kind,
       key: c.key,
       related: c.related || undefined,
-      image: c.personImage ?? (c.imageRow ? (images.get(c.imageRow.row.unique_id)?.poster ?? null) : null),
+      image: c.ownImage ?? (c.imageRow ? (images.get(c.imageRow.row.unique_id)?.poster ?? null) : null),
       ...c.build(),
     })),
   }));

@@ -793,3 +793,10 @@ Follow-up, 2026-10-04: after another scanning batch the user reported four thing
 - **Metadata backfill finished** for scanned titles. OMDb hit its daily cap with 5 titles left, because the earlier whole-collection run had already used about 900 OMDb lookups. That correction was reported to the user.
 - **Series browser.** The user asked for TV series to list only the episodes in the sets they own: Doctor Who season 3 only The Savages, season 4 only The Underwater Menace. Built by matching serial titles to TMDb episode names (verified against the serial index); whole-season sets still show everything.
 - **Row scroll arrows.** The user asked for them to touch the page edges. They were already full-width, but the chevron clip cut away the outer corners, so the clip direction was flipped.
+
+2026-10-06 (later): User asked for their Letterboxd scores/reviews of Doctor Who serials in the Doctor Who Series browser, opened by clicking any of the serial's episodes, like an accordion.
+- **Data.** The export logs serials as "Doctor Who: <serial>". Added `letterboxd_serial_reviews` (0048, private only) and a serial pass in `import-letterboxd-reviews`: 43 serials rated or reviewed, 24 with a written review. All 7 Season 21 serials have both; The Savages and The Underwater Menace have neither yet.
+- **Browser.** `TvSeriesBrowser` groups episodes by story name and shows a badge plus an accordion panel from a generic `storyExtras` prop, built in a LETTERBOXD-marked block of the title page.
+- **Mid-task requests:**
+  - TV Series and TV Mini-Series now have separate home rows.
+  - Film/TV search results were showing a disc's case photo, because disc images now prefer case photos. They now use the film's own TMDb poster.

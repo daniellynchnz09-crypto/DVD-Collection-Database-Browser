@@ -2,7 +2,8 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useId, useState } from "react";
+import { Fragment, useId, useState, type ReactNode } from "react";
+import { storyKeyOf } from "@/lib/catalog/display";
 import type { BrowserSeason } from "@/lib/catalog/titlePages";
 
 /** TMDb still URL built client-side (images.ts is server-only); 300w suits the thumbnail. */
@@ -12,9 +13,25 @@ const stillUrl = (path: string) => `https://image.tmdb.org/t/p/w300${path.starts
  * The "burnt in Series browser" (WEB APP DESIGN.md): season tabs for only the seasons the
  * collection holds, each showing its episode list (live from TMDb when the show is matched)
  * and which owned disc(s) carry that season.
+ *
+ * `storyExtras` (2026-10-06) adds an accordion per story/serial: keyed `${season}|${storyKeyOf(
+ * serial title)}`, its `badge` shows on each of that story's episodes, and clicking any of them
+ * opens `panel` under the story's last episode (the user's request, for their own per-serial
+ * scores and reviews of Doctor Who). Pages that pass nothing get the plain list.
  */
-export function TvSeriesBrowser({ seasons, tmdbLinked }: { seasons: BrowserSeason[]; tmdbLinked: boolean }) {
+export type StoryExtras = Record<string, { badge: ReactNode; panel: ReactNode }>;
+
+export function TvSeriesBrowser({
+  seasons,
+  tmdbLinked,
+  storyExtras,
+}: {
+  seasons: BrowserSeason[];
+  tmdbLinked: boolean;
+  storyExtras?: StoryExtras;
+}) {
   const [active, setActive] = useState(0);
+  const [openStory, setOpenStory] = useState<string | null>(null);
   const baseId = useId();
   if (seasons.length === 0) return null;
   const season = seasons[Math.min(active, seasons.length - 1)];
@@ -53,27 +70,58 @@ export function TvSeriesBrowser({ seasons, tmdbLinked }: { seasons: BrowserSeaso
           ) : null}
           {season.episodes && season.episodes.length > 0 ? (
             <ol className="flex flex-col divide-y divide-rule">
-              {season.episodes.map((ep) => (
-                <li key={ep.episodeNumber} className="flex gap-3 py-3 first:pt-0 sm:gap-4">
-                  <div className="clip-corner-sm relative hidden aspect-video w-36 shrink-0 overflow-hidden bg-void sm:block">
-                    {ep.stillPath ? (
-                      <Image src={stillUrl(ep.stillPath)} alt="" fill sizes="144px" unoptimized className="object-cover" />
-                    ) : (
-                      <span className="label-tech absolute inset-0 flex items-center justify-center text-[9px] text-mist-dim">No still</span>
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-                      <span className="font-display text-xs font-semibold tracking-[0.16em] text-accent">E{String(ep.episodeNumber).padStart(2, "0")}</span>
-                      <span className="font-medium text-chrome-hi">{ep.name}</span>
-                      <span className="label-tech text-[10px] text-mist-dim">
-                        {[ep.airDate, ep.runtime ? `${ep.runtime}m` : null].filter(Boolean).join(" // ")}
-                      </span>
+              {season.episodes.map((ep, i, eps) => {
+                const key = `${season.number}|${storyKeyOf(ep.name)}`;
+                const extra = storyExtras?.[key];
+                const lastOfStory = !eps[i + 1] || `${season.number}|${storyKeyOf(eps[i + 1].name)}` !== key;
+                const open = openStory === key;
+                const body = (
+                  <>
+                    <div className="clip-corner-sm relative hidden aspect-video w-36 shrink-0 overflow-hidden bg-void sm:block">
+                      {ep.stillPath ? (
+                        <Image src={stillUrl(ep.stillPath)} alt="" fill sizes="144px" unoptimized className="object-cover" />
+                      ) : (
+                        <span className="label-tech absolute inset-0 flex items-center justify-center text-[9px] text-mist-dim">No still</span>
+                      )}
                     </div>
-                    {ep.overview ? <p className="mt-1 line-clamp-3 text-sm leading-snug text-mist">{ep.overview}</p> : null}
-                  </div>
-                </li>
-              ))}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                        <span className="font-display text-xs font-semibold tracking-[0.16em] text-accent">E{String(ep.episodeNumber).padStart(2, "0")}</span>
+                        <span className="font-medium text-chrome-hi">{ep.name}</span>
+                        <span className="label-tech text-[10px] text-mist-dim">
+                          {[ep.airDate, ep.runtime ? `${ep.runtime}m` : null].filter(Boolean).join(" // ")}
+                        </span>
+                      </div>
+                      {ep.overview ? <p className="mt-1 line-clamp-3 text-sm leading-snug text-mist">{ep.overview}</p> : null}
+                    </div>
+                  </>
+                );
+                return (
+                  <Fragment key={ep.episodeNumber}>
+                    <li className="py-3 first:pt-0">
+                      {extra ? (
+                        <button
+                          type="button"
+                          onClick={() => setOpenStory(open ? null : key)}
+                          aria-expanded={open}
+                          className="flex w-full gap-3 text-left transition-colors hover:bg-panel-hi/40 sm:gap-4"
+                        >
+                          {body}
+                          <span className="flex shrink-0 items-center gap-1.5 self-center">
+                            {extra.badge}
+                            <svg aria-hidden viewBox="0 0 10 6" className={`h-1.5 w-2.5 fill-accent transition-transform ${open ? "rotate-180" : ""}`}>
+                              <polygon points="0,0 10,0 5,6" />
+                            </svg>
+                          </span>
+                        </button>
+                      ) : (
+                        <div className="flex gap-3 sm:gap-4">{body}</div>
+                      )}
+                    </li>
+                    {extra && open && lastOfStory ? <li className="pb-3">{extra.panel}</li> : null}
+                  </Fragment>
+                );
+              })}
             </ol>
           ) : (
             <EpisodeFallback season={season} tmdbLinked={tmdbLinked} />

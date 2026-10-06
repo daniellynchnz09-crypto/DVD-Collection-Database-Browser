@@ -1,7 +1,7 @@
 import "server-only";
 import { getCatalogClient, isMissingTableError, reportQueryError } from "./client";
 import { TITLE_CARD_COLUMNS } from "./columns";
-import { directorHref, discNumberLabel, displayTitle, frameAspect, personHref, shortFormatLabel, yearOf } from "./display";
+import { directorHref, discNumberLabel, displayTitle, frameAspect, personHref, shortFormatLabel, storyKeyOf, yearOf } from "./display";
 import { isImdbId } from "./metadata";
 import { getCollection, isUniqueId, rowHref, toPosterCards } from "./queries";
 import type { Collection, Disc, PosterCardData, TitleCardRow, TitleDetailRow, Work } from "./types";
@@ -213,13 +213,6 @@ export async function getSeriesBrowser(work: Work): Promise<SeriesBrowserData> {
   return { seasons, usedTmdb: live.size > 0, tmdbLinked: tvId !== null };
 }
 
-const normalizeEpisodeName = (name: string) =>
-  name
-    .toLowerCase()
-    .replace(/\(\d+\)|part\s*\d+|episode\s*\d+/g, " ")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-
 /**
  * Which of a season's episodes the owned discs hold (2026-10-06, the user: a series like Doctor
  * Who should only list the episodes in the sets they own - season 3 just The Savages' four,
@@ -235,10 +228,10 @@ const normalizeEpisodeName = (name: string) =>
  */
 function ownedEpisodeNumbers(episodes: TvEpisode[], rows: TitleDetailRow[], showTitle: string): Set<number> | null {
   if (rows.length === 0) return null;
-  const show = normalizeEpisodeName(showTitle);
+  const show = storyKeyOf(showTitle);
   const owned = new Set<number>();
   for (const row of rows) {
-    let story = normalizeEpisodeName(row.title ?? "");
+    let story = storyKeyOf(row.title ?? "");
     if (show && story.startsWith(`${show} `)) story = story.slice(show.length + 1);
     const wholeSeason = !story || story === show || /(season|series|complete|collection|box set)/.test(story);
     const part = parseInt(row.part_of_season_no ?? "", 10);
@@ -250,7 +243,7 @@ function ownedEpisodeNumbers(episodes: TvEpisode[], rows: TitleDetailRow[], show
     }
     if (wholeSeason) return null;
 
-    const matches = episodes.filter((e) => normalizeEpisodeName(e.name) === story || normalizeEpisodeName(e.name).startsWith(`${story} `));
+    const matches = episodes.filter((e) => storyKeyOf(e.name) === story || storyKeyOf(e.name).startsWith(`${story} `));
     if (matches.length === 0) return null;
     for (const e of matches.slice(0, row.episode_count && row.episode_count > 0 ? row.episode_count : matches.length)) {
       owned.add(e.episodeNumber);

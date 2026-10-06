@@ -9,7 +9,7 @@ import { PersonCircle } from "@/components/title/PersonCircle";
 import { ScoreTiles } from "@/components/title/ScoreTiles";
 import { FactList, HeroTitle, MetaLine, TitleHero } from "@/components/title/TitleHero";
 import { Container, RowContainer, TitlePageShell } from "@/components/title/TitlePageShell";
-import { TvSeriesBrowser } from "@/components/title/TvSeriesBrowser";
+import { TvSeriesBrowser, type StoryExtras } from "@/components/title/TvSeriesBrowser";
 import { franchiseHref, getWork, getWorkCredits, personHref, tmdbImageUrl, yearOf, type Credit, type Work } from "@/lib/catalog";
 import { distinctCi, formatRuntime, getSeriesBrowser, getWorkItemCards, isTvWork, personLinkHref, workDisplayTitle, type PersonLink } from "@/lib/catalog/titlePages";
 
@@ -63,6 +63,7 @@ export default async function TitlePage(props: PageProps<"/title/[imdbId]">) {
   const usesTmdb = !!meta || work.poster?.source === "tmdb" || !!series?.usedTmdb;
   let ownScoreTile: ReactNode = null;
   let ownReview: ReactNode = null;
+  let storyExtras: StoryExtras | undefined;
 
   return (
     <TitlePageShell title={title} eyebrow={`${kind}${year ? ` // ${year}` : ""}`} backdrop={work.poster ?? work.backdrop} tmdbAttribution={usesTmdb}>
@@ -126,7 +127,7 @@ export default async function TitlePage(props: PageProps<"/title/[imdbId]">) {
       {series && series.seasons.length > 0 ? (
         <Container>
           <Section title="Series Browser" aside={`${series.seasons.length} in collection`}>
-            <TvSeriesBrowser seasons={series.seasons} tmdbLinked={series.tmdbLinked} />
+            <TvSeriesBrowser seasons={series.seasons} tmdbLinked={series.tmdbLinked} storyExtras={storyExtras} />
           </Section>
         </Container>
       ) : null}

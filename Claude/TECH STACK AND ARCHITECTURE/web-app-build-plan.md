@@ -85,3 +85,8 @@ The original plan above is kept as written; these replace parts of it.
   - Anything that can't be pinned down shows the whole season.
   - Code: `ownedEpisodeNumbers` in `titlePages.ts`.
 - **Row scroll arrows** now sit flat against the page edge, with the angled side facing the cards. Before, the point sat at the edge and left gaps at the corners.
+- **Per-serial Letterboxd accordion (private build only, 2026-10-06).** In the Series browser, each episode of a serial the user rated on Letterboxd shows a score badge. Clicking any of them opens the serial's score and review under its last episode.
+  - Data is in `letterboxd_serial_reviews` (migration `0048`, private only), filled by `import-letterboxd-reviews`. Matching is "Doctor Who: <serial>" against `classic_who_serial_index`, which gives the season. The rating is Letterboxd stars x 2.
+  - `TvSeriesBrowser` takes a generic `storyExtras` prop; the Letterboxd parts come from the excluded `LetterboxdTake.tsx` / `letterboxdReview.ts`.
+- **Home rows:** TV Series and TV Mini-Series are now separate rows.
+- **Search:** Film/TV results show the film's TMDb poster. DVD/collection results keep the case photo.
