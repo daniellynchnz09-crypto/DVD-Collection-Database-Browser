@@ -13,6 +13,7 @@
     "build-classic-who-serial-index": "tsx src/build-classic-who-serial-index.ts",
     "backfill-recrop-case-images": "tsx src/backfill-recrop-case-images.ts",
     "repair-case-image-rotation": "tsx src/repair-case-image-rotation.ts",
+    "import-weird-movie-list": "tsx src/import-weird-movie-list.ts",
     "backfill-doctor-who-shelf-order": "tsx src/backfill-doctor-who-shelf-order.ts",
     "backfill-classic-who-missing-episodes": "tsx src/backfill-classic-who-missing-episodes.ts",
     "backfill-classic-who-serial-release-dates": "tsx src/backfill-classic-who-serial-release-dates.ts",

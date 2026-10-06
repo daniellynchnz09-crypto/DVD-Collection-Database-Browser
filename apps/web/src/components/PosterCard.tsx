@@ -30,11 +30,11 @@ export function PosterCard({
         aspect={card.aspect ?? POSTER_ASPECT}
         sizes={sizes[size]}
         preload={preload}
-        className="clip-corner flow-ring bg-panel ring-1 ring-rule transition duration-200 ring-inset group-hover:-translate-y-0.5 group-focus-visible:shadow-glow"
+        className="clip-corner bg-panel ring-1 ring-rule transition duration-200 ring-inset group-hover:-translate-y-0.5 group-focus-visible:shadow-glow"
       >
         {/* Hover sheen + accent frame */}
         <div aria-hidden className="pointer-events-none absolute inset-0 bg-linear-to-t from-void/70 via-transparent to-transparent opacity-80" />
-        <div aria-hidden className="pointer-events-none absolute inset-0 border border-transparent transition-colors group-hover:border-accent/25 group-focus-visible:border-accent" />
+        <div aria-hidden className="pointer-events-none absolute inset-0 border border-transparent transition-colors group-hover:border-accent/70 group-focus-visible:border-accent" />
         {card.format ? (
           <span className="clip-tab absolute bottom-0 left-0 bg-void/85 px-1.5 py-0.5 font-display text-[10px] font-semibold tracking-[0.14em] text-accent uppercase">
             {card.format}

@@ -121,7 +121,8 @@ body {
 /* Flowing outline light (2026-10-06, the user: the hover glow should have light circling the
    shape). A bright band runs round the element's edge while it - or the `group` it sits in - is
    hovered or keyboard-focused. The ring is the element's border box minus its content box, so it
-   follows the box; on clip-corner shapes it fades out over the cut corners. Reduced-motion
+   follows the box; on clip-corner shapes it fades out over the cut corners. Used on tiles and
+   links, not on poster/case images (the user found it distracting there). Reduced-motion
    users get a steady outline instead. Don't put it on absolutely positioned elements (it sets
    position: relative). */
 @property --flow-angle {
@@ -157,7 +158,7 @@ body {
     mask-composite: exclude;
     opacity: 0;
     transition: opacity 0.2s;
-    animation: flow-around 2.4s linear infinite;
+    animation: flow-around 6s linear infinite;
     animation-play-state: paused;
   }
   &:hover::after,

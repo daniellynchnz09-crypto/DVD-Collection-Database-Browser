@@ -40,6 +40,7 @@ import {
   type StagedCoverAnalysis,
   type TmdbFields,
   type TmdbMediaType,
+  tagWeirdMovieMatches,
 } from "@danflix/backend";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -894,6 +895,11 @@ export async function POST(request: Request) {
   // (migration 0046). Kept out of `title` itself so the Sheet writes above never see it.
   if (createdIds.length > 0) {
     await supabase.from("titles").update({ scanned: true }).in("unique_id", createdIds);
+  }
+  // "Weird and Wonderful" (migration 0049): tag anything on the 366 Weird Movies lists. Best
+  // effort - a failure here never fails the confirm.
+  if (createdIds.length > 0) {
+    void tagWeirdMovieMatches(supabase, createdIds).catch((err) => console.error("[confirm] weird list tagging failed:", err));
   }
   if (frontCoverPath && createdIds[0]) {
     const promotedPath = await promoteStagedCoverToCaseImage(supabase, frontCoverPath, createdIds[0]);

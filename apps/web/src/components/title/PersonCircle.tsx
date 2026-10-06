@@ -32,7 +32,7 @@ export function PersonCircle({
         {/* Spinning light arcs on hover/focus, like the portrait circle (2026-10-06). */}
         <div
           aria-hidden
-          className="absolute -inset-1 animate-[spin_2.4s_linear_infinite] rounded-full border-2 border-transparent border-t-accent-hi border-r-accent/40 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:animate-none"
+          className="absolute -inset-1 animate-[spin_6s_linear_infinite] rounded-full border-2 border-transparent border-t-accent-hi border-r-accent/40 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:animate-none"
         />
         <div
           className={`relative h-full w-full overflow-hidden rounded-full bg-linear-to-br from-panel-hi to-void ring-1 ring-rule-strong transition group-hover:ring-accent-dim group-focus-visible:ring-accent-dim`}

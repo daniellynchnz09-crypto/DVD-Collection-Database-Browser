@@ -93,3 +93,10 @@ The original plan above is kept as written; these replace parts of it.
 - **Director/actor/franchise pages:** the Movie/TV tab's thumbnails use the film's TMDb poster. The DVD tab keeps case photos.
 - **Hover outline:** a band of light circles the outline of hovered/focused cards, tiles and links (`flow-ring` utility in `globals.css`); reduced-motion users get a steady outline.
 - **Circular portraits:** the bright arcs spin slowly, with a second faint arc turning the other way. Cast/crew circles get a spinning arc on hover. Still for reduced-motion users.
+- **"Weird and Wonderful" comes from the 366 Weird Movies lists** (366weirdmovies.com), at the user's request. The old rule-based row (rare genres, puppetry, 3D discs) is gone.
+  - `weird_movie_list` (migration `0049`) holds the Canon (366), Apocrypha and Apocrypha Candidates (the site's ~500-title shortlist).
+  - `titles.weird_tag` is set by `npm run import-weird-movie-list -w scripts` for the whole collection (59 titles) and by `/api/scan/confirm` for new scans.
+  - Hand-picked 'similar' titles, chosen for comparable weirdness in plot and aesthetic, are listed with reasons in the script's `SIMILAR_PICKS`: The Elephant Man, One from the Heart, All That Jazz, Bride of the Monster, Bride of Frankenstein, Confessions of a Dangerous Mind, Jodorowsky's Dune.
+  - Scanned titles on the lists so far: Vertigo (Canon) and Capone (Candidate; no IMDb link yet, so not shown on the Film/TV-only home page).
+- **Archive stats** show the total as a big number, then bar charts by format and by type.
+- **Hover effects:** the flowing outline was removed from poster/case images (the user found it distracting) and kept on tiles/links. The circular people/franchise icons keep their spinning arcs. Hover animations were slowed (6 s per lap).

@@ -803,3 +803,14 @@ Follow-up, 2026-10-04: after another scanning batch the user reported four thing
 Same session: the user found director/actor pages had the same issue as search (film thumbnails showing a copy's case photo). Fixed in people.ts: the Movie/TV tab now uses film-mode cards, TMDb poster first; this also covers franchise pages.
 Same session: the user asked for the blue hover glow to have light flowing around the shape. Added a `flow-ring` CSS utility (an animated conic-gradient ring, paused until hover/focus, steady for reduced motion) on poster cards, the hero poster, score tiles, related links, search results and the Series browser's disc links. The user also couldn't find the Season 21 Letterboxd scores: verified they show on the Doctor Who Film/TV page's Season 21 tab at phone width, and explained where to find them (likely looked at the Season 21 DVD page or a stale page). Offered to add them to the DVD page.
 Same session: the user pointed at the person/franchise portrait circle and asked for its lighter segments to spin. Its arc now turns slowly (plus a counter-rotating faint outer arc), and cast/crew circles get a spinning arc on hover/focus.
+
+2026-10-06 (later):
+- **Weird and Wonderful.** The user asked what makes a film "Weird and Wonderful". Explained the old rules (made up by the home-page agent: rare genres, unusual animation, novelty formats). The user asked to use a "1001 weird films" list instead, and to add films in the collection with a similar level of weirdness.
+  - The list they meant is 366 Weird Movies. Parsed its index: the Canon (366), Apocrypha (69) and Apocrypha Candidates (499, the "shortlist" the user mentioned); Capsules were left out since they aren't all weird.
+  - Matched against the collection: 43 films (50 rows) found. Only Vertigo and Capone are scanned so far; the near misses were all different films.
+  - Hand-picked 7 'similar' scanned titles, with reasons, after reviewing every scanned title's synopsis.
+  - Built `weird_movie_list` + `titles.weird_tag` (0049, applied to both projects), the import script, and tagging on confirm. The home row now uses the tags.
+- **Mid-task requests:**
+  - Slow the hover animations (2.4 s to 6 s).
+  - Drop the flowing outline from posters/product images but keep the circle animations.
+  - Turn the archive stats into a chart with the total kept as a number (now a big total plus "By format" and "By type" bar charts).

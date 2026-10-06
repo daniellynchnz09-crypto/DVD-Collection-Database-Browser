@@ -97,9 +97,9 @@ export function HomeHero({ feature, stats }: { feature: HomeFeature | null; stat
             </div>
 
             <Link href={feature.href} className="group relative block w-24 shrink-0 outline-none sm:w-44 lg:w-56" aria-label={feature.title}>
-              <div className="clip-corner flow-ring relative aspect-[2/3] overflow-hidden bg-panel shadow-glow ring-1 ring-accent-dim ring-inset">
+              <div className="clip-corner relative aspect-[2/3] overflow-hidden bg-panel shadow-glow ring-1 ring-accent-dim ring-inset">
                 <PosterImage image={feature.poster} title={feature.title} sizes="(max-width: 640px) 96px, 224px" preload />
-                <div aria-hidden className="pointer-events-none absolute inset-0 border border-transparent transition-colors group-hover:border-accent/25" />
+                <div aria-hidden className="pointer-events-none absolute inset-0 border border-transparent transition-colors group-hover:border-accent" />
               </div>
               {/* Corner brackets framing the poster like a targeting reticle */}
               <span aria-hidden className="absolute -top-1.5 -left-1.5 h-3 w-3 border-t border-l border-accent" />
@@ -121,26 +121,54 @@ export function HomeHero({ feature, stats }: { feature: HomeFeature | null; stat
   );
 }
 
+/**
+ * The archive stats: the total as a big number, then the breakdown as bar charts (2026-10-06,
+ * the user asked for a graph instead of a row of numbers, keeping the total as a number).
+ */
 function StatsStrip({ stats }: { stats: ArchiveStats }) {
-  const cells = [
-    { label: "Titles", value: stats.total },
-    { label: "Box sets", value: stats.boxSets },
+  const other = Math.max(0, stats.total - stats.dvd - stats.bluray - stats.uhd);
+  const formats = [
     { label: "DVD", value: stats.dvd },
     { label: "Blu-ray", value: stats.bluray },
     { label: "4K UHD", value: stats.uhd },
-    { label: "TV seasons", value: stats.tv },
+    { label: "Other", value: other },
+  ].filter((b) => b.label !== "Other" || b.value > 0);
+  const types = [
+    { label: "Movies", value: Math.max(0, stats.total - stats.tv) },
+    { label: "TV", value: stats.tv },
+    { label: "Box sets", value: stats.boxSets },
   ];
   return (
-    <dl className="mt-6 grid grid-cols-3 border border-rule bg-void/50 backdrop-blur-sm sm:mt-8 sm:grid-cols-6">
-      {cells.map((c, i) => (
-        <div
-          key={c.label}
-          className={`relative px-3 py-2 sm:px-4 ${i % 3 !== 0 ? "border-l border-rule" : ""} ${i >= 3 ? "border-t border-rule sm:border-t-0" : ""} ${i === 3 ? "sm:border-l" : ""}`}
-        >
-          <dt className="label-tech text-[10px]">{c.label}</dt>
-          <dd className="font-display text-lg font-semibold text-accent-hi tabular-nums sm:text-2xl">{c.value.toLocaleString("en-NZ")}</dd>
+    <div className="mt-6 grid gap-4 border border-rule bg-void/50 p-4 backdrop-blur-sm sm:mt-8 sm:grid-cols-[auto_1fr_1fr] sm:gap-8 sm:p-5">
+      <div className="flex flex-col justify-center sm:border-r sm:border-rule sm:pr-8">
+        <span className="label-tech text-[10px]">Titles in the archive</span>
+        <span className="font-display text-5xl leading-none font-bold text-accent-hi tabular-nums sm:text-6xl">
+          {stats.total.toLocaleString("en-NZ")}
+        </span>
+      </div>
+      <BarChart title="By format" bars={formats} />
+      <BarChart title="By type" bars={types} />
+    </div>
+  );
+}
+
+function BarChart({ title, bars }: { title: string; bars: Array<{ label: string; value: number }> }) {
+  const max = Math.max(1, ...bars.map((b) => b.value));
+  return (
+    <figure className="flex min-w-0 flex-col gap-2">
+      <figcaption className="label-tech text-[10px] text-accent">{title}</figcaption>
+      {bars.map((b) => (
+        <div key={b.label} className="grid grid-cols-[4.5rem_1fr_2.5rem] items-center gap-2">
+          <span className="label-tech truncate text-[10px]">{b.label}</span>
+          <span aria-hidden className="clip-tab relative h-3 bg-deep/80">
+            <span
+              className="absolute inset-y-0 left-0 bg-linear-to-r from-accent-dim to-accent"
+              style={{ width: `${b.value > 0 ? Math.max(3, (b.value / max) * 100) : 0}%` }}
+            />
+          </span>
+          <span className="text-right font-display text-sm font-semibold text-chrome-hi tabular-nums">{b.value.toLocaleString("en-NZ")}</span>
         </div>
       ))}
-    </dl>
+    </figure>
   );
 }

@@ -99,10 +99,6 @@ function shuffle<T>(items: T[], rand: () => number): T[] {
 // Query helpers
 // ---------------------------------------------------------------------------------------------
 
-function pgArrayLiteral(values: string[]): string {
-  return `{${values.map((v) => `"${v.replace(/["\\]/g, (c) => `\\${c}`)}"`).join(",")}}`;
-}
-
 function cardQuery(supabase: SupabaseClient) {
   // Box-set header rows are left out of browse rows: their members appear instead, and a
   // header would just duplicate them.
@@ -382,34 +378,16 @@ export async function loadHomePlanRows(
 // The fixed head of the page
 // ---------------------------------------------------------------------------------------------
 
-/** "Weird and Wonderful": the oddities of this particular shelf. Chosen from the real data
- * (2026-10-06): the rarest genres (each on 1-10 titles), unusual animation techniques (puppet,
- * claymation, stop-motion, anime), novelty formats (CD Movie / VCD, 3D discs), and
- * non-feature oddities (film serials, shorts, live performances, sports recordings). */
-const WEIRD_GENRES = ["Kaiju", "Samurai", "Wuxia", "Cyberpunk", "Mockumentary", "Sword and Sorcery", "Video Game Movie", "Parody", "Zombie", "Satire", "Eastern", "Slasher"];
-const WEIRD_OR = [
-  "animation_or_live_action.ilike.*puppet*",
-  "animation_or_live_action.ilike.*claymation*",
-  "animation_or_live_action.ilike.*stop-motion*",
-  "animation_or_live_action.ilike.*anime*",
-  "format.ilike.*3D*",
-  'format.eq."CD Movie"',
-  'movie_or_tv.in.("Serial","Short","Live Performance","Live Concert","Sports Recording","Sport","Music")',
-  'documentary.eq."Mockumentary"',
-].join(",");
-
+/** "Weird and Wonderful" (rebuilt 2026-10-06, the user's request): titles on the 366 Weird
+ * Movies lists - the Canon, Apocrypha and Apocrypha Candidates - plus ones judged comparably
+ * weird by hand, all via titles.weird_tag (migration 0049, scripts/src/import-weird-movie-list.ts).
+ * Replaces the old rule-based pick (rare genres, puppetry, 3D discs). */
 async function listWeirdAndWonderful(seed: number): Promise<TitleCardRow[]> {
   const supabase = getCatalogClient();
   if (!supabase) return [];
-  const [byGenre, byOther] = await Promise.all([
-    cardQuery(supabase).filter("genre", "ov", pgArrayLiteral(WEIRD_GENRES)).order("unique_id").limit(200),
-    cardQuery(supabase).or(WEIRD_OR).order("unique_id").limit(200),
-  ]);
-  reportQueryError("weird (genre)", byGenre.error);
-  reportQueryError("weird (other)", byOther.error);
-  const merged = new Map<string, TitleCardRow>();
-  for (const r of [...(byGenre.data ?? []), ...(byOther.data ?? [])] as unknown as TitleCardRow[]) merged.set(r.unique_id, r);
-  return shuffle([...merged.values()], rngFor(seed, "weird")).slice(0, 36);
+  const { data, error } = await cardQuery(supabase).not("weird_tag", "is", null).order("unique_id").limit(200);
+  reportQueryError("weird", error);
+  return shuffle((data ?? []) as unknown as TitleCardRow[], rngFor(seed, "weird")).slice(0, 36);
 }
 
 /** Newest releases up to today (release_date has a few typo'd far-future years, e.g. 2946).
