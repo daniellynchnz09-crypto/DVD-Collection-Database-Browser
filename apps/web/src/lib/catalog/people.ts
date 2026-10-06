@@ -129,8 +129,11 @@ async function buildConnections(
   workCaption?: (imdbId: string) => string | null,
 ): Promise<Connections> {
   const rows = [...inputRows].sort(compareRows);
-  const cards = await toPosterCards(rows);
+  // Disc cards (case photo first) for the DVD tab; film-mode cards (TMDb poster first) for the
+  // Movie/TV tab - the user, 2026-10-06: film thumbnails were showing a copy's case photo.
+  const [cards, filmModeCards] = await Promise.all([toPosterCards(rows), toPosterCards(rows, "w342", { asWork: true })]);
   const cardById = new Map(cards.map((c) => [c.key, c]));
+  const filmCardById = new Map(rows.map((r, i) => [r.unique_id, filmModeCards[i]]));
 
   const groups = new Map<string, { imdbId: string | null; rows: TitleCardRow[] }>();
   for (const row of rows) {
@@ -156,8 +159,8 @@ async function buildConnections(
       title: rep.title,
       year: repCard.year,
       format: formatBadge(group.rows),
-      image: repCard.image,
-      aspect: repCard.aspect,
+      image: filmCardById.get(rep.unique_id)?.image ?? repCard.image,
+      aspect: filmCardById.get(rep.unique_id)?.aspect ?? repCard.aspect,
       caption: (group.imdbId && workCaption?.(group.imdbId)) || (copies > 1 ? `${copies} copies` : null),
     });
   }

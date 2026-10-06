@@ -800,3 +800,4 @@ Follow-up, 2026-10-04: after another scanning batch the user reported four thing
 - **Mid-task requests:**
   - TV Series and TV Mini-Series now have separate home rows.
   - Film/TV search results were showing a disc's case photo, because disc images now prefer case photos. They now use the film's own TMDb poster.
+Same session: the user found director/actor pages had the same issue as search (film thumbnails showing a copy's case photo). Fixed in people.ts: the Movie/TV tab now uses film-mode cards, TMDb poster first; this also covers franchise pages.

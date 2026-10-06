@@ -90,3 +90,4 @@ The original plan above is kept as written; these replace parts of it.
   - `TvSeriesBrowser` takes a generic `storyExtras` prop; the Letterboxd parts come from the excluded `LetterboxdTake.tsx` / `letterboxdReview.ts`.
 - **Home rows:** TV Series and TV Mini-Series are now separate rows.
 - **Search:** Film/TV results show the film's TMDb poster. DVD/collection results keep the case photo.
+- **Director/actor/franchise pages:** the Movie/TV tab's thumbnails use the film's TMDb poster. The DVD tab keeps case photos.
