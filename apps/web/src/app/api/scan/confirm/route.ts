@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
+import { refreshWebsiteCaches } from "@/lib/catalog/cacheRefresh";
 import { requireScanSecret } from "@/lib/scanAuth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { logScanEvent } from "@/lib/scanLog";
@@ -314,6 +315,8 @@ export async function POST(request: Request) {
       await supabase.from("titles").update({ scanned: true }).eq("unique_id", existingMatchTitleId);
     }
     await deleteStagedCoverPhotos(supabase, stagedCoverPaths);
+    // A fresh photo of an existing entry shows on its pages straight away.
+    if (existingMatchTitleId) refreshWebsiteCaches();
 
     await supabase.from("pending_scans").update({ status: "confirmed" }).eq("id", pendingScanId);
     logScanEvent({
@@ -914,6 +917,10 @@ export async function POST(request: Request) {
       await supabase.from("titles").update({ case_image_path: promotedPath }).eq("unique_id", createdIds[0]);
     }
   }
+  // New and overwritten entries show on the website straight away, not after the 5-minute
+  // page/search caches expire. An Overwrite updates the same row (same unique_id), so its
+  // pages update in place - never a second entry.
+  if (createdIds.length > 0) refreshWebsiteCaches();
   // Back cover photos are never a stored product image (decision 5) - whether or not a front
   // cover was found/promoted above, every staged photo for this session is cleaned up now that
   // the pending scan has reached its terminal "confirmed" state.
@@ -941,15 +948,18 @@ export async function POST(request: Request) {
   // the saved rows rather than entry.imdbId, since the confirm may have rewritten it (e.g. an
   // episode match resolved to its series). Same long-running-process caveat as the hooks
   // above; refreshTitleMetadata never throws, and the catch only guards the lookup query.
-  void (async () => {
+  // Runs in after() so it outlives the response, then refreshes the caches again so the new
+  // poster/cast/scores appear too.
+  after(async () => {
     try {
       const { data: rows } = await supabase.from("titles").select("imdb_page").in("unique_id", createdIds);
       const imdbIds = new Set((rows ?? []).map((r) => extractImdbIdFromPage(r.imdb_page)).filter((id): id is string => !!id));
       for (const imdbId of imdbIds) await refreshTitleMetadata(supabase, imdbId, { omdbDetail: omdbDetailById.get(imdbId) });
+      if (imdbIds.size > 0) refreshWebsiteCaches();
     } catch (err) {
       console.error("[metadata] Failed to refresh metadata for newly confirmed title(s):", err);
     }
-  })();
+  });
 
   return NextResponse.json({
     success: true,

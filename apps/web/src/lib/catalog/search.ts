@@ -405,6 +405,11 @@ async function buildIndex(): Promise<SearchIndex | null> {
   };
 }
 
+/** Drops the index so the next search rebuilds it - after a scan confirm (cacheRefresh.ts). */
+export function invalidateSearchIndex(): void {
+  index = null;
+}
+
 /** Stale-while-revalidate: a stale index is served immediately while one rebuild runs in the
  * background; concurrent first requests share a single build. A failed rebuild keeps the old
  * index. */
