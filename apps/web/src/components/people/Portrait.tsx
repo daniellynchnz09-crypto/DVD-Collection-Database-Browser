@@ -20,9 +20,18 @@ export function Portrait({ image, name, preload = false }: { image: CatalogImage
 
   return (
     <div className="relative h-28 w-28 shrink-0 sm:h-40 sm:w-40">
-      {/* Outer accent ring + tick marks keep the circle on-brand with the techno chrome look */}
+      {/* Outer accent ring + tick marks keep the circle on-brand with the techno chrome look. The
+          bright arcs turn slowly - one each way, at different speeds (2026-10-06, the user asked
+          for the lighter segments to spin). Still for reduced-motion users. */}
       <div aria-hidden className="absolute -inset-1.5 rounded-full border border-rule-strong" />
-      <div aria-hidden className="absolute -inset-1.5 rounded-full border-2 border-transparent border-t-accent border-r-accent/40" />
+      <div
+        aria-hidden
+        className="absolute -inset-1.5 animate-[spin_7s_linear_infinite] rounded-full border-2 border-transparent border-t-accent border-r-accent/40 motion-reduce:animate-none"
+      />
+      <div
+        aria-hidden
+        className="absolute -inset-3 animate-[spin_11s_linear_infinite_reverse] rounded-full border border-transparent border-b-accent/60 motion-reduce:animate-none"
+      />
       <div className="relative h-full w-full overflow-hidden rounded-full bg-linear-to-br from-panel-hi via-deep to-void ring-1 ring-accent-dim">
         {image && !failed ? (
           <Image
