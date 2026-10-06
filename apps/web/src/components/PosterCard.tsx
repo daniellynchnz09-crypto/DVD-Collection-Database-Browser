@@ -19,25 +19,13 @@ export function PosterCard({
   size?: "sm" | "md" | "lg";
   preload?: boolean;
 }) {
-  const widths = {
-    sm: "w-28 sm:w-32",
-    md: "w-32 sm:w-40",
-    lg: "w-40 sm:w-52",
-  } as const;
-  const sizes = {
-    sm: "128px",
-    md: "(max-width: 640px) 128px, 160px",
-    lg: "(max-width: 640px) 160px, 208px",
-  } as const;
+  const widths = { sm: "w-28 sm:w-32", md: "w-32 sm:w-40", lg: "w-40 sm:w-52" } as const;
+  const sizes = { sm: "128px", md: "(max-width: 640px) 128px, 160px", lg: "(max-width: 640px) 160px, 208px" } as const;
 
   return (
-    <Link
-      href={card.href}
-      className={`group block shrink-0 ${widths[size]} outline-none`}
-      title={card.title}
-    >
+    <Link href={card.href} className={`group block shrink-0 ${widths[size]} outline-none`} title={card.title}>
       {/* Drop shadow sits on a wrapper: the frame's own clip-path would cut it off. */}
-      <div className="drop-shadow-[0_6px_8px_rgb(0_0_0/0.65)] transition-[filter] duration-200 group-hover:drop-shadow-[0_10px_14px_rgb(0_0_0/0.75)]">
+      <div className="case-shadow group-hover:drop-shadow-[0_10px_14px_rgb(0_0_0/0.75)]">
         <ImageFrame
           image={card.image}
           title={card.title}
@@ -47,19 +35,9 @@ export function PosterCard({
           className="clip-corner bg-panel ring-1 ring-rule transition duration-200 ring-inset group-hover:-translate-y-0.5 group-focus-visible:shadow-glow"
         >
           {/* Hover sheen + accent frame */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 bg-linear-to-t from-void/70 via-transparent to-transparent opacity-80"
-          />
-          {/* Glare off a plastic case sleeve: a soft diagonal band and a lit top edge */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 bg-[linear-gradient(115deg,rgb(255_255_255/0.16)_0%,rgb(255_255_255/0.05)_32%,transparent_33%)] shadow-[inset_0_1px_0_rgb(255_255_255/0.25),inset_0_-1px_0_rgb(0_0_0/0.5)]"
-          />
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 border border-transparent transition-colors group-hover:border-accent/70 group-focus-visible:border-accent"
-          />
+          <div aria-hidden className="pointer-events-none absolute inset-0 bg-linear-to-t from-void/70 via-transparent to-transparent opacity-80" />
+          <div aria-hidden className="case-glare" />
+          <div aria-hidden className="pointer-events-none absolute inset-0 border border-transparent transition-colors group-hover:border-accent/70 group-focus-visible:border-accent" />
           {card.format ? (
             <span className="clip-tab absolute bottom-0 left-0 bg-void/85 px-1.5 py-0.5 font-display text-[10px] font-semibold tracking-[0.14em] text-accent uppercase">
               {card.format}
@@ -68,9 +46,7 @@ export function PosterCard({
         </ImageFrame>
       </div>
       <div className="mt-2 px-0.5">
-        <p className="line-clamp-2 text-sm leading-tight font-medium text-chrome group-hover:text-accent-hi">
-          {card.title}
-        </p>
+        <p className="line-clamp-2 text-sm leading-tight font-medium text-chrome group-hover:text-accent-hi">{card.title}</p>
         <p className="label-tech mt-0.5 truncate">
           {[card.year, card.caption].filter(Boolean).join(" // ") || " "}
         </p>

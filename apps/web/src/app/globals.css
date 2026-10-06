@@ -215,6 +215,23 @@ body {
   }
 }
 
+/* Glare off a plastic case sleeve - a soft diagonal band and a lit top edge. Put it on an
+   empty absolutely positioned div inside a poster/case image frame (cards and both heroes). */
+@utility case-glare {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, rgb(255 255 255 / 0.16) 0%, rgb(255 255 255 / 0.05) 32%, transparent 33%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.25), inset 0 -1px 0 rgb(0 0 0 / 0.5);
+}
+
+/* Drop shadow for poster/case images. A filter, so it goes on a wrapper around the
+   clip-cornered frame (the frame's own clip-path would cut a shadow off). */
+@utility case-shadow {
+  filter: drop-shadow(0 6px 8px rgb(0 0 0 / 0.65));
+  transition: filter 0.2s;
+}
+
 /* Recessed track / input well, cut into the surface */
 @utility well {
   background-image: linear-gradient(180deg, rgb(0 0 0 / 0.35), rgb(0 0 0 / 0.05));
