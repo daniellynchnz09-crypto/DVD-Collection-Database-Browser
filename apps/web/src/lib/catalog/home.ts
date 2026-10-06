@@ -463,6 +463,8 @@ export interface ArchiveStats {
   bluray: number;
   uhd: number;
   tv: number;
+  /** Movies that came in a box set - left out of the Movies bar (the user's request). */
+  boxSetMovies: number;
 }
 
 /** A random title that has real artwork (only ~200 of 3,000 rows do until the TMDb backfill
@@ -516,14 +518,15 @@ export async function loadArchiveStats(): Promise<ArchiveStats | null> {
     reportQueryError(`stats ${context}`, error);
     return n ?? 0;
   };
-  const [total, boxSets, dvd, bluray, uhd, tv] = await Promise.all([
+  const [total, boxSets, dvd, bluray, uhd, tv, boxSetMovies] = await Promise.all([
     count("total", (q) => q),
     count("box sets", (q) => q, true),
     count("dvd", (q) => q.ilike("format", "DVD%")),
     count("blu-ray", (q) => q.ilike("format", "Blu-Ray%")),
     count("4k", (q) => q.ilike("format", "4K%")),
     count("tv", (q) => q.in("movie_or_tv", ["TV Series", "TV Mini-Series"])),
+    count("box set movies", (q) => q.eq("title_in_a_collection", true).not("movie_or_tv", "in", '("TV Series","TV Mini-Series")')),
   ]);
   if (total === 0) return null;
-  return { total, boxSets, dvd, bluray, uhd, tv };
+  return { total, boxSets, dvd, bluray, uhd, tv, boxSetMovies };
 }

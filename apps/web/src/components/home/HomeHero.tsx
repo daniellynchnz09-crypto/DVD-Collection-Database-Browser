@@ -134,7 +134,7 @@ function StatsStrip({ stats }: { stats: ArchiveStats }) {
     { label: "Other", value: other },
   ].filter((b) => b.label !== "Other" || b.value > 0);
   const types = [
-    { label: "Movies", value: Math.max(0, stats.total - stats.tv) },
+    { label: "Movies", value: Math.max(0, stats.total - stats.tv - stats.boxSetMovies) },
     { label: "TV", value: stats.tv },
     { label: "Box sets", value: stats.boxSets },
   ];
