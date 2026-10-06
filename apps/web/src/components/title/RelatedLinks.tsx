@@ -18,7 +18,7 @@ export function RelatedLinks({ links }: { links: RelatedLink[] }) {
         <li key={`${l.kind}:${l.href}`}>
           <Link
             href={l.href}
-            className="panel clip-corner group flex items-center gap-3 px-4 py-3 transition-colors hover:[--panel-line:var(--color-accent)]"
+            className="panel clip-corner flow-ring group flex items-center gap-3 px-4 py-3 transition-colors hover:[--panel-line:var(--color-accent)]"
           >
             <svg aria-hidden viewBox="0 0 8 10" className="h-3 w-2.5 shrink-0 fill-accent transition-transform group-hover:translate-x-0.5">
               <polygon points="0,0 8,5 0,10" />

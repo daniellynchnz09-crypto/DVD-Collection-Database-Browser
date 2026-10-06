@@ -134,7 +134,7 @@ export function TvSeriesBrowser({
             <Link
               key={h.uniqueId}
               href={h.href}
-              className="clip-corner-sm group flex flex-col border border-rule bg-void/50 px-3 py-2 transition-colors hover:border-accent"
+              className="clip-corner-sm flow-ring group flex flex-col border border-rule bg-void/50 px-3 py-2 transition-colors hover:border-accent-dim"
             >
               <span className="text-sm font-medium text-chrome group-hover:text-accent-hi">{h.title}</span>
               <span className="label-tech text-[10px]">

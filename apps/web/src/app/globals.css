@@ -118,6 +118,63 @@ body {
     linear-gradient(180deg, rgb(22 41 74 / 0.85), rgb(11 21 36 / 0.92));
 }
 
+/* Flowing outline light (2026-10-06, the user: the hover glow should have light circling the
+   shape). A bright band runs round the element's edge while it - or the `group` it sits in - is
+   hovered or keyboard-focused. The ring is the element's border box minus its content box, so it
+   follows the box; on clip-corner shapes it fades out over the cut corners. Reduced-motion
+   users get a steady outline instead. Don't put it on absolutely positioned elements (it sets
+   position: relative). */
+@property --flow-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes flow-around {
+  to {
+    --flow-angle: 360deg;
+  }
+}
+@utility flow-ring {
+  position: relative;
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    padding: 2px;
+    pointer-events: none;
+    background: conic-gradient(
+      from var(--flow-angle),
+      rgb(92 200 255 / 0.12) 0deg,
+      rgb(92 200 255 / 0.12) 220deg,
+      var(--color-accent) 300deg,
+      #ffffff 345deg,
+      var(--color-accent) 360deg
+    );
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 0.2s;
+    animation: flow-around 2.4s linear infinite;
+    animation-play-state: paused;
+  }
+  &:hover::after,
+  &:focus-visible::after,
+  :where(.group):hover &::after,
+  :where(.group):focus-visible &::after {
+    opacity: 1;
+    animation-play-state: running;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    &::after {
+      animation: none;
+      background: var(--color-accent);
+    }
+  }
+}
+
 /* Brushed-metal header strip, like the 2Advanced section bars */
 @utility chrome-bar {
   background:

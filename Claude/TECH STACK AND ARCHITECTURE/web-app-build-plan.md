@@ -91,3 +91,4 @@ The original plan above is kept as written; these replace parts of it.
 - **Home rows:** TV Series and TV Mini-Series are now separate rows.
 - **Search:** Film/TV results show the film's TMDb poster. DVD/collection results keep the case photo.
 - **Director/actor/franchise pages:** the Movie/TV tab's thumbnails use the film's TMDb poster. The DVD tab keeps case photos.
+- **Hover outline:** a band of light circles the outline of hovered/focused cards, tiles and links (`flow-ring` utility in `globals.css`); reduced-motion users get a steady outline.

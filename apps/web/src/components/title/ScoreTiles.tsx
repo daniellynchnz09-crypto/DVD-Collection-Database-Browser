@@ -137,7 +137,7 @@ function Tile({
   );
   const cls = "panel clip-corner flex min-w-[9rem] flex-col gap-2 px-4 py-3";
   return href ? (
-    <a href={href} target="_blank" rel="noopener noreferrer" className={`${cls} transition-colors hover:[--panel-line:var(--color-accent)]`}>
+    <a href={href} target="_blank" rel="noopener noreferrer" className={`${cls} flow-ring transition-colors hover:[--panel-line:var(--color-accent-dim)]`}>
       {body}
     </a>
   ) : (

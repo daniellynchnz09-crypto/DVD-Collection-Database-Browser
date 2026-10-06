@@ -97,9 +97,9 @@ export function HomeHero({ feature, stats }: { feature: HomeFeature | null; stat
             </div>
 
             <Link href={feature.href} className="group relative block w-24 shrink-0 outline-none sm:w-44 lg:w-56" aria-label={feature.title}>
-              <div className="clip-corner relative aspect-[2/3] overflow-hidden bg-panel shadow-glow ring-1 ring-accent-dim ring-inset">
+              <div className="clip-corner flow-ring relative aspect-[2/3] overflow-hidden bg-panel shadow-glow ring-1 ring-accent-dim ring-inset">
                 <PosterImage image={feature.poster} title={feature.title} sizes="(max-width: 640px) 96px, 224px" preload />
-                <div aria-hidden className="pointer-events-none absolute inset-0 border border-transparent transition-colors group-hover:border-accent" />
+                <div aria-hidden className="pointer-events-none absolute inset-0 border border-transparent transition-colors group-hover:border-accent/25" />
               </div>
               {/* Corner brackets framing the poster like a targeting reticle */}
               <span aria-hidden className="absolute -top-1.5 -left-1.5 h-3 w-3 border-t border-l border-accent" />

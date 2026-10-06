@@ -111,7 +111,7 @@ function EntityRow({ hit }: { hit: SearchHit }) {
   return (
     <Link
       href={hit.href}
-      className="panel clip-corner-sm group flex items-center gap-3 p-2 outline-none hover:border-accent focus-visible:shadow-glow"
+      className="panel clip-corner-sm flow-ring group flex items-center gap-3 p-2 outline-none hover:border-accent-dim focus-visible:shadow-glow"
     >
       <span className="clip-corner-sm relative h-16 w-11 shrink-0 overflow-hidden bg-panel ring-1 ring-rule ring-inset">
         {hit.image ? (
