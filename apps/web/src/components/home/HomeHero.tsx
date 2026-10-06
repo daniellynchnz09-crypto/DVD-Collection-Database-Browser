@@ -136,7 +136,9 @@ function StatsStrip({ stats }: { stats: ArchiveStats }) {
   const types = [
     { label: "Movies", value: Math.max(0, stats.total - stats.tv - stats.boxSetMovies) },
     { label: "TV", value: stats.tv },
-    { label: "Box sets", value: stats.boxSets },
+    // Shows the number of sets, but its bar is as long as the movies inside them, so the three
+    // bars together fill the track (the user's request).
+    { label: "Box sets", value: stats.boxSets, length: stats.boxSetMovies },
   ];
   return (
     <div className="mt-6 grid gap-4 border border-rule bg-void/50 p-4 backdrop-blur-sm sm:mt-8 sm:grid-cols-[auto_1fr_1fr] sm:gap-8 sm:p-5">
@@ -153,7 +155,7 @@ function StatsStrip({ stats }: { stats: ArchiveStats }) {
 }
 
 /** Each bar is a share of the whole archive (the user's request: DVD reads 68 of 116, not 68 of 68). */
-function BarChart({ title, bars, total }: { title: string; bars: Array<{ label: string; value: number }>; total: number }) {
+function BarChart({ title, bars, total }: { title: string; bars: Array<{ label: string; value: number; length?: number }>; total: number }) {
   const max = Math.max(1, total);
   return (
     <figure className="flex min-w-0 flex-col gap-2">
@@ -164,7 +166,7 @@ function BarChart({ title, bars, total }: { title: string; bars: Array<{ label: 
           <span aria-hidden className="clip-tab relative h-3 bg-deep/80">
             <span
               className="absolute inset-y-0 left-0 bg-linear-to-r from-accent-dim to-accent"
-              style={{ width: `${b.value > 0 ? Math.min(100, Math.max(3, (b.value / max) * 100)) : 0}%` }}
+              style={{ width: `${(b.length ?? b.value) > 0 ? Math.min(100, Math.max(3, ((b.length ?? b.value) / max) * 100)) : 0}%` }}
             />
           </span>
           <span className="text-right font-display text-sm font-semibold text-chrome-hi tabular-nums">{b.value.toLocaleString("en-NZ")}</span>

@@ -816,3 +816,4 @@ Same session: the user pointed at the person/franchise portrait circle and asked
   - Turn the archive stats into a chart with the total kept as a number (now a big total plus "By format" and "By type" bar charts).
 - **Stats bars as shares of the whole archive.** The user asked for each bar to be measured against the archive total (DVD shows 68 of 116, not 68 of 68). `BarChart` now scales by `stats.total`.
 - **Box-set movies out of the Movies bar.** The user asked for box-set entries to be discounted from the movie total. Movies now = total - TV - movies inside a box set (111 -> 83; the 28 box-set movies are represented by the Box sets bar, 7 sets).
+- **Box sets bar length.** The user noticed 83+5+7 != 116 (the 7 counts sets, the 116 counts titles). Kept the label at 7 sets but sized the bar by the 28 movies inside them, so Movies + TV + Box sets fill the track.
