@@ -828,3 +828,9 @@ Same session: the user pointed at the person/franchise portrait circle and asked
   1. A confirm saves scores from the OMDb record it already fetched, plus a 1-hour cache on omdbGetById.
   2. Yearly re-checks for films over two years old.
   3. IMDb ratings from IMDb's free data file (new import-imdb-ratings script; it also runs in the backfill). Applied: 2,285 rows updated, and the 6 scanned titles stuck on OMDb now show IMDb ratings.
+
+2026-10-07:
+- **Catching up on held-back work** (the user: do what the API limits blocked yesterday).
+  - **OMDb:** the backfill fetched the 6 waiting titles. The three Spider-Man films got RT/Metacritic; OMDb has none for the three Abbott & Costello films. The IMDb data-file step refreshed 1,593 ratings/vote counts.
+  - **Re-crop:** made backfill-recrop-case-images spend each image's Gemini call once. A dry run now saves a plan + previews, `--apply --plan` applies it with no Gemini calls, originals are backed up locally first, and `--restore --plan` puts them back. 86 stored images were checked: 7 flagged, and 2 were rejected on visual review (The Dark Horse and Hindenburg boxes cut into the cover art). The other 5 were applied (Spider-Verse set, Black Panther, Resident Evil: Retribution, Doctor Who S21, Hitchcock set).
+  - **JPEG quality:** the first apply showed Jimp writing JPEGs at quality 100 (380 KB -> 2.5 MB), so imageCrop.ts now writes JPEG at 88 everywhere (this also affects scan uploads). The five were restored from backup and re-cropped.

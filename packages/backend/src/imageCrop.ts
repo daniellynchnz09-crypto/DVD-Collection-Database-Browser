@@ -11,6 +11,11 @@ import png from "@jimp/js-png";
 // @jimp/plugin-resize as a peer, since rotating resizes the canvas to fit).
 const Jimp = createJimp({ plugins: [cropMethods, rotateMethods], formats: [jpeg, png] });
 
+/** JPEG quality for every image this file writes. Jimp's default is 100, which made a re-crop
+ * of a 380 KB product photo come out at 2.5 MB (2026-10-07); 88 looks the same on a case photo
+ * at a fraction of the size. */
+const JPEG_QUALITY = 88;
+
 /**
  * Auto-crops a uniform-color border (almost always a plain white studio background on a
  * retail product photo) from an image buffer - added 2026-09-22 after the user pointed out a
@@ -43,8 +48,7 @@ export async function autocropImageBuffer(buffer: Buffer, contentType: string): 
   try {
     const image = await Jimp.fromBuffer(buffer);
     const cropped = cropMethods.autocrop(image, { tolerance: 0.02, cropOnlyFrames: false, leaveBorder: 4 });
-    const mime = /png/i.test(contentType) ? "image/png" : "image/jpeg";
-    return await cropped.getBuffer(mime);
+    return /png/i.test(contentType) ? await cropped.getBuffer("image/png") : await cropped.getBuffer("image/jpeg", { quality: JPEG_QUALITY });
   } catch {
     return buffer;
   }
@@ -74,7 +78,7 @@ export async function normalizeImageOrientation(buffer: Buffer, contentType: str
   if (!/^image\/jpe?g$/i.test(contentType)) return buffer;
   try {
     const image = await Jimp.fromBuffer(buffer);
-    return await image.getBuffer("image/jpeg");
+    return await image.getBuffer("image/jpeg", { quality: JPEG_QUALITY });
   } catch {
     return buffer;
   }
@@ -100,8 +104,7 @@ export async function rotateImageBuffer(
   try {
     const image = await Jimp.fromBuffer(buffer);
     const rotated = rotateMethods.rotate(image, -degreesClockwise);
-    const mime = /png/i.test(contentType) ? "image/png" : "image/jpeg";
-    return await rotated.getBuffer(mime);
+    return /png/i.test(contentType) ? await rotated.getBuffer("image/png") : await rotated.getBuffer("image/jpeg", { quality: JPEG_QUALITY });
   } catch {
     return buffer;
   }
@@ -175,8 +178,7 @@ export async function cropImageBufferToBox(
     const h = Math.min(imgHeight - y, Math.round(((box.yMax - box.yMin) / 100) * imgHeight));
     if (w <= 0 || h <= 0) return buffer;
     const cropped = cropMethods.crop(image, { x, y, w, h });
-    const mime = /png/i.test(contentType) ? "image/png" : "image/jpeg";
-    return await cropped.getBuffer(mime);
+    return /png/i.test(contentType) ? await cropped.getBuffer("image/png") : await cropped.getBuffer("image/jpeg", { quality: JPEG_QUALITY });
   } catch {
     return buffer;
   }

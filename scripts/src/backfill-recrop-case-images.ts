@@ -33,15 +33,38 @@
  * convention as this project's other backfill scripts. Safe to re-run: a title that no
  * longer needs cropping (already fixed by a previous --apply run) is skipped the same way an
  * already-small product photo is.
+ *
+ * Plan files (2026-10-07, to spend each image's Gemini call once - the user asked for API
+ * credits to go further): `--plan=<file.json>` on a dry run saves every crop it would make
+ * (and `--preview-dir=<folder>` saves each cropped result for checking by eye). Then
+ * `--apply --plan=<file.json>` applies exactly that plan with no Gemini calls at all. Every
+ * --apply first saves the original image to `--backup-dir` (default
+ * .playwright-mcp/recrop-backups, git-ignored), and `--restore --plan=<file.json>` puts those
+ * originals back.
+ *
+ *   npm run backfill-recrop-case-images -w scripts -- --include-small --plan=recrop.json --preview-dir=previews
+ *   npm run backfill-recrop-case-images -w scripts -- --apply --plan=recrop.json
  */
 
 import "dotenv/config";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { detectCoverBoundingBox, cropImageBufferToBox } from "@danflix/backend";
 
 const MIN_SIZE_BYTES = 500_000;
 const MAX_UNCROPPED_AREA_FRACTION = 0.85;
 const BUCKET = "case-images";
+
+type Box = NonNullable<Awaited<ReturnType<typeof detectCoverBoundingBox>>>;
+interface PlanEntry {
+  path: string;
+  titles: string[];
+  box: Box;
+}
+
+const argValue = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3) ?? null;
+const safeName = (path: string) => path.replace(/[^a-zA-Z0-9._-]+/g, "_");
 
 async function main() {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
@@ -51,7 +74,53 @@ async function main() {
   }
   const apply = process.argv.includes("--apply");
   const includeSmall = process.argv.includes("--include-small");
+  const planPath = argValue("plan");
+  const previewDir = argValue("preview-dir");
+  const backupDir = resolve(argValue("backup-dir") ?? join(__dirname, "..", "..", ".playwright-mcp", "recrop-backups"));
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+  // Undoing a plan: put each entry's backed-up original back.
+  if (process.argv.includes("--restore") && planPath && existsSync(planPath)) {
+    const plan = JSON.parse(readFileSync(planPath, "utf8")) as PlanEntry[];
+    for (const entry of plan) {
+      const backup = join(backupDir, safeName(entry.path));
+      if (!existsSync(backup)) {
+        console.log(`  SKIP (no backup) - ${entry.titles.join(" / ")}`);
+        continue;
+      }
+      const contentType = /\.png$/i.test(entry.path) ? "image/png" : "image/jpeg";
+      const { error: uploadError } = await supabase.storage.from(BUCKET).upload(entry.path, readFileSync(backup), { contentType, upsert: true });
+      console.log(`  ${uploadError ? `FAILED (${uploadError.message})` : "restored"} - ${entry.titles.join(" / ")}`);
+    }
+    return;
+  }
+
+  // Applying a saved plan: no detection, just back up, crop and upload.
+  if (apply && planPath && existsSync(planPath)) {
+    const plan = JSON.parse(readFileSync(planPath, "utf8")) as PlanEntry[];
+    mkdirSync(backupDir, { recursive: true });
+    let done = 0;
+    for (const entry of plan) {
+      const { data: fileData, error: downloadError } = await supabase.storage.from(BUCKET).download(entry.path);
+      if (downloadError || !fileData) {
+        console.log(`  SKIP (download failed) - ${entry.titles.join(" / ")}`);
+        continue;
+      }
+      const contentType = fileData.type || "image/jpeg";
+      const bytes = Buffer.from(await fileData.arrayBuffer());
+      writeFileSync(join(backupDir, safeName(entry.path)), bytes);
+      const cropped = await cropImageBufferToBox(bytes, contentType, entry.box);
+      const { error: uploadError } = await supabase.storage.from(BUCKET).upload(entry.path, cropped, { contentType, upsert: true });
+      if (uploadError) {
+        console.log(`  FAILED to upload ${entry.path}: ${uploadError.message}`);
+        continue;
+      }
+      done++;
+      console.log(`  cropped - ${entry.titles.join(" / ")} (${bytes.length} -> ${cropped.length} bytes)`);
+    }
+    console.log(`\nDone. ${done}/${plan.length} cropped from ${planPath}; originals saved in ${backupDir}.`);
+    return;
+  }
 
   const { data: titles, error } = await supabase.from("titles").select("unique_id,title,case_image_path").not("case_image_path", "is", null);
   if (error || !titles) {
@@ -59,14 +128,21 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`Checking ${titles.length} titles with a case_image_path...`);
+  // One entry per stored file - box-set members often share their set's photo.
+  const titlesByPath = new Map<string, string[]>();
+  for (const row of titles) titlesByPath.set(row.case_image_path as string, [...(titlesByPath.get(row.case_image_path as string) ?? []), row.title]);
+  if (previewDir) mkdirSync(previewDir, { recursive: true });
+  if (apply) mkdirSync(backupDir, { recursive: true });
+  const plan: PlanEntry[] = [];
+
+  console.log(`Checking ${titlesByPath.size} stored images (${titles.length} titles)...`);
   let recropped = 0;
   let skippedSmall = 0;
   let skippedAlreadyTight = 0;
   let skippedNoBox = 0;
 
-  for (const row of titles) {
-    const path = row.case_image_path as string;
+  for (const [path, names] of titlesByPath) {
+    const row = { title: names.join(" / ") };
     const { data: fileData, error: downloadError } = await supabase.storage.from(BUCKET).download(path);
     if (downloadError || !fileData) {
       console.log(`  SKIP (download failed) - ${row.title}`);
@@ -96,7 +172,12 @@ async function main() {
     console.log(
       `  ${apply ? "CROPPING" : "WOULD CROP"} - ${row.title} (box ${JSON.stringify(box)}, ${bytes.length} -> ?)`
     );
+    plan.push({ path, titles: names, box });
+    if (previewDir) {
+      writeFileSync(join(previewDir, safeName(path)), await cropImageBufferToBox(bytes, contentType, box));
+    }
     if (apply) {
+      writeFileSync(join(backupDir, safeName(path)), bytes);
       const cropped = await cropImageBufferToBox(bytes, contentType, box);
       const { error: uploadError } = await supabase.storage.from(BUCKET).upload(path, cropped, { contentType, upsert: true });
       if (uploadError) {
@@ -112,7 +193,13 @@ async function main() {
     `\nDone. ${recropped} ${apply ? "recropped" : "would be recropped"}, ${skippedSmall} skipped (already small/clean), ` +
       `${skippedAlreadyTight} skipped (already tight), ${skippedNoBox} skipped (no confident box).`
   );
-  if (!apply) console.log("Dry run - re-run with --apply to actually update the stored images.");
+  if (planPath && !apply) {
+    writeFileSync(planPath, JSON.stringify(plan, null, 2));
+    console.log(`Plan saved to ${planPath} - re-run with --apply --plan=${planPath} to apply it with no Gemini calls.`);
+  } else if (!apply) {
+    console.log("Dry run - re-run with --apply to actually update the stored images.");
+  }
+  if (apply) console.log(`Originals saved in ${backupDir}.`);
 }
 
 main().catch((err) => {
