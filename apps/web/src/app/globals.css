@@ -103,6 +103,11 @@ body {
 @utility clip-tab {
   clip-path: polygon(0 0, calc(100% - var(--cut-sm)) 0, 100% var(--cut-sm), 100% 100%, 0 100%);
 }
+/* The search field: top-left cut, and a right end that follows the Search button's chevron so
+   no field background shows round the arrow's tip */
+@utility clip-search {
+  clip-path: polygon(var(--cut-sm) 0, calc(100% - var(--cut)) 0, 100% 50%, calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut-sm));
+}
 /* Arrow-pointed shapes for back / scroll buttons */
 @utility clip-chevron-left {
   clip-path: polygon(var(--cut) 0, 100% 0, 100% 100%, var(--cut) 100%, 0 50%);

@@ -73,7 +73,7 @@ export function SearchBox({
           e.preventDefault();
           submit();
         }}
-        className="well clip-corner-sm flex h-10 items-center border border-rule bg-void/70 focus-within:border-accent focus-within:bg-void"
+        className="well clip-search flex h-10 items-center border border-r-0 border-rule bg-void/70 focus-within:border-accent focus-within:bg-void"
       >
         <svg aria-hidden viewBox="0 0 16 16" className="ml-3 h-4 w-4 shrink-0 fill-none stroke-accent" strokeWidth="1.5">
           {/* Angular magnifier: square lens + diagonal handle */}
