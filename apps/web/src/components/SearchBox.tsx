@@ -49,11 +49,23 @@ export function SearchBox({
 
   const close = () => setOpen(false);
 
+  /** On /search, a new query keeps the filters already applied (and drops `all`). */
+  function searchUrl(q: string, extra: Record<string, string> = {}) {
+    const params = typeof window !== "undefined" && window.location.pathname === "/search" ? new URLSearchParams(window.location.search) : new URLSearchParams();
+    params.delete("all");
+    params.delete("filters");
+    if (q) params.set("q", q);
+    else params.delete("q");
+    for (const [k, v] of Object.entries(extra)) params.set(k, v);
+    const qs = params.toString();
+    return qs ? `/search?${qs}` : "/search";
+  }
+
   function submit() {
     const q = query.trim().slice(0, SEARCH_MAX_LENGTH);
     if (!q) return;
     close();
-    router.push(`/search?q=${encodeURIComponent(q)}`);
+    router.push(searchUrl(q));
   }
 
   const dropdown = open && query.trim() && renderDropdown ? renderDropdown({ query, close, listboxId }) : null;
@@ -106,6 +118,25 @@ export function SearchBox({
           }}
           className="h-full min-w-0 flex-1 bg-transparent px-3 text-sm text-chrome-hi placeholder:text-mist-dim focus:outline-none [&::-webkit-search-cancel-button]:hidden"
         />
+        {/* Advanced Search (WEB APP DESIGN.md: "When opening the search bar there will be an
+            option to add filters") - opens /search with the filter panel expanded. */}
+        <button
+          type="button"
+          onClick={() => {
+            close();
+            router.push(searchUrl(query.trim().slice(0, SEARCH_MAX_LENGTH), { filters: "1" }));
+          }}
+          aria-label="Search filters"
+          title="Filters"
+          className="flex h-full shrink-0 items-center px-2.5 text-mist hover:text-accent-hi"
+        >
+          <svg aria-hidden viewBox="0 0 16 16" className="h-4 w-4 fill-none stroke-current" strokeWidth="1.5">
+            <line x1="1" y1="4" x2="15" y2="4" />
+            <line x1="1" y1="12" x2="15" y2="12" />
+            <rect x="9" y="2" width="3" height="4" className="fill-current" />
+            <rect x="4" y="10" width="3" height="4" className="fill-current" />
+          </svg>
+        </button>
         <button
           type="submit"
           className="gloss clip-chevron-right h-full shrink-0 bg-accent-deep px-4 pr-5 font-display text-[11px] font-semibold tracking-[0.18em] text-accent-hi uppercase hover:bg-accent-dim"

@@ -3,10 +3,13 @@ import Link from "next/link";
 import { Section } from "@/components/Panel";
 import { PosterCard } from "@/components/PosterCard";
 import { PosterImage } from "@/components/PosterImage";
-import { cleanSearchQuery, searchCatalog, SEARCH_MIN_LENGTH, type SearchGroup, type SearchHit } from "@/lib/catalog/search";
+import { FilterPanel } from "@/components/search/FilterPanel";
+import { cleanSearchQuery, getSearchFacetOptions, searchCatalog, SEARCH_MIN_LENGTH, type SearchGroup, type SearchHit } from "@/lib/catalog/search";
+import { activeFilterCount, filtersToParams, parseFiltersFromRecord, type RangeKey, type SortKey } from "@/lib/catalog/searchFilters";
 
-/** Per-group cap on the full results page (the dropdown shows 4). */
+/** Per-group cap on the full results page (the dropdown shows 4); `?all=1` lifts it. */
 const PAGE_PER_GROUP = 60;
+const PAGE_PER_GROUP_ALL = 500;
 
 type Props = { searchParams: Promise<Record<string, string | string[] | undefined>> };
 
@@ -16,16 +19,36 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
 }
 
 export default async function SearchPage({ searchParams }: Props) {
-  const query = cleanSearchQuery((await searchParams).q);
+  const params = await searchParams;
+  const query = cleanSearchQuery(params.q);
+  const filters = parseFiltersFromRecord(params);
+  const showAll = params.all === "1";
   const tooShort = query.length < SEARCH_MIN_LENGTH;
-  const results = tooShort ? null : await searchCatalog(query, { perGroup: PAGE_PER_GROUP, posterSize: "w342" });
+  const filtered = activeFilterCount(filters) > 0 || !!filters.sort;
+  // With filters or a sort, an empty search browses the whole collection.
+  const [results, options] = await Promise.all([
+    tooShort && !filtered ? null : searchCatalog(tooShort ? "" : query, { perGroup: showAll ? PAGE_PER_GROUP_ALL : PAGE_PER_GROUP, posterSize: "w342", filters }),
+    getSearchFacetOptions(),
+  ]);
+  const browsing = tooShort && filtered;
+
+  // Filters only some builds offer.
+  const extraRanges: RangeKey[] = [];
+  const extraSorts: SortKey[] = [];
+
+  const showAllHref = (() => {
+    const p = filtersToParams(filters);
+    if (query) p.set("q", query);
+    p.set("all", "1");
+    return `/search?${p.toString()}`;
+  })();
 
   return (
     <div className="mx-auto max-w-screen-2xl px-4 py-6 sm:px-6">
       <div className="mb-6 border-b border-rule pb-3">
         <p className="label-tech text-accent">Search // Collection</p>
         <h1 className="mt-1 font-display text-xl font-semibold tracking-wide break-words text-chrome-hi sm:text-2xl">
-          {query ? <>Results for &ldquo;{query}&rdquo;</> : "Search the collection"}
+          {query && !tooShort ? <>Results for &ldquo;{query}&rdquo;</> : browsing ? "Browse the collection" : "Search the collection"}
         </h1>
         {results ? (
           <p className="label-tech mt-1">
@@ -35,20 +58,37 @@ export default async function SearchPage({ searchParams }: Props) {
         ) : null}
       </div>
 
-      {tooShort ? (
+      {options ? (
+        <FilterPanel
+          // Remount on navigation so the draft starts from the applied filters.
+          key={filtersToParams(filters).toString() + query}
+          query={tooShort ? "" : query}
+          filters={filters}
+          options={options}
+          extraRanges={extraRanges}
+          extraSorts={extraSorts}
+          defaultOpen={!results || params.filters === "1"}
+        />
+      ) : null}
+
+      {!results ? (
         <EmptyState
           title={query ? "Keep typing" : "Nothing searched yet"}
-          body={`Enter at least ${SEARCH_MIN_LENGTH} characters in the search bar to find films, physical releases, collections, franchises and people.`}
+          body={`Enter at least ${SEARCH_MIN_LENGTH} characters in the search bar to find films, physical releases, collections, franchises and people - or pick some filters above to browse the whole collection.`}
         />
-      ) : results && results.groups.length === 0 ? (
+      ) : results.groups.length === 0 ? (
         <EmptyState
           title="No matches"
-          body={`Nothing in the collection matches "${query}". Check the spelling, or try part of the title - e.g. "wars" instead of the full name.`}
+          body={
+            browsing
+              ? "Nothing in the collection passes all of these filters. Remove one of the filter chips above to widen it."
+              : `Nothing in the collection matches "${query}"${filtered ? " with these filters" : ""}. Check the spelling, try part of the title - e.g. "wars" instead of the full name - or remove a filter.`
+          }
         />
       ) : (
         <div className="space-y-10">
-          {results?.groups.map((group, i) => (
-            <ResultGroup key={group.kind} group={group} index={i} query={query} />
+          {results.groups.map((group, i) => (
+            <ResultGroup key={group.kind} group={group} index={i} query={query} browsing={browsing} showAllHref={showAll ? null : showAllHref} />
           ))}
         </div>
       )}
@@ -56,7 +96,19 @@ export default async function SearchPage({ searchParams }: Props) {
   );
 }
 
-function ResultGroup({ group, index, query }: { group: SearchGroup; index: number; query: string }) {
+function ResultGroup({
+  group,
+  index,
+  query,
+  browsing,
+  showAllHref,
+}: {
+  group: SearchGroup;
+  index: number;
+  query: string;
+  browsing: boolean;
+  showAllHref: string | null;
+}) {
   const aside = group.total > group.hits.length ? `Showing ${group.hits.length} of ${group.total}` : `${group.total}`;
   const posterKinds = group.kind === "film" || group.kind === "item" || group.kind === "collection";
   return (
@@ -90,7 +142,14 @@ function ResultGroup({ group, index, query }: { group: SearchGroup; index: numbe
       )}
       {group.total > group.hits.length ? (
         <p className="label-tech mt-3 text-mist-dim">
-          {group.total - group.hits.length} more - refine &ldquo;{query}&rdquo; to narrow these down.
+          {group.total - group.hits.length} more -{" "}
+          {showAllHref ? (
+            <Link href={showAllHref} className="text-accent hover:text-accent-hi">
+              show them all
+            </Link>
+          ) : null}
+          {showAllHref ? " or " : ""}
+          {browsing ? "add a filter" : <>refine &ldquo;{query}&rdquo;</>} to narrow these down.
         </p>
       ) : null}
     </Section>
