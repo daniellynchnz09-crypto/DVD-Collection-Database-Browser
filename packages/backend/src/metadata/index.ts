@@ -19,6 +19,7 @@ export {
   refreshMdblistAudienceScores,
   MDBLIST_BATCH_SIZE,
   type MdblistBatchResult,
+  type MdblistScores,
   type MdblistMediaType,
 } from "./mdblistScores";
 export { saveTmdbMetadata, saveOmdbScores, savePersonDetails } from "./storage";

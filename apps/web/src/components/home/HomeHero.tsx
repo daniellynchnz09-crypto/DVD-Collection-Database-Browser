@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import type { CSSProperties } from "react";
 import type { ArchiveStats, HomeFeature } from "@/lib/catalog/home";
 import { Badge } from "../Panel";
 import { PosterImage } from "../PosterImage";
@@ -18,7 +19,7 @@ export function HomeHero({ feature, stats }: { feature: HomeFeature | null; stat
   return (
     <section className="relative overflow-hidden border-b border-rule-strong">
       {bg ? (
-        <div aria-hidden className="absolute inset-0">
+        <div aria-hidden className="hero-fade-in absolute inset-0">
           <Image
             src={bg.src}
             alt=""
@@ -44,7 +45,7 @@ export function HomeHero({ feature, stats }: { feature: HomeFeature | null; stat
 
         {feature ? (
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4 sm:gap-8">
-            <div className="min-w-0">
+            <div className="hero-slide-in min-w-0">
               <p className="mb-2 flex items-center gap-1.5 text-accent">
                 {[0, 1, 2].map((i) => (
                   <svg key={i} aria-hidden viewBox="0 0 8 10" className="h-2.5 w-2 fill-current" style={{ opacity: 1 - i * 0.3 }}>
@@ -96,7 +97,10 @@ export function HomeHero({ feature, stats }: { feature: HomeFeature | null; stat
               </div>
             </div>
 
-            <Link href={feature.href} className="group relative block w-24 shrink-0 outline-none sm:w-44 lg:w-56" aria-label={feature.title}>
+            <Link
+              href={feature.href}
+              style={{ "--hero-delay": "180ms" } as CSSProperties}
+              className="hero-slide-in group relative block w-24 shrink-0 outline-none sm:w-44 lg:w-56" aria-label={feature.title}>
               {/* Same drop shadow and case glare as the poster cards */}
               <div className="case-shadow">
                 <div className="clip-corner relative aspect-[2/3] overflow-hidden bg-panel shadow-glow ring-1 ring-accent-dim ring-inset">

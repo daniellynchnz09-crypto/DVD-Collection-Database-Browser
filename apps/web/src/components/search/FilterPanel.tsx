@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import {
   activeFilterCount,
   EMPTY_FILTERS,
@@ -11,7 +11,9 @@ import {
   RANGES,
   RESULT_TYPES,
   SORTS,
+  type FacetCounts,
   type FacetKey,
+  type FacetOption,
   type Flag,
   type RangeKey,
   type ResultType,
@@ -40,7 +42,7 @@ export function FilterPanel({
   query: string;
   filters: SearchFilters;
   options: SearchFacetOptions;
-  /** Ranges only some builds offer (the private build's "My score"). */
+  /** Ranges only some builds offer (the private build's own and community scores). */
   extraRanges?: RangeKey[];
   extraSorts?: SortKey[];
   /** Saved taste profiles (the taste_profiles table). */
@@ -52,8 +54,8 @@ export function FilterPanel({
   const [draft, setDraft] = useState<SearchFilters>(filters);
   const dirty = JSON.stringify(draft) !== JSON.stringify(filters);
 
-  const ranges = RANGES.filter((r) => r.key !== "my" || extraRanges.includes("my"));
-  const sorts = SORTS.filter((s) => (s.value !== "my" || extraSorts.includes("my")) && (s.value !== "relevance" || query));
+  const ranges = RANGES.filter((r) => !OPTIONAL_KEYS.includes(r.key) || extraRanges.includes(r.key));
+  const sorts = SORTS.filter((s) => (!OPTIONAL_KEYS.includes(s.value) || (extraSorts as string[]).includes(s.value)) && (s.value !== "relevance" || query));
 
   function go(next: SearchFilters) {
     const params = filtersToParams(next);
@@ -77,6 +79,36 @@ export function FilterPanel({
       else delete next[key];
       return { ...d, ranges: next };
     });
+
+  // Live option counts for the draft (everything but types/sort, which don't change what a
+  // facet value matches). Fetched debounced; with nothing picked the full counts apply.
+  const countParams = filtersToParams({ ...draft, types: [], sort: null, dir: null }).toString();
+  const [fetched, setFetched] = useState<{ params: string; counts: FacetCounts } | null>(null);
+  useEffect(() => {
+    if (!countParams || !open) return;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => {
+      fetch(`/api/search/facets?${countParams}`, { signal: ctrl.signal })
+        .then((res) => (res.ok ? (res.json() as Promise<{ counts: FacetCounts }>) : null))
+        .then((json) => {
+          if (json?.counts) setFetched({ params: countParams, counts: json.counts });
+        })
+        .catch(() => {
+          // Aborted or offline - the panel keeps the last counts it had.
+        });
+    }, 200);
+    return () => {
+      clearTimeout(timer);
+      ctrl.abort();
+    };
+  }, [countParams, open]);
+  // While a new count is on its way the previous one stays up, so lists don't flicker.
+  const liveCounts = countParams ? (fetched?.counts ?? null) : null;
+  const facetOptions = (key: FacetKey): FacetOption[] => {
+    const all = options.facets[key] ?? [];
+    const live = liveCounts?.[key];
+    return live ? all.map((o) => ({ ...o, count: live[o.value.toLowerCase()] ?? 0 })) : all;
+  };
 
   const count = activeFilterCount(filters);
 
@@ -183,18 +215,22 @@ export function FilterPanel({
               </div>
             </Accordion>
 
-            {FACETS.map((f) =>
-              options.facets[f.key]?.length ? (
+            {FACETS.map((f) => {
+              if (!options.facets[f.key]?.length) return null;
+              const list = facetOptions(f.key);
+              const selection = draft.facets[f.key] ?? {};
+              const available = list.filter((o) => o.count > 0 || selection[o.value]).length;
+              return (
                 <Accordion
                   key={f.key}
                   title={f.label}
-                  active={Object.keys(draft.facets[f.key] ?? {}).length}
-                  extra={`${options.facets[f.key].length} options`}
+                  active={Object.keys(selection).length}
+                  extra={available === list.length ? `${list.length} options` : `${available} of ${list.length} options`}
                 >
-                  <FacetGroup facet={f.key} title={f.label} options={options.facets[f.key]} selection={draft.facets[f.key] ?? {}} onSet={setFacet} />
+                  <FacetGroup facet={f.key} title={f.label} options={list} selection={selection} onSet={setFacet} />
                 </Accordion>
-              ) : null,
-            )}
+              );
+            })}
           </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-rule pt-4">
@@ -229,8 +265,11 @@ export function FilterPanel({
 /** How the range sliders are split into sections. */
 const RANGE_SECTIONS = [
   { title: "Release year & runtime", keys: ["year", "run"] },
-  { title: "Scores", keys: ["imdb", "rt", "rta", "mc", "my"] },
+  { title: "Scores", keys: ["imdb", "rt", "rta", "mc", "lb", "my"] },
 ] as const;
+
+/** Ranges/sorts shown only when the page offers them (extraRanges / extraSorts). */
+const OPTIONAL_KEYS: readonly string[] = ["my", "lb"];
 
 /**
  * One collapsible filter section: a bevelled header bar (arrow, title, how many filters inside
@@ -309,7 +348,10 @@ function Chip({ state, onClick, children, title }: { state: TriState | null; onC
   );
 }
 
-const SHOWN_BEFORE_MORE = 14;
+/** Lists longer than this start with just their TOP_FEW biggest values; the rest are a find
+ * or "Show all" away (the user, 2026-10-07: Studio has too many options to list). */
+const LONG_LIST = 8;
+const TOP_FEW = 5;
 
 function FacetGroup({
   facet,
@@ -326,16 +368,19 @@ function FacetGroup({
 }) {
   const [all, setAll] = useState(false);
   const [find, setFind] = useState("");
-  const long = options.length > SHOWN_BEFORE_MORE;
+  // Values matching nothing alongside the other filters are hidden; picked ones always stay.
+  const available = useMemo(() => options.filter((o) => o.count > 0 || selection[o.value]), [options, selection]);
+  const hidden = options.length - available.length;
+  const long = available.length > LONG_LIST;
   const visible = useMemo(() => {
     const needle = find.trim().toLowerCase();
-    const matched = needle ? options.filter((o) => o.label.toLowerCase().includes(needle)) : options;
-    // Picked values always stay visible.
-    if (all || needle || !long) return matched;
-    const top = matched.slice(0, SHOWN_BEFORE_MORE);
-    const picked = matched.filter((o) => selection[o.value] && !top.includes(o));
-    return [...top, ...picked];
-  }, [options, find, all, long, selection]);
+    if (needle) return available.filter((o) => o.label.toLowerCase().includes(needle));
+    if (all || !long) return available;
+    const top = [...available].sort((a, b) => b.count - a.count).slice(0, TOP_FEW);
+    const picked = available.filter((o) => selection[o.value] && !top.includes(o));
+    // Keep the list's own order (months stay Jan-Dec) among the ones shown.
+    return available.filter((o) => top.includes(o) || picked.includes(o));
+  }, [available, find, all, long, selection]);
 
   // No legend of its own - the section header above already names it.
   return (
@@ -366,11 +411,19 @@ function FacetGroup({
           );
         })}
       </div>
-      {long && !find ? (
-        <button type="button" onClick={() => setAll((a) => !a)} className="label-tech mt-2 text-accent hover:text-accent-hi">
-          {all ? "Show fewer" : `Show all ${options.length}`}
-        </button>
-      ) : null}
+      {find && !visible.length ? <p className="label-tech text-mist-dim">Nothing matching &ldquo;{find}&rdquo;.</p> : null}
+      <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        {long && !find ? (
+          <button type="button" onClick={() => setAll((a) => !a)} className="label-tech text-accent hover:text-accent-hi">
+            {all ? `Top ${TOP_FEW} only` : `Show all ${available.length}`}
+          </button>
+        ) : null}
+        {hidden ? (
+          <span className="label-tech text-mist-dim">
+            {hidden} hidden {"//"} no matches with your other filters
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }

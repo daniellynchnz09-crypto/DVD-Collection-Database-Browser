@@ -10,6 +10,7 @@ import {
   facetValueLabel,
   hasTitleFilters,
   SORTS,
+  type FacetCounts,
   type FacetKey,
   type FacetOption,
   type Flag,
@@ -318,7 +319,8 @@ function rowFacts(row: IndexRow, meta: IndexMeta | null, ownScore: number | null
       anim: clean([row.animation_or_live_action]),
       doc: clean([row.documentary]),
       studio: clean([row.studio]),
-      region: clean([row.disk_region]),
+      // A multi-region disc ("2, 4") counts under each of its regions.
+      region: clean((row.disk_region ?? "").split(/\s*[,/;&]\s*/)),
       month: month && month !== "0" ? [month] : [],
     },
     ranges: {
@@ -339,7 +341,7 @@ function rowFacts(row: IndexRow, meta: IndexMeta | null, ownScore: number | null
 async function buildIndex(): Promise<SearchIndex | null> {
   const [rawRows, metadata] = await Promise.all([fetchAllRows(), fetchAllMetadata()]);
   if (!rawRows) return null;
-  // The owner's own scores, for the "My score" filter/sort - private build only.
+  // The owner's own scores, for the "Danflix score" filter/sort - private build only.
   const ownScores = new Map<string, number>();
 
   const rows: IndexedRow[] = rawRows.map((row) => {
@@ -530,6 +532,33 @@ export async function getSearchFacetOptions(): Promise<SearchFacetOptions | null
   }
   const yearBounds: [number, number] = Number.isFinite(minYear) ? [minYear, maxYear] : [1900, new Date().getFullYear()];
   return { facets, yearBounds };
+}
+
+/**
+ * Live option counts for the filter panel: for each facet, how many rows carry each value
+ * among the rows passing every OTHER filter (and the picked taste profiles). Leaving a facet's
+ * own selection out keeps its other values offered - picking Blu-ray hides the DVD-only
+ * regions, but still lets DVD be added to Format (the user, 2026-10-07: options should follow
+ * what's already picked). Keys are lower-cased values; a value missing means 0.
+ */
+export async function getFacetCounts(filters: SearchFilters, profileFilters: SearchFilters[] = []): Promise<FacetCounts | null> {
+  const idx = await getIndex();
+  if (!idx) return null;
+  const counts = {} as FacetCounts;
+  const inProfiles = idx.rows.filter((r) => profileFilters.every((p) => rowPasses(r, p, idx)));
+  for (const { key } of FACETS) {
+    const others: SearchFilters = { ...filters, facets: { ...filters.facets, [key]: undefined } };
+    const tally: Record<string, number> = {};
+    for (const r of inProfiles) {
+      if (!rowPasses(r, others, idx)) continue;
+      for (const value of r.facts.facets[key]) {
+        const norm = value.toLowerCase();
+        tally[norm] = (tally[norm] ?? 0) + 1;
+      }
+    }
+    counts[key] = tally;
+  }
+  return counts;
 }
 
 // ---------------------------------------------------------------------------------------------

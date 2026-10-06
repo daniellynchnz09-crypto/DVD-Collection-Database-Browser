@@ -19,9 +19,15 @@ const mdblistLimiter = createRateLimiter(5, 1_000);
 
 export type MdblistMediaType = "movie" | "show";
 
+/** What one MDBList reply gives per film. */
+export interface MdblistScores {
+  /** RT audience score, 0-100 (null when MDBList has the title but no audience score). */
+  audience: number | null;
+}
+
 export type MdblistBatchResult =
-  /** Audience score per id MDBList returned (null when it has the title but no audience score). */
-  | { status: "ok"; scores: Map<string, number | null> }
+  /** Scores per id MDBList returned. */
+  | { status: "ok"; scores: Map<string, MdblistScores> }
   | { status: "limit_reached" }
   | { status: "error"; message: string };
 
@@ -62,13 +68,14 @@ export async function fetchMdblistAudienceScores(imdbIds: string[], mediaType: M
   }
 
   const wanted = new Set(imdbIds);
-  const scores = new Map<string, number | null>();
+  const scores = new Map<string, MdblistScores>();
   for (const item of data as MdblistItem[]) {
     const imdbId = item.ids?.imdb;
     if (!imdbId || !wanted.has(imdbId)) continue;
     const popcorn = item.ratings?.find((r) => r.source === "popcorn");
     const value = popcorn?.score ?? popcorn?.value ?? null;
-    scores.set(imdbId, typeof value === "number" && value >= 0 && value <= 100 ? Math.round(value) : null);
+    const entry: MdblistScores = { audience: typeof value === "number" && value >= 0 && value <= 100 ? Math.round(value) : null };
+    scores.set(imdbId, entry);
   }
   return { status: "ok", scores };
 }
@@ -94,7 +101,11 @@ export async function refreshMdblistAudienceScores(
     if (result.status !== "ok") return { requests, saved, withScore, status: result.status, message: result.status === "error" ? result.message : undefined };
 
     const fetchedAt = new Date().toISOString();
-    const rows = batch.map((imdbId) => ({ imdb_id: imdbId, rt_audience_score: result.scores.get(imdbId) ?? null, mdblist_fetched_at: fetchedAt }));
+    const rows = batch.map((imdbId) => {
+      const found = result.scores.get(imdbId);
+      const row: Record<string, string | number | null> = { imdb_id: imdbId, rt_audience_score: found?.audience ?? null, mdblist_fetched_at: fetchedAt };
+      return row;
+    });
     const { error } = await supabase.from("title_metadata").upsert(rows, { onConflict: "imdb_id" });
     if (error) return { requests, saved, withScore, status: "error", message: `title_metadata upsert failed: ${error.message}` };
     saved += rows.length;

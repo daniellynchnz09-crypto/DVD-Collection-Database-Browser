@@ -49,7 +49,7 @@ export const RANGES = [
   { key: "mc", label: "Metacritic", min: 0, max: 100, step: 1, unit: "" },
   // The owner's own 1-10 score. Only offered by the private build's page; the public build's
   // index has no scores, so it would match nothing there.
-  { key: "my", label: "My score", min: 1, max: 10, step: 1, unit: "/10" },
+  { key: "my", label: "Danflix score", min: 1, max: 10, step: 1, unit: "/10" },
 ] as const;
 export type RangeKey = (typeof RANGES)[number]["key"];
 
@@ -64,7 +64,7 @@ export const SORTS = [
   { value: "rt", label: "Rotten Tomatoes", dir: "desc" },
   { value: "rta", label: "RT audience", dir: "desc" },
   { value: "mc", label: "Metacritic", dir: "desc" },
-  { value: "my", label: "My score", dir: "desc" },
+  { value: "my", label: "Danflix score", dir: "desc" },
 ] as const;
 export type SortKey = (typeof SORTS)[number]["value"];
 
@@ -234,3 +234,6 @@ export interface SearchFacetOptions {
   facets: Record<FacetKey, FacetOption[]>;
   yearBounds: [number, number];
 }
+
+/** Per facet, lower-cased value -> rows still matching the other filters (/api/search/facets). */
+export type FacetCounts = Record<FacetKey, Record<string, number>>;

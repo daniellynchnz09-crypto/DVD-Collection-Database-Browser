@@ -44,40 +44,10 @@ export function ScoreTiles({
       </Tile>,
     );
   }
-  if (rottenTomatoes !== null) {
-    const fresh = rottenTomatoes >= 60;
-    tiles.push(
-      <Tile
-        key="rt"
-        label="Rotten Tomatoes"
-        href={rottenTomatoesUrl}
-        icon={fresh ? <TomatoIcon /> : <SplatIcon />}
-        color={fresh ? "#fa320a" : "#7cb342"}
-        fill={rottenTomatoes / 100}
-        footnote={fresh ? "Fresh // Tomatometer" : "Rotten // Tomatometer"}
-      >
-        {rottenTomatoes}
-        <span className="text-sm text-mist">%</span>
-      </Tile>,
-    );
-  }
-  if (rtAudience !== null && rtAudience !== undefined) {
-    // RT's own split: 60%+ of the audience rated it 3.5 stars or higher is a full popcorn bucket.
-    const hot = rtAudience >= 60;
-    tiles.push(
-      <Tile
-        key="rta"
-        label="RT Audience"
-        href={rottenTomatoesUrl}
-        icon={hot ? <PopcornIcon /> : <TippedPopcornIcon />}
-        color={hot ? "#fa320a" : "#c9a227"}
-        fill={rtAudience / 100}
-        footnote={hot ? "Upright // Popcornmeter" : "Spilled // Popcornmeter"}
-      >
-        {rtAudience}
-        <span className="text-sm text-mist">%</span>
-      </Tile>,
-    );
+  // Critics and audience share one Rotten Tomatoes tile (the user, 2026-10-07).
+  const audience = rtAudience ?? null;
+  if (rottenTomatoes !== null || audience !== null) {
+    tiles.push(<RottenTomatoesTile key="rt" critics={rottenTomatoes} audience={audience} href={rottenTomatoesUrl} />);
   }
   if (metacritic !== null) {
     // Metacritic's own bands: 61+ favourable, 40-60 mixed, under 40 unfavourable.
@@ -157,6 +127,67 @@ function Tile({
     </>
   );
   const cls = "panel clip-corner flex min-w-[9rem] flex-col gap-2 px-4 py-3";
+  return href ? (
+    <a href={href} target="_blank" rel="noopener noreferrer" className={`${cls} flow-ring transition-colors hover:[--panel-line:var(--color-accent-dim)]`}>
+      {body}
+    </a>
+  ) : (
+    <div className={cls}>{body}</div>
+  );
+}
+
+/**
+ * Rotten Tomatoes as one tile with two halves: the critics' Tomatometer (fresh tomato at 60%+,
+ * green splat below) and the audience Popcornmeter (upright bucket at 60%+, spilled below).
+ * A half with no score shows a dash.
+ */
+function RottenTomatoesTile({ critics, audience, href }: { critics: number | null; audience: number | null; href: string | null }) {
+  const fresh = critics !== null && critics >= 60;
+  const hot = audience !== null && audience >= 60;
+  const halves = [
+    {
+      key: "critics",
+      name: "Critics",
+      value: critics,
+      icon: fresh ? <TomatoIcon /> : <SplatIcon />,
+      color: fresh ? "#fa320a" : "#7cb342",
+      note: critics === null ? "Tomatometer" : fresh ? "Fresh" : "Rotten",
+    },
+    {
+      key: "audience",
+      name: "Audience",
+      value: audience,
+      icon: hot ? <PopcornIcon /> : <TippedPopcornIcon />,
+      color: hot ? "#fa320a" : "#c9a227",
+      note: audience === null ? "Popcornmeter" : hot ? "Upright" : "Spilled",
+    },
+  ];
+  const body = (
+    <>
+      <span className="label-tech text-accent">Rotten Tomatoes</span>
+      <span className="grid grid-cols-2 gap-4">
+        {halves.map((h, i) => (
+          <span key={h.key} className={`flex min-w-[6.5rem] flex-col gap-2 ${i ? "border-l border-rule pl-4" : ""}`}>
+            <span className="flex items-center gap-1.5">
+              <span aria-hidden style={{ color: h.color }}>
+                {h.icon}
+              </span>
+              <span className="label-tech text-[10px] text-chrome">{h.name}</span>
+            </span>
+            <span className="font-display text-3xl leading-none font-bold text-chrome-hi">
+              {h.value ?? <span className="text-mist-dim">-</span>}
+              {h.value !== null ? <span className="text-sm text-mist">%</span> : null}
+            </span>
+            <span aria-hidden className="well clip-tab relative h-1.5 w-full overflow-hidden bg-void/80">
+              <span className="gloss absolute inset-y-0 left-0" style={{ width: `${h.value ?? 0}%`, backgroundColor: h.color }} />
+            </span>
+            <span className="label-tech text-[9px] text-mist-dim">{h.note}</span>
+          </span>
+        ))}
+      </span>
+    </>
+  );
+  const cls = "panel clip-corner flex flex-col gap-2 px-4 py-3";
   return href ? (
     <a href={href} target="_blank" rel="noopener noreferrer" className={`${cls} flow-ring transition-colors hover:[--panel-line:var(--color-accent-dim)]`}>
       {body}
