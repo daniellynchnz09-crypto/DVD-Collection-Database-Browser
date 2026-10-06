@@ -860,3 +860,6 @@ Same session: the user pointed at the person/franchise portrait circle and asked
   - Built `?profile=` filtering, a profiles section in the filter panel (pick / save / load / save-over / rename / delete), and passcode-gated /api/taste-profiles routes (lib/ownerAuth.ts: constant-time compare, lockout after 8 misses).
   - Generated an OWNER_PASSCODE into apps/web/.env.local and told the user.
   - Tested end to end with two test profiles (51 + 75 matches -> 27 combined), then deleted them.
+- **Audience score column + price tag move.** The user supplied a fresh Supabase token and asked for the direct MDBList key link.
+  - Added migration 0050_rt_audience_score.sql (`title_metadata.rt_audience_score`, `mdblist_fetched_at`) and applied it to both projects; the token was used only for those calls. The fetch/backfill/tile/filter work waits for the MDBList key.
+  - Pending Value candidates: the price tag now sits below the photo instead of over its corner (user request).
