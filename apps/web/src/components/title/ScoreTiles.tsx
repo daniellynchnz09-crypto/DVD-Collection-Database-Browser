@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 
 /**
- * IMDb / Rotten Tomatoes / Metacritic scores beside the poster (WEB APP DESIGN.md). Scores
- * come from OMDb via title_metadata and show as graphics (icon, number, coloured meter); before
+ * IMDb / Rotten Tomatoes (critics + audience) / Metacritic scores beside the poster (WEB APP DESIGN.md). Scores
+ * come from OMDb (the audience score from MDBList) via title_metadata and show as graphics (icon, number, coloured meter); before
  * the backfill reaches a title only the outbound links show. `extraTiles` lets a page add its
  * own tiles to the same row.
  */
@@ -10,6 +10,7 @@ export function ScoreTiles({
   imdbRating,
   imdbVotes,
   rottenTomatoes,
+  rtAudience,
   metacritic,
   imdbUrl,
   rottenTomatoesUrl,
@@ -18,6 +19,8 @@ export function ScoreTiles({
   imdbRating: number | null;
   imdbVotes: number | null;
   rottenTomatoes: number | null;
+  /** Rotten Tomatoes audience score (Popcornmeter), 0-100. */
+  rtAudience?: number | null;
   metacritic: number | null;
   imdbUrl: string | null;
   rottenTomatoesUrl: string | null;
@@ -58,6 +61,24 @@ export function ScoreTiles({
       </Tile>,
     );
   }
+  if (rtAudience !== null && rtAudience !== undefined) {
+    // RT's own split: 60%+ of the audience rated it 3.5 stars or higher is a full popcorn bucket.
+    const hot = rtAudience >= 60;
+    tiles.push(
+      <Tile
+        key="rta"
+        label="RT Audience"
+        href={rottenTomatoesUrl}
+        icon={hot ? <PopcornIcon /> : <TippedPopcornIcon />}
+        color={hot ? "#fa320a" : "#c9a227"}
+        fill={rtAudience / 100}
+        footnote={hot ? "Upright // Popcornmeter" : "Spilled // Popcornmeter"}
+      >
+        {rtAudience}
+        <span className="text-sm text-mist">%</span>
+      </Tile>,
+    );
+  }
   if (metacritic !== null) {
     // Metacritic's own bands: 61+ favourable, 40-60 mixed, under 40 unfavourable.
     const color = metacritic >= 61 ? "#66cc33" : metacritic >= 40 ? "#ffcc33" : "#ff3333";
@@ -78,7 +99,7 @@ export function ScoreTiles({
 
   const links = [
     imdbUrl && imdbRating === null ? { href: imdbUrl, label: "IMDb" } : null,
-    rottenTomatoesUrl && rottenTomatoes === null ? { href: rottenTomatoesUrl, label: "Rotten Tomatoes" } : null,
+    rottenTomatoesUrl && rottenTomatoes === null && (rtAudience ?? null) === null ? { href: rottenTomatoesUrl, label: "Rotten Tomatoes" } : null,
   ].filter((l): l is { href: string; label: string } => !!l);
 
   if (extraTiles) tiles.push(<span key="extra" className="contents">{extraTiles}</span>);
@@ -158,6 +179,31 @@ function TomatoIcon() {
     <svg viewBox="0 0 20 20" className="h-3.5 w-3.5 fill-current">
       <circle cx="10" cy="11.5" r="7.5" />
       <polygon points="10,1 11.5,4.5 15,3.5 12.5,6 7.5,6 5,3.5 8.5,4.5" fill="#4caf50" />
+    </svg>
+  );
+}
+
+/** A full popcorn bucket (striped tub, kernels on top). */
+function PopcornIcon() {
+  return (
+    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5 fill-current">
+      <circle cx="6" cy="5.5" r="2.6" fill="#f3e9c6" />
+      <circle cx="10" cy="4.2" r="2.8" fill="#f3e9c6" />
+      <circle cx="14" cy="5.5" r="2.6" fill="#f3e9c6" />
+      <polygon points="3.5,7 16.5,7 14.8,19 5.2,19" />
+      <polygon points="8.4,7 11.6,7 11.2,19 8.8,19" fill="#fff" opacity="0.85" />
+    </svg>
+  );
+}
+
+/** A tipped-over bucket with kernels spilling out. */
+function TippedPopcornIcon() {
+  return (
+    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5 fill-current">
+      <polygon points="1,6 13,3.5 15,12 4,15.5" />
+      <circle cx="16.5" cy="9" r="1.8" fill="#f3e9c6" />
+      <circle cx="17" cy="14" r="1.8" fill="#f3e9c6" />
+      <circle cx="13.5" cy="16.5" r="1.8" fill="#f3e9c6" />
     </svg>
   );
 }

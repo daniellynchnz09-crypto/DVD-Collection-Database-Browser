@@ -82,6 +82,7 @@ export default async function TitlePage(props: PageProps<"/title/[imdbId]">) {
             imdbRating={meta?.imdb_rating ?? null}
             imdbVotes={meta?.imdb_votes ?? null}
             rottenTomatoes={meta?.rotten_tomatoes_score ?? null}
+            rtAudience={meta?.rt_audience_score ?? null}
             metacritic={meta?.metacritic_score ?? null}
             imdbUrl={`https://www.imdb.com/title/${imdbId}/`}
             rottenTomatoesUrl={rtUrl}

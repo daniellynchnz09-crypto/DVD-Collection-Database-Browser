@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { refreshMdblistAudienceScores } from "./mdblistScores";
 import { fetchOmdbScores, omdbRefreshAgeMs, omdbScoresFromResponse, type OmdbScoreResponse, type OmdbScoresResult } from "./omdbScores";
 import { saveOmdbScores, savePersonDetails, saveTmdbMetadata } from "./storage";
 import { fetchTmdbMetadata, fetchTmdbPerson } from "./tmdbMetadata";
@@ -13,6 +14,13 @@ export {
   type OmdbScoreResponse,
   type OmdbScoresResult,
 } from "./omdbScores";
+export {
+  fetchMdblistAudienceScores,
+  refreshMdblistAudienceScores,
+  MDBLIST_BATCH_SIZE,
+  type MdblistBatchResult,
+  type MdblistMediaType,
+} from "./mdblistScores";
 export { saveTmdbMetadata, saveOmdbScores, savePersonDetails } from "./storage";
 export type { CreditRow, PersonRow, TitleMetadataOmdbFields, TitleMetadataTmdbFields } from "./types";
 
@@ -23,6 +31,9 @@ export interface RefreshTitleMetadataResult {
   /** "from_scan": saved from the OMDb record the confirm already had; "fresh": skipped, the
    * stored scores are within omdbRefreshAgeMs. Neither spends an OMDb request. */
   omdb: OmdbScoresResult["status"] | "saved_error" | "from_scan" | "fresh";
+  /** RT audience score from MDBList: "fresh" skips (same windows as OMDb), "skipped" when no
+   * MDBLIST_API_KEY is configured. One MDBList request otherwise. */
+  audience: "saved" | "fresh" | "skipped" | "limit_reached" | "error";
   castCount: number;
   crewCount: number;
 }
@@ -88,11 +99,25 @@ export async function refreshTitleMetadata(
     }
   } else {
     const { data: existing } = await supabase.from("title_metadata").select("omdb_fetched_at, release_date").eq("imdb_id", imdbId).maybeSingle();
-    const fetchedAt = existing?.omdb_fetched_at ? Date.parse(existing.omdb_fetched_at) : NaN;
-    const fresh = Number.isFinite(fetchedAt) && Date.now() - fetchedAt < omdbRefreshAgeMs(existing?.release_date);
-    omdb = fresh ? "fresh" : await refreshOmdbScores(supabase, imdbId);
+    omdb = isWithin(existing?.omdb_fetched_at, omdbRefreshAgeMs(existing?.release_date)) ? "fresh" : await refreshOmdbScores(supabase, imdbId);
   }
-  return { imdbId, tmdb: tmdb.status, omdb, castCount: tmdb.castCount, crewCount: tmdb.crewCount };
+  const audience = await refreshAudienceScore(supabase, imdbId);
+  return { imdbId, tmdb: tmdb.status, omdb, audience, castCount: tmdb.castCount, crewCount: tmdb.crewCount };
+}
+
+function isWithin(iso: string | null | undefined, maxAgeMs: number): boolean {
+  const at = iso ? Date.parse(iso) : NaN;
+  return Number.isFinite(at) && Date.now() - at < maxAgeMs;
+}
+
+/** RT audience score for one film after a scan - movie or show going by TMDb's media type. */
+async function refreshAudienceScore(supabase: SupabaseClient, imdbId: string): Promise<RefreshTitleMetadataResult["audience"]> {
+  if (!process.env.MDBLIST_API_KEY) return "skipped";
+  const { data: row } = await supabase.from("title_metadata").select("mdblist_fetched_at, release_date, tmdb_media_type").eq("imdb_id", imdbId).maybeSingle();
+  if (isWithin(row?.mdblist_fetched_at, omdbRefreshAgeMs(row?.release_date))) return "fresh";
+  const result = await refreshMdblistAudienceScores(supabase, [imdbId], row?.tmdb_media_type === "tv" ? "show" : "movie");
+  if (result.status === "error") console.error(`[metadata] MDBList refresh failed for ${imdbId}: ${result.message}`);
+  return result.status === "ok" ? "saved" : result.status;
 }
 
 /**

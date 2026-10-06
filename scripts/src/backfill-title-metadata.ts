@@ -25,19 +25,24 @@
  * API calls), so a film waiting on OMDb still shows its IMDb score. `--skip-imdb-ratings`
  * leaves that step out.
  *
+ * Rotten Tomatoes audience scores come last, from MDBList (mdblistScores.ts) - batched, 100 ids
+ * per request, so even the whole collection is a few dozen of its 1,000 daily requests. Same
+ * freshness windows as OMDb (mdblist_fetched_at). Skipped with a warning when MDBLIST_API_KEY
+ * isn't set; `--skip-mdblist` leaves it out.
+ *
  * Dry run by default: prints the plan and fetches/shapes a few sample ids WITHOUT writing
  * (each sample spends one OMDb request). `--apply` writes.
  *
  *   npm run backfill-title-metadata -w scripts                       # dry run, 3 samples
  *   npm run backfill-title-metadata -w scripts -- --ids=tt0052357,tt1642620
  *   npm run backfill-title-metadata -w scripts -- --apply [--omdb-budget=950] [--limit=N]
- *       [--skip-tmdb] [--skip-omdb] [--skip-imdb-ratings] [--force] [--bios] [--all]
+ *       [--skip-tmdb] [--skip-omdb] [--skip-imdb-ratings] [--skip-mdblist] [--force] [--bios] [--all]
  *
  * --bios also fills biography/birthday/etc. for directors and the top 5 billed cast whose
  * people row has never been fully fetched (TMDb only, one request each).
  *
  * Required env vars (scripts/.env): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
- * TMDB_READ_ACCESS_TOKEN, OMDB_API_KEY.
+ * TMDB_READ_ACCESS_TOKEN, OMDB_API_KEY; optional MDBLIST_API_KEY.
  */
 
 import "dotenv/config";
@@ -47,6 +52,7 @@ import {
   fetchOmdbScores,
   fetchTmdbMetadata,
   omdbRefreshAgeMs,
+  refreshMdblistAudienceScores,
   refreshOmdbScores,
   refreshPersonDetails,
   refreshTmdbMetadata,
@@ -68,6 +74,7 @@ interface Args {
   skipTmdb: boolean;
   skipOmdb: boolean;
   skipImdbRatings: boolean;
+  skipMdblist: boolean;
   force: boolean;
   bios: boolean;
   all: boolean;
@@ -90,6 +97,7 @@ function parseArgs(argv: string[]): Args {
     skipTmdb: argv.includes("--skip-tmdb"),
     skipOmdb: argv.includes("--skip-omdb"),
     skipImdbRatings: argv.includes("--skip-imdb-ratings"),
+    skipMdblist: argv.includes("--skip-mdblist"),
     force: argv.includes("--force"),
     bios: argv.includes("--bios"),
     all: argv.includes("--all"),
@@ -150,13 +158,15 @@ interface ExistingMeta {
   tmdb_fetched_at: string | null;
   omdb_fetched_at: string | null;
   release_date: string | null;
+  mdblist_fetched_at: string | null;
+  tmdb_media_type: string | null;
 }
 
 /** Existing title_metadata freshness. Returns null if the table doesn't exist yet. */
 async function loadExisting(supabase: SupabaseClient): Promise<Map<string, ExistingMeta> | null> {
   try {
     const rows = await fetchAll<ExistingMeta>((from, to) =>
-      supabase.from("title_metadata").select("imdb_id, tmdb_fetched_at, omdb_fetched_at, release_date").order("imdb_id").range(from, to)
+      supabase.from("title_metadata").select("imdb_id, tmdb_fetched_at, omdb_fetched_at, release_date, mdblist_fetched_at, tmdb_media_type").order("imdb_id").range(from, to)
     );
     return new Map(rows.map((r) => [r.imdb_id, r]));
   } catch (err) {
@@ -233,6 +243,26 @@ async function fillBiographies(supabase: SupabaseClient) {
   console.log(`Bios: ${ok}/${ids.length} saved.`);
 }
 
+/** RT audience scores from MDBList for every due id, movies and shows batched separately. */
+async function fillAudienceScores(supabase: SupabaseClient, ids: string[], force: boolean) {
+  if (!process.env.MDBLIST_API_KEY) {
+    console.warn("\nMDBLIST_API_KEY not set - skipping RT audience scores.");
+    return;
+  }
+  // Re-read: the TMDb step above may have just created rows / media types.
+  const meta = (await loadExisting(supabase)) ?? new Map<string, ExistingMeta>();
+  const due = ids.filter((id) => force || !isFresh(meta.get(id)?.mdblist_fetched_at, omdbRefreshAgeMs(meta.get(id)?.release_date)));
+  const shows = due.filter((id) => meta.get(id)?.tmdb_media_type === "tv");
+  const movies = due.filter((id) => meta.get(id)?.tmdb_media_type !== "tv");
+  console.log(`\nRT audience (MDBList): ${movies.length} movies + ${shows.length} shows due.`);
+  for (const [list, type] of [[movies, "movie"], [shows, "show"]] as const) {
+    if (!list.length) continue;
+    const r = await refreshMdblistAudienceScores(supabase, list, type, (done, total) => console.log(`  MDBList ${type} ${done}/${total}`));
+    console.log(`RT audience ${type}s: ${r.saved} saved (${r.withScore} with a score) in ${r.requests} request(s) - ${r.status}${r.message ? `: ${r.message}` : ""}`);
+    if (r.status !== "ok") break;
+  }
+}
+
 async function main() {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, TMDB_READ_ACCESS_TOKEN, OMDB_API_KEY } = process.env;
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !TMDB_READ_ACCESS_TOKEN || !OMDB_API_KEY) {
@@ -305,6 +335,8 @@ async function main() {
     if (processed % 50 === 0) console.log(`  OMDb ${processed}/${omdbDue.length} ${JSON.stringify(omdbCounts)}`);
   }
   console.log(`OMDb done: ${processed} requested, ${omdbDue.length - processed} still due. ${JSON.stringify(omdbCounts)}`);
+
+  if (!args.skipMdblist) await fillAudienceScores(supabase, ordered, args.force);
 
   if (args.bios) await fillBiographies(supabase);
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState, type ReactNode } from "react";
+import { useId, useMemo, useState, type ReactNode } from "react";
 import {
   activeFilterCount,
   EMPTY_FILTERS,
@@ -108,76 +108,96 @@ export function FilterPanel({
       <ActiveChips filters={filters} options={options} profiles={profiles} onChange={go} />
 
       {open ? (
-        <div className="space-y-6 p-4">
-          <Group title="Show">
-            <div className="flex flex-wrap gap-1.5">
-              {RESULT_TYPES.map((t) => {
-                const on = draft.types.includes(t.value);
-                return (
-                  <Chip
-                    key={t.value}
-                    state={on ? "include" : null}
-                    onClick={() =>
-                      setDraft((d) => ({ ...d, types: on ? d.types.filter((x) => x !== t.value) : [...d.types, t.value as ResultType] }))
-                    }
-                  >
-                    {t.label}
-                  </Chip>
-                );
-              })}
-            </div>
-            <p className="label-tech mt-1.5 text-mist-dim">None picked = everything. Actors &amp; crew only appear for a typed search.</p>
-          </Group>
+        <div className="p-4">
+          {/* Collapsible sections (the user, 2026-10-07: too many filters for one long list).
+              A section starts open when something in it is set. */}
+          <div className="space-y-1.5">
+            <Accordion title="Show" active={draft.types.length} defaultOpen>
+              <div className="flex flex-wrap gap-1.5">
+                {RESULT_TYPES.map((t) => {
+                  const on = draft.types.includes(t.value);
+                  return (
+                    <Chip
+                      key={t.value}
+                      state={on ? "include" : null}
+                      onClick={() =>
+                        setDraft((d) => ({ ...d, types: on ? d.types.filter((x) => x !== t.value) : [...d.types, t.value as ResultType] }))
+                      }
+                    >
+                      {t.label}
+                    </Chip>
+                  );
+                })}
+              </div>
+              <p className="label-tech mt-1.5 text-mist-dim">None picked = everything. Actors &amp; crew only appear for a typed search.</p>
+            </Accordion>
 
-          <Group title="Taste profiles">
-            <TasteProfiles
-              profiles={profiles}
-              selected={draft.profiles}
-              draft={draft}
-              onToggle={(id) =>
-                setDraft((d) => ({ ...d, profiles: d.profiles.includes(id) ? d.profiles.filter((x) => x !== id) : [...d.profiles, id] }))
-              }
-              onLoad={(pf) =>
-                setDraft((d) => ({ ...d, facets: pf.facets, ranges: pf.ranges, steelbook: pf.steelbook, boxSet: pf.boxSet, inBoxSet: pf.inBoxSet }))
-              }
-            />
-          </Group>
+            <Accordion title="Taste profiles" active={draft.profiles.length}>
+              <TasteProfiles
+                profiles={profiles}
+                selected={draft.profiles}
+                draft={draft}
+                onToggle={(id) =>
+                  setDraft((d) => ({ ...d, profiles: d.profiles.includes(id) ? d.profiles.filter((x) => x !== id) : [...d.profiles, id] }))
+                }
+                onLoad={(pf) =>
+                  setDraft((d) => ({ ...d, facets: pf.facets, ranges: pf.ranges, steelbook: pf.steelbook, boxSet: pf.boxSet, inBoxSet: pf.inBoxSet }))
+                }
+              />
+            </Accordion>
 
-          <div className="grid gap-6 lg:grid-cols-2">
-            {ranges.map((r) => (
-              <Group key={r.key} title={r.label}>
-                <DualRange
-                  min={r.key === "year" ? options.yearBounds[0] : r.min}
-                  max={r.key === "year" ? options.yearBounds[1] : r.max}
-                  step={r.step}
-                  unit={r.unit}
-                  value={draft.ranges[r.key] ?? [null, null]}
-                  onChange={(v) => setRange(r.key, v)}
-                />
-                {r.key === "year" ? <DecadeChips bounds={options.yearBounds} onPick={(v) => setRange("year", v)} /> : null}
-              </Group>
-            ))}
+            {RANGE_SECTIONS.map((section) => {
+              const inSection = ranges.filter((r) => (section.keys as readonly string[]).includes(r.key));
+              return (
+                <Accordion key={section.title} title={section.title} active={inSection.filter((r) => draft.ranges[r.key]).length}>
+                  <div className="grid gap-6 lg:grid-cols-2">
+                    {inSection.map((r) => (
+                      <Group key={r.key} title={r.label}>
+                        <DualRange
+                          min={r.key === "year" ? options.yearBounds[0] : r.min}
+                          max={r.key === "year" ? options.yearBounds[1] : r.max}
+                          step={r.step}
+                          unit={r.unit}
+                          value={draft.ranges[r.key] ?? [null, null]}
+                          onChange={(v) => setRange(r.key, v)}
+                        />
+                        {r.key === "year" ? <DecadeChips bounds={options.yearBounds} onPick={(v) => setRange("year", v)} /> : null}
+                      </Group>
+                    ))}
+                  </div>
+                </Accordion>
+              );
+            })}
+
+            <Accordion title="Steelbooks & box sets" active={[draft.steelbook, draft.boxSet, draft.inBoxSet].filter(Boolean).length}>
+              <div className="grid gap-6 sm:grid-cols-3">
+                <Group title="Steelbook">
+                  <FlagSwitch value={draft.steelbook} onChange={(v) => setDraft((d) => ({ ...d, steelbook: v }))} />
+                </Group>
+                <Group title="Is a box set">
+                  <FlagSwitch value={draft.boxSet} onChange={(v) => setDraft((d) => ({ ...d, boxSet: v }))} />
+                </Group>
+                <Group title="Is in a box set">
+                  <FlagSwitch value={draft.inBoxSet} onChange={(v) => setDraft((d) => ({ ...d, inBoxSet: v }))} />
+                </Group>
+              </div>
+            </Accordion>
+
+            {FACETS.map((f) =>
+              options.facets[f.key]?.length ? (
+                <Accordion
+                  key={f.key}
+                  title={f.label}
+                  active={Object.keys(draft.facets[f.key] ?? {}).length}
+                  extra={`${options.facets[f.key].length} options`}
+                >
+                  <FacetGroup facet={f.key} title={f.label} options={options.facets[f.key]} selection={draft.facets[f.key] ?? {}} onSet={setFacet} />
+                </Accordion>
+              ) : null,
+            )}
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-3">
-            <Group title="Steelbook">
-              <FlagSwitch value={draft.steelbook} onChange={(v) => setDraft((d) => ({ ...d, steelbook: v }))} />
-            </Group>
-            <Group title="Is a box set">
-              <FlagSwitch value={draft.boxSet} onChange={(v) => setDraft((d) => ({ ...d, boxSet: v }))} />
-            </Group>
-            <Group title="Is in a box set">
-              <FlagSwitch value={draft.inBoxSet} onChange={(v) => setDraft((d) => ({ ...d, inBoxSet: v }))} />
-            </Group>
-          </div>
-
-          {FACETS.map((f) =>
-            options.facets[f.key]?.length ? (
-              <FacetGroup key={f.key} facet={f.key} title={f.label} options={options.facets[f.key]} selection={draft.facets[f.key] ?? {}} onSet={setFacet} />
-            ) : null,
-          )}
-
-          <div className="flex flex-wrap items-center gap-3 border-t border-rule pt-4">
+          <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-rule pt-4">
             <span className="case-shadow inline-flex">
               <button
                 type="button"
@@ -203,6 +223,58 @@ export function FilterPanel({
         </div>
       ) : null}
     </section>
+  );
+}
+
+/** How the range sliders are split into sections. */
+const RANGE_SECTIONS = [
+  { title: "Release year & runtime", keys: ["year", "run"] },
+  { title: "Scores", keys: ["imdb", "rt", "rta", "mc", "my"] },
+] as const;
+
+/**
+ * One collapsible filter section: a bevelled header bar (arrow, title, how many filters inside
+ * are set) over a recessed body. Starts open when asked to or when something inside is set.
+ */
+function Accordion({
+  title,
+  active,
+  extra,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  /** Filters set inside - shown as a badge, and opens the section on first render. */
+  active: number;
+  /** Small note on the right, e.g. how many values there are to pick from. */
+  extra?: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen || active > 0);
+  const id = useId();
+  return (
+    <div className={`clip-corner-sm border ${open ? "border-rule-strong" : "border-rule"}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-controls={id}
+        className="bevel group flex w-full items-center gap-2 bg-panel/70 px-3 py-2 text-left hover:bg-panel"
+      >
+        <svg aria-hidden viewBox="0 0 10 10" className={`h-2 w-2 shrink-0 fill-accent transition-transform ${open ? "rotate-90" : ""}`}>
+          <polygon points="0,0 10,5 0,10" />
+        </svg>
+        <span className="font-display text-[11px] font-semibold tracking-[0.18em] text-chrome-hi uppercase group-hover:text-accent-hi">{title}</span>
+        {active ? <span className="gloss clip-tab bg-accent-deep px-1.5 font-display text-[10px] font-bold text-accent-hi">{active}</span> : null}
+        {extra ? <span className="label-tech ml-auto text-mist-dim">{extra}</span> : null}
+      </button>
+      {open ? (
+        <div id={id} className="well border-t border-rule bg-void/40 px-3 py-3">
+          {children}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -265,8 +337,9 @@ function FacetGroup({
     return [...top, ...picked];
   }, [options, find, all, long, selection]);
 
+  // No legend of its own - the section header above already names it.
   return (
-    <Group title={title}>
+    <div className="min-w-0">
       {long ? (
         <input
           type="search"
@@ -298,7 +371,7 @@ function FacetGroup({
           {all ? "Show fewer" : `Show all ${options.length}`}
         </button>
       ) : null}
-    </Group>
+    </div>
   );
 }
 

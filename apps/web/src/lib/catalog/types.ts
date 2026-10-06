@@ -73,6 +73,8 @@ export interface TitleMetadata {
   imdb_rating: number | null;
   imdb_votes: number | null;
   rotten_tomatoes_score: number | null;
+  /** Rotten Tomatoes audience score (MDBList's "popcorn"), migration 0050. */
+  rt_audience_score: number | null;
   metacritic_score: number | null;
   number_of_seasons: number | null;
   number_of_episodes: number | null;

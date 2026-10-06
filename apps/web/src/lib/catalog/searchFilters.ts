@@ -45,6 +45,7 @@ export const RANGES = [
   { key: "run", label: "Runtime", min: 0, max: 300, step: 5, unit: " min" },
   { key: "imdb", label: "IMDb rating", min: 0, max: 10, step: 0.1, unit: "" },
   { key: "rt", label: "Rotten Tomatoes", min: 0, max: 100, step: 1, unit: "%" },
+  { key: "rta", label: "RT audience", min: 0, max: 100, step: 1, unit: "%" },
   { key: "mc", label: "Metacritic", min: 0, max: 100, step: 1, unit: "" },
   // The owner's own 1-10 score. Only offered by the private build's page; the public build's
   // index has no scores, so it would match nothing there.
@@ -61,6 +62,7 @@ export const SORTS = [
   { value: "runtime", label: "Runtime", dir: "desc" },
   { value: "imdb", label: "IMDb rating", dir: "desc" },
   { value: "rt", label: "Rotten Tomatoes", dir: "desc" },
+  { value: "rta", label: "RT audience", dir: "desc" },
   { value: "mc", label: "Metacritic", dir: "desc" },
   { value: "my", label: "My score", dir: "desc" },
 ] as const;

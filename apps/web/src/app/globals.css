@@ -90,6 +90,14 @@ body {
   outline-offset: 2px;
 }
 
+/* Text fields show focus through their own lit border instead - the outline drew stray lines
+   inside the header search bar (the user, 2026-10-07). This rule is unlayered, so a field's
+   focus:outline-none utility can't override it on its own. */
+input:not([type="range"], [type="checkbox"], [type="radio"]):focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
 /* ---- Angular shapes ------------------------------------------------------------------ */
 
 /* Top-left + bottom-right corners cut (the default panel/button silhouette) */

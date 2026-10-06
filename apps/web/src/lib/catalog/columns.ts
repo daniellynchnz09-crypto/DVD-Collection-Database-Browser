@@ -82,7 +82,7 @@ export const TITLE_CARD_COLUMNS = assertNoForbidden(CARD_COLUMN_LIST);
 export const TITLE_DETAIL_COLUMNS = assertNoForbidden(DETAIL_COLUMN_LIST);
 
 export const TITLE_METADATA_COLUMNS =
-  "imdb_id,tmdb_id,tmdb_media_type,title,original_title,tagline,overview,poster_path,backdrop_path,release_date,runtime_mins,genres,imdb_rating,imdb_votes,rotten_tomatoes_score,metacritic_score,number_of_seasons,number_of_episodes";
+  "imdb_id,tmdb_id,tmdb_media_type,title,original_title,tagline,overview,poster_path,backdrop_path,release_date,runtime_mins,genres,imdb_rating,imdb_votes,rotten_tomatoes_score,rt_audience_score,metacritic_score,number_of_seasons,number_of_episodes";
 
 export const PERSON_COLUMNS =
   "tmdb_person_id,name,profile_path,biography,known_for_department,birthday,deathday,place_of_birth";

@@ -158,7 +158,7 @@ type IndexRow = TitleCardRow & {
 
 type IndexMeta = Pick<
   TitleMetadata,
-  "imdb_id" | "title" | "poster_path" | "release_date" | "runtime_mins" | "imdb_rating" | "imdb_votes" | "rotten_tomatoes_score" | "metacritic_score"
+  "imdb_id" | "title" | "poster_path" | "release_date" | "runtime_mins" | "imdb_rating" | "imdb_votes" | "rotten_tomatoes_score" | "rt_audience_score" | "metacritic_score"
 >;
 
 /** What the filters and sorts look at, worked out once per row when the index is built. */
@@ -252,7 +252,7 @@ async function fetchAllMetadata(): Promise<Map<string, IndexMeta>> {
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await supabase
       .from("title_metadata")
-      .select("imdb_id,title,poster_path,release_date,runtime_mins,imdb_rating,imdb_votes,rotten_tomatoes_score,metacritic_score")
+      .select("imdb_id,title,poster_path,release_date,runtime_mins,imdb_rating,imdb_votes,rotten_tomatoes_score,rt_audience_score,metacritic_score")
       .order("imdb_id")
       .range(from, from + PAGE_SIZE - 1);
     if (error) {
@@ -326,6 +326,7 @@ function rowFacts(row: IndexRow, meta: IndexMeta | null, ownScore: number | null
       run: toNumber(row.running_time_mins) ?? toNumber(meta?.runtime_mins),
       imdb: toNumber(meta?.imdb_rating),
       rt: toNumber(meta?.rotten_tomatoes_score),
+      rta: toNumber(meta?.rt_audience_score),
       mc: toNumber(meta?.metacritic_score),
       my: ownScore,
     },
@@ -596,6 +597,7 @@ interface SortValues {
   runtime: number | null;
   imdb: number | null;
   rt: number | null;
+  rta: number | null;
   mc: number | null;
   my: number | null;
 }
@@ -652,6 +654,7 @@ function rowSortValues(r: IndexedRow): SortValues {
     runtime: r.facts.ranges.run,
     imdb: r.facts.ranges.imdb,
     rt: r.facts.ranges.rt,
+    rta: r.facts.ranges.rta,
     mc: r.facts.ranges.mc,
     my: r.facts.ranges.my,
   };
@@ -668,6 +671,7 @@ function filmSortValues(film: IndexedFilm): SortValues {
     runtime: rows.find((r) => r.facts.ranges.run !== null)?.facts.ranges.run ?? null,
     imdb: rows[0]?.facts.ranges.imdb ?? null,
     rt: rows[0]?.facts.ranges.rt ?? null,
+    rta: rows[0]?.facts.ranges.rta ?? null,
     mc: rows[0]?.facts.ranges.mc ?? null,
     my: maxOf(rows.map((r) => r.facts.ranges.my)),
   };
@@ -681,6 +685,7 @@ const NAME_ONLY = (title: string): SortValues => ({
   runtime: null,
   imdb: null,
   rt: null,
+  rta: null,
   mc: null,
   my: null,
 });
