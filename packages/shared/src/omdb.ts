@@ -68,13 +68,32 @@ function getApiKey(): string {
   return key;
 }
 
+// Recent search answers, same idea as the detail cache below (2026-10-07, efficiency pass): the
+// same title text is often searched more than once within minutes - the resolver searches a
+// cover-read title, then ConfirmScreen's re-search or a collection's auto-match/member picker
+// (TitleSearchPicker) asks the same thing again - and every repeat spent another OMDb request
+// from the 1,000/day key. Successful answers only ("Response":"False" also covers OMDb's own
+// "Request limit reached!", which must never be remembered as "no results"). Per process, an hour.
+const SEARCH_CACHE_MS = 60 * 60 * 1000;
+const SEARCH_CACHE_MAX = 300;
+const searchCache = new Map<string, { at: number; results: OmdbSearchCandidate[] }>();
+
 /** Searches OMDB by title text, returning candidate matches for the user to pick from. */
 export async function omdbSearch(query: string): Promise<OmdbSearchCandidate[]> {
+  const key = query.trim().toLowerCase();
+  const cached = searchCache.get(key);
+  if (cached && Date.now() - cached.at < SEARCH_CACHE_MS) return cached.results;
   const url = `https://www.omdbapi.com/?s=${encodeURIComponent(query)}&apikey=${getApiKey()}`;
   const res = await fetch(url);
   const data = (await res.json()) as { Response: string; Search?: OmdbSearchCandidate[] };
   if (data.Response === "False") return [];
-  return data.Search ?? [];
+  const results = data.Search ?? [];
+  if (searchCache.size >= SEARCH_CACHE_MAX) {
+    const oldest = searchCache.keys().next().value;
+    if (oldest !== undefined) searchCache.delete(oldest);
+  }
+  searchCache.set(key, { at: Date.now(), results });
+  return results;
 }
 
 // Recent detail lookups, so one scan doesn't pay OMDb twice for the same film: the scan

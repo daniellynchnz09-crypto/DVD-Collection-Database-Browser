@@ -461,7 +461,14 @@ export interface CoverOrientationAndBox {
 export async function detectCoverOrientationAndBox(imageBytes: Buffer, mimeType: string): Promise<CoverOrientationAndBox | null> {
   const previews = await buildOrientationPreviews(imageBytes, mimeType);
   if (!previews) return null;
+  return detectCoverOrientationAndBoxFromPreviews(previews);
+}
 
+/** The Gemini half of detectCoverOrientationAndBox, given the four previews already built
+ * (buildOrientationPreviews' order: 0/90/180/270 clockwise). Split out 2026-10-07 so the scan
+ * resolver can build them from a photo it has already decoded (imageCrop.ts's
+ * straightenAndCropCoverPhoto) instead of decoding the full-size photo a second time. */
+export async function detectCoverOrientationAndBoxFromPreviews(previews: Buffer[]): Promise<CoverOrientationAndBox | null> {
   const parts: Array<Record<string, unknown>> = [{ text: ROTATION_PROMPT }];
   previews.forEach((preview, i) => {
     parts.push({ text: `Version ${"ABCD"[i]}:` });

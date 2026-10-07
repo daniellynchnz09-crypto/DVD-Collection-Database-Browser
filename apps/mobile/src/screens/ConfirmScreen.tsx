@@ -48,6 +48,7 @@ import {
   type ExistingTitleCandidate,
   type FindExistingResult,
   type TmdbPreview,
+  yearSuffix,
 } from "../lib/scanApi";
 import { loadFieldOptions, type FieldOptions } from "../lib/fieldOptions";
 import { clearConfirmDraft, getConfirmDraft, saveConfirmDraft } from "../lib/confirmDrafts";
@@ -1586,6 +1587,11 @@ export default function ConfirmScreen({
       return;
     }
     let cancelled = false;
+    // The previous candidate's answer is dropped straight away (2026-10-07) rather than left
+    // in place until this one lands - performCreate reads tmdbPreview.isAnimated directly, so
+    // confirming mid-lookup could otherwise label this film "Animation" from the last pick's
+    // genre list.
+    setTmdbPreview(null);
     setTmdbPreviewLoading(true);
     previewTmdbFields(singleSelectedImdbId)
       .then((result) => {
@@ -2536,7 +2542,8 @@ export default function ConfirmScreen({
         <Text style={styles.title}>Matches an existing collection</Text>
         {collectionMatchCheck.status === "auto" ? (
           <Text style={styles.body}>
-            This looks like your existing &quot;{collectionMatchCheck.match.title}&quot; collection. Compare it
+            This looks like your existing &quot;{collectionMatchCheck.match.title}&quot;
+            {yearSuffix(collectionMatchCheck.match.release_date)} collection. Compare it
             against what you just added, then choose what to do.
           </Text>
         ) : (
@@ -2550,7 +2557,8 @@ export default function ConfirmScreen({
               >
                 <Text style={styles.candidateText}>
                   {chosenCollectionMatchId === c.unique_id ? "(o) " : "( ) "}
-                  {c.title} - {c.format}, {c.disc_count} disc{c.disc_count === 1 ? "" : "s"}
+                  {c.title}
+                  {yearSuffix(c.release_date)} - {c.format}, {c.disc_count} disc{c.disc_count === 1 ? "" : "s"}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -2621,6 +2629,7 @@ export default function ConfirmScreen({
         {existingCheck.status === "auto" ? (
           <Text style={styles.body}>
             This looks like your existing entry for &quot;{existingCheck.match.title}&quot;
+            {yearSuffix(existingCheck.match.release_date)}
             {existingCheck.match.release_name ? ` (${existingCheck.match.release_name})` : ""}. Compare it
             against what you just scanned, then choose what to do.
           </Text>
@@ -2641,6 +2650,7 @@ export default function ConfirmScreen({
                 <Text style={styles.candidateText}>
                   {chosenExistingId === c.unique_id ? "(o) " : "( ) "}
                   {c.title}
+                  {yearSuffix(c.release_date)}
                   {/* release_name is the real disambiguator between two rows sharing the same
                       base title (e.g. a plain DVD vs. a "Special Edition") - added 2026-09-18,
                       since the title text alone can't tell them apart here. */}

@@ -97,6 +97,31 @@ export async function removeQueuedSubmission(id: string): Promise<void> {
   await writeQueue(queue.filter((item) => item.id !== id));
 }
 
+/** Pending scan ids that are sitting in this queue (2026-10-07). PendingScansScreen and
+ * SuccessScreen leave these out, the same way they leave out a scan whose background save is
+ * still running: the server still lists the scan as unconfirmed until the queued entry syncs,
+ * and its draft was cleared when it was queued, so it used to reappear in Pending Scans blank.
+ * Filling it in and confirming again then added the title twice once the queue synced. */
+export async function getQueuedPendingScanIds(): Promise<Set<string>> {
+  return new Set((await readQueue()).map((item) => item.pendingScanId));
+}
+
+// The sync currently running, if any (2026-10-07). The automatic reconnect sync (App.tsx) and
+// the Offline Queue screen's "Sync Now" can both fire at once, or reconnect can fire twice on a
+// flapping connection. Each pass read the same "queued" items and submitted every one of them,
+// and the confirm route has no idea it has already saved that scan, so the title was added
+// twice. A second caller now just waits on the pass that's already running.
+let syncInFlight: Promise<{ submitted: number; flagged: number; failed: number }> | null = null;
+
+export function trySyncOfflineQueue(): Promise<{ submitted: number; flagged: number; failed: number }> {
+  if (!syncInFlight) {
+    syncInFlight = syncOfflineQueueOnce().finally(() => {
+      syncInFlight = null;
+    });
+  }
+  return syncInFlight;
+}
+
 /**
  * Attempts to submit every `queued` item for real now that the connection is back - runs the
  * exact same find-existing check a live online Confirm would have run, then either submits
@@ -106,7 +131,7 @@ export async function removeQueuedSubmission(id: string): Promise<void> {
  * not something this function should retry. Best-effort per item: one item's failure doesn't
  * stop the rest of the queue from being attempted.
  */
-export async function trySyncOfflineQueue(): Promise<{ submitted: number; flagged: number; failed: number }> {
+async function syncOfflineQueueOnce(): Promise<{ submitted: number; flagged: number; failed: number }> {
   const queue = await readQueue();
   let submitted = 0;
   let flagged = 0;

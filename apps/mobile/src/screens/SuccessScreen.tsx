@@ -3,6 +3,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import IndeterminateBar from "../components/IndeterminateBar";
 import { fetchPendingScanIds } from "../lib/scanApi";
+import { getQueuedPendingScanIds } from "../lib/offlineQueue";
 import {
   acknowledgeSubmission,
   getHiddenPendingScanIds,
@@ -51,9 +52,12 @@ export default function SuccessScreen({
       const scans = await fetchPendingScanIds()
         .then((r) => r.scans)
         .catch(() => [] as { id: string }[]);
+      // Offline-queued scans are hidden from Pending Scans too (offlineQueue.ts), so they
+      // mustn't count as "still waiting there" either (2026-10-07).
+      const queued = await getQueuedPendingScanIds();
       if (cancelled) return;
       const saving = getHiddenPendingScanIds();
-      setRemainingPending(scans.filter((row) => !saving.has(row.id)).length);
+      setRemainingPending(scans.filter((row) => !saving.has(row.id) && !queued.has(row.id)).length);
     })();
     return () => {
       cancelled = true;

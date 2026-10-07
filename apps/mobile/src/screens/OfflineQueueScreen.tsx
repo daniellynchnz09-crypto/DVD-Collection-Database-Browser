@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { confirmScan } from "../lib/scanApi";
+import { confirmScan, yearSuffix } from "../lib/scanApi";
 import {
   getQueuedSubmissions,
   removeQueuedSubmission,
@@ -141,6 +141,7 @@ export default function OfflineQueueScreen({ onBack }: { onBack: () => void }) {
                   <View key={c.unique_id} style={styles.candidateRow}>
                     <Text style={styles.candidateText}>
                       {c.title}
+                      {yearSuffix(c.release_date)}
                       {c.release_name ? ` (${c.release_name})` : ""} - {c.format}, {c.disc_count} disc{c.disc_count === 1 ? "" : "s"}
                     </Text>
                     <TouchableOpacity

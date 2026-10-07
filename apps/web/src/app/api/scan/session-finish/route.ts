@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { requireScanSecret } from "@/lib/scanAuth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { logScanEvent } from "@/lib/scanLog";
-import { deleteStagedCoverPhotos } from "@danflix/backend";
+import { deleteStagedCoverPhotos, STAGED_COVER_PATH_PATTERN } from "@danflix/backend";
+
+// Each staged photo costs several Gemini calls at resolve time; no real session comes near this,
+// it just stops one request from queueing an unbounded amount of work.
+const MAX_STAGED_COVERS = 20;
 
 /**
  * Renamed from /api/scan/queue (2026-09-28) as part of cover-photo scanning: ScannerScreen no
@@ -29,8 +33,13 @@ export async function POST(request: Request) {
 
   const body = await request.json().catch(() => null);
   const barcode = typeof body?.barcode === "string" && body.barcode.trim() ? body.barcode.trim() : null;
+  // Only paths shaped like cover-photo/route.ts's own output are kept (2026-10-07 security
+  // pass): these get downloaded, promoted into case-images and deleted later, so an arbitrary
+  // string here could point those steps at any other object in the staging bucket.
   const stagedCoverPaths: string[] = Array.isArray(body?.stagedCoverPaths)
-    ? body.stagedCoverPaths.filter((p: unknown): p is string => typeof p === "string")
+    ? body.stagedCoverPaths
+        .filter((p: unknown): p is string => typeof p === "string" && STAGED_COVER_PATH_PATTERN.test(p))
+        .slice(0, MAX_STAGED_COVERS)
     : [];
 
   if (!barcode && stagedCoverPaths.length === 0) {

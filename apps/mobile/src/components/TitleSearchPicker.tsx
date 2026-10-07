@@ -429,13 +429,20 @@ export default function TitleSearchPicker({
     if (initialQuery && !editingMember) handleSearch();
   }, []);
 
+  // The candidate whose TMDb preview still counts (2026-10-07): picking A, tapping "Not this
+  // one" and then picking B let A's slower lookup land afterwards and fill B's franchise,
+  // rating and family/animated flags with A's values, and end B's loading state early.
+  const previewForImdbIdRef = useRef<string | null>(null);
+
   function selectCandidate(c: OmdbSearchCandidate) {
     setSelectedImdbId(c.imdbID);
     setMovieOrTv(guessMovieOrTvFromType(c.Type));
     setTmdbRating(null);
     setTmdbPreviewLoading(true);
+    previewForImdbIdRef.current = c.imdbID;
     previewTmdbFields(c.imdbID)
       .then((preview) => {
+        if (previewForImdbIdRef.current !== c.imdbID) return;
         if (preview.franchise.length > 0) setFranchise((prev) => prev || preview.franchise.join(", "));
         // See CollectionMember's own comment - a confirmed answer either way (true/false),
         // never left at the "unknown" default once a real TMDb match came back, so the
@@ -449,7 +456,9 @@ export default function TitleSearchPicker({
         // recover or block on. Treated the same as "TMDb has no rating either" below - the
         // manual Rating field must still be offered, not silently left missing forever.
       })
-      .finally(() => setTmdbPreviewLoading(false));
+      .finally(() => {
+        if (previewForImdbIdRef.current === c.imdbID) setTmdbPreviewLoading(false);
+      });
   }
 
   function handleSkipToManual() {
@@ -600,7 +609,13 @@ export default function TitleSearchPicker({
             <Image source={{ uri: selectedCandidate.Poster }} style={styles.posterLarge} resizeMode="cover" />
           )}
           <Text style={styles.label}>{selectedCandidate.Title} ({selectedCandidate.Year})</Text>
-          <TouchableOpacity onPress={() => setSelectedImdbId(null)}>
+          <TouchableOpacity
+            onPress={() => {
+              previewForImdbIdRef.current = null;
+              setSelectedImdbId(null);
+              setTmdbPreviewLoading(false);
+            }}
+          >
             <Text style={styles.link}>Not this one - pick again</Text>
           </TouchableOpacity>
         </View>

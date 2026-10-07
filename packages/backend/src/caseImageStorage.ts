@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { detectCoverBoundingBox } from "./coverVision";
 import { autocropImageBuffer, cropImageBufferToBox } from "./imageCrop";
+import { fetchRemoteImage } from "./remoteImageFetch";
 
 /**
  * Storage helper for `titles.case_image_path` (0026_add_case_image_path.sql) - the physical
@@ -36,11 +37,12 @@ const MAX_UNCROPPED_AREA_FRACTION = 0.85;
  * own. Best-effort: no box (or a Gemini failure) keeps the border-trimmed image. */
 export async function uploadCaseImage(supabase: SupabaseClient, path: string, imageUrl: string): Promise<string | null> {
   try {
-    const res = await fetch(imageUrl);
-    if (!res.ok) return null;
-    const contentType = res.headers.get("content-type") ?? "image/jpeg";
-    const rawBytes = Buffer.from(await res.arrayBuffer());
-    let bytes = await autocropImageBuffer(rawBytes, contentType);
+    // imageUrl arrives in the confirm request body, so it goes through the same public-host /
+    // image-only / size-capped fetch as case-image-preview (remoteImageFetch.ts, 2026-10-07).
+    const fetched = await fetchRemoteImage(imageUrl);
+    if (!fetched.ok) return null;
+    const { contentType } = fetched;
+    let bytes = await autocropImageBuffer(fetched.bytes, contentType);
     const box = await detectCoverBoundingBox(bytes, contentType);
     if (box && ((box.xMax - box.xMin) / 100) * ((box.yMax - box.yMin) / 100) < MAX_UNCROPPED_AREA_FRACTION) {
       bytes = await cropImageBufferToBox(bytes, contentType, box);

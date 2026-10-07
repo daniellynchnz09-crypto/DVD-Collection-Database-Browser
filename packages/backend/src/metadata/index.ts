@@ -88,22 +88,45 @@ export async function refreshTitleMetadata(
   imdbId: string,
   options: { omdbDetail?: OmdbScoreResponse | null } = {}
 ): Promise<RefreshTitleMetadataResult> {
-  const tmdb = await refreshTmdbMetadata(supabase, imdbId);
-  let omdb: RefreshTitleMetadataResult["omdb"];
-  if (options.omdbDetail) {
-    try {
-      await saveOmdbScores(supabase, omdbScoresFromResponse(imdbId, options.omdbDetail));
-      omdb = "from_scan";
-    } catch (err) {
-      console.error(`[metadata] OMDb save failed for ${imdbId}:`, err);
-      omdb = "saved_error";
+  const omdbDetailById = options.omdbDetail ? new Map([[imdbId, options.omdbDetail]]) : undefined;
+  const [result] = await refreshTitlesMetadata(supabase, [imdbId], { omdbDetailById });
+  return result;
+}
+
+/**
+ * refreshTitleMetadata for several films at once - a collection confirm (2026-10-07,
+ * efficiency pass). TMDb and OMDb still go film by film, exactly as before, but the RT audience
+ * scores are fetched in one MDBList batch request per media type instead of one request per
+ * film: MDBList's batch endpoint takes up to 100 ids for the same single request from the
+ * 1,000/day allowance, so a 9-title box set now spends 1 request instead of 9 (and one
+ * freshness query instead of 9). Never throws.
+ */
+export async function refreshTitlesMetadata(
+  supabase: SupabaseClient,
+  imdbIds: string[],
+  options: { omdbDetailById?: Map<string, OmdbScoreResponse> } = {}
+): Promise<RefreshTitleMetadataResult[]> {
+  const partial: Omit<RefreshTitleMetadataResult, "audience">[] = [];
+  for (const imdbId of imdbIds) {
+    const tmdb = await refreshTmdbMetadata(supabase, imdbId);
+    const omdbDetail = options.omdbDetailById?.get(imdbId);
+    let omdb: RefreshTitleMetadataResult["omdb"];
+    if (omdbDetail) {
+      try {
+        await saveOmdbScores(supabase, omdbScoresFromResponse(imdbId, omdbDetail));
+        omdb = "from_scan";
+      } catch (err) {
+        console.error(`[metadata] OMDb save failed for ${imdbId}:`, err);
+        omdb = "saved_error";
+      }
+    } else {
+      const { data: existing } = await supabase.from("title_metadata").select("omdb_fetched_at, release_date").eq("imdb_id", imdbId).maybeSingle();
+      omdb = isWithin(existing?.omdb_fetched_at, omdbRefreshAgeMs(existing?.release_date)) ? "fresh" : await refreshOmdbScores(supabase, imdbId);
     }
-  } else {
-    const { data: existing } = await supabase.from("title_metadata").select("omdb_fetched_at, release_date").eq("imdb_id", imdbId).maybeSingle();
-    omdb = isWithin(existing?.omdb_fetched_at, omdbRefreshAgeMs(existing?.release_date)) ? "fresh" : await refreshOmdbScores(supabase, imdbId);
+    partial.push({ imdbId, tmdb: tmdb.status, omdb, castCount: tmdb.castCount, crewCount: tmdb.crewCount });
   }
-  const audience = await refreshAudienceScore(supabase, imdbId);
-  return { imdbId, tmdb: tmdb.status, omdb, audience, castCount: tmdb.castCount, crewCount: tmdb.crewCount };
+  const audience = await refreshAudienceScores(supabase, imdbIds);
+  return partial.map((p) => ({ ...p, audience: audience.get(p.imdbId) ?? "error" }));
 }
 
 function isWithin(iso: string | null | undefined, maxAgeMs: number): boolean {
@@ -111,14 +134,37 @@ function isWithin(iso: string | null | undefined, maxAgeMs: number): boolean {
   return Number.isFinite(at) && Date.now() - at < maxAgeMs;
 }
 
-/** RT audience score for one film after a scan - movie or show going by TMDb's media type. */
-async function refreshAudienceScore(supabase: SupabaseClient, imdbId: string): Promise<RefreshTitleMetadataResult["audience"]> {
-  if (!process.env.MDBLIST_API_KEY) return "skipped";
-  const { data: row } = await supabase.from("title_metadata").select("mdblist_fetched_at, release_date, tmdb_media_type").eq("imdb_id", imdbId).maybeSingle();
-  if (isWithin(row?.mdblist_fetched_at, omdbRefreshAgeMs(row?.release_date))) return "fresh";
-  const result = await refreshMdblistAudienceScores(supabase, [imdbId], row?.tmdb_media_type === "tv" ? "show" : "movie");
-  if (result.status === "error") console.error(`[metadata] MDBList refresh failed for ${imdbId}: ${result.message}`);
-  return result.status === "ok" ? "saved" : result.status;
+/** RT audience scores for films after a scan - movie or show going by TMDb's media type, one
+ * MDBList batch per media type for whichever of them are due. */
+async function refreshAudienceScores(
+  supabase: SupabaseClient,
+  imdbIds: string[]
+): Promise<Map<string, RefreshTitleMetadataResult["audience"]>> {
+  const statuses = new Map<string, RefreshTitleMetadataResult["audience"]>();
+  if (imdbIds.length === 0) return statuses;
+  if (!process.env.MDBLIST_API_KEY) {
+    for (const id of imdbIds) statuses.set(id, "skipped");
+    return statuses;
+  }
+  const { data: rows } = await supabase
+    .from("title_metadata")
+    .select("imdb_id, mdblist_fetched_at, release_date, tmdb_media_type")
+    .in("imdb_id", imdbIds);
+  const rowById = new Map((rows ?? []).map((r) => [r.imdb_id as string, r]));
+  const due: Record<"movie" | "show", string[]> = { movie: [], show: [] };
+  for (const id of new Set(imdbIds)) {
+    const row = rowById.get(id);
+    if (isWithin(row?.mdblist_fetched_at, omdbRefreshAgeMs(row?.release_date))) statuses.set(id, "fresh");
+    else due[row?.tmdb_media_type === "tv" ? "show" : "movie"].push(id);
+  }
+  for (const mediaType of ["movie", "show"] as const) {
+    const ids = due[mediaType];
+    if (ids.length === 0) continue;
+    const result = await refreshMdblistAudienceScores(supabase, ids, mediaType);
+    if (result.status === "error") console.error(`[metadata] MDBList refresh failed for ${ids.join(", ")}: ${result.message}`);
+    for (const id of ids) statuses.set(id, result.status === "ok" ? "saved" : result.status);
+  }
+  return statuses;
 }
 
 /**

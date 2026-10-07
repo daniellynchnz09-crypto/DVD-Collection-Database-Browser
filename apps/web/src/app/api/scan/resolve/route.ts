@@ -15,7 +15,12 @@ export async function POST(request: Request) {
   if (authError) return authError;
 
   const body = await request.json().catch(() => ({}));
-  const limit = typeof body?.limit === "number" ? Math.min(body.limit, 50) : 10;
+  // Clamped to a whole number in 1-50 (2026-10-07 security pass): the old Math.min alone let a
+  // negative, fractional or NaN-ish limit straight through to the batch query.
+  const limit =
+    typeof body?.limit === "number" && Number.isFinite(body.limit)
+      ? Math.max(1, Math.min(Math.floor(body.limit), 50))
+      : 10;
 
   try {
     const result = await resolvePendingScansBatch(getSupabaseServerClient(), limit);

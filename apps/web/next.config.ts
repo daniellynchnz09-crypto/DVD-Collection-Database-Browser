@@ -25,6 +25,23 @@ const nextConfig: NextConfig = {
   // hydrated - links worked, the Back button and search didn't (found 2026-10-06).
   allowedDevOrigins: ["192.168.1.70"],
 
+  // Baseline response headers for every page and route (2026-10-07 security pass, ahead of the
+  // public Vercel deploy): no MIME sniffing, no framing by other sites (the taste-profile edit
+  // buttons could otherwise be clickjacked once the passcode is in sessionStorage), and no full
+  // URLs leaked to other sites in the Referer header.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        ],
+      },
+    ];
+  },
+
   images: {
     // Only our own private-bucket signed URLs go through the optimizer (lib/catalog/images.ts);
     // TMDb posters are already pre-sized and rendered `unoptimized`. Kept tight so the

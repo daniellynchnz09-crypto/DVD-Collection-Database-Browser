@@ -9,6 +9,7 @@ export * from "./classicWhoSerials";
 export * from "./weirdMovieList";
 export * from "./titleTextSearch";
 export * from "./imageCrop";
+export * from "./remoteImageFetch";
 export * from "./posterMatch";
 export * from "./rottenTomatoes";
 export * from "./tmdb";

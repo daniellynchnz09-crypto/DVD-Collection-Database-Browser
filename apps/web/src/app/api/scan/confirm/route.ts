@@ -35,7 +35,7 @@ import {
   lookupTmdbFields,
   pickFrontCoverPath,
   promoteStagedCoverToCaseImage,
-  refreshTitleMetadata,
+  refreshTitlesMetadata,
   uploadCaseImage,
   uploadPosterImage,
   type StagedCoverAnalysis,
@@ -171,6 +171,22 @@ function mergeOmdbAndTmdbGenres(omdbGenres: string[], tmdbGenres: string[]): str
 // this will need generalizing past a plain title-text sort for whatever isn't Doctor Who.
 const WHO_SHELF_GENRE_LOCATION = "BOX TV Sci-Fi";
 
+const TMDB_LOOKUP_CONCURRENCY = 4;
+
+/** Promise.all over `items` with at most `limit` running at once; results keep input order. */
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 async function computeShelfLocation(
   supabase: SupabaseClient,
   genreLocation: string | null | undefined,
@@ -272,7 +288,7 @@ export async function POST(request: Request) {
   // outright. A read failure just means a null snapshot in the log, never blocks the real work.
   const { data: pendingScanRow } = await supabase
     .from("pending_scans")
-    .select("barcode, resolved_candidates, staged_cover_photos")
+    .select("barcode, status, resolved_candidates, staged_cover_photos")
     .eq("id", pendingScanId)
     .maybeSingle();
   const stagedCoverPaths: string[] = (pendingScanRow?.staged_cover_photos as string[] | null) ?? [];
@@ -332,6 +348,12 @@ export async function POST(request: Request) {
   if (entries.length === 0) {
     return NextResponse.json({ error: "entries is required unless dismiss is true" }, { status: 400 });
   }
+  // A scan that's already been saved is never saved a second time (2026-10-07). Nothing used
+  // to stop it - a retry after a dropped response the server had in fact finished, or the
+  // app's offline queue resubmitting an item, inserted the title(s) all over again.
+  if (pendingScanRow?.status === "confirmed") {
+    return NextResponse.json({ error: "This scan has already been saved to your collection." }, { status: 409 });
+  }
   const { header } = await getSheetHeaderAndColumns();
   const columnIndexes = buildColumnIndexes(header);
 
@@ -354,8 +376,14 @@ export async function POST(request: Request) {
   // it's exactly what solves the collection-member case where there's no single physical
   // case to read a rating off. See packages/backend/src/tmdb.ts for why this needed TMDb
   // rather than IMDb.
-  const resolvedTmdb: TmdbFields[] = [];
-  for (const entry of entries) {
+  //
+  // Looked up a few entries at a time rather than strictly one after another (2026-10-07,
+  // efficiency pass): each entry is 2-3 sequential TMDb round-trips that don't depend on any
+  // other entry, so a 9-title box set spent ~20 back-to-back requests here before anything was
+  // written. Capped at TMDB_LOOKUP_CONCURRENCY so a big set can't burst into TMDb's own rate
+  // limit - a 429 there reads as "no match" (tmdbFetch returns null) and would save the entry
+  // without its TMDb id. Results keep entry order.
+  const resolvedTmdb: TmdbFields[] = await mapWithConcurrency(entries, TMDB_LOOKUP_CONCURRENCY, async (entry) => {
     const manual = entry.manualFields ?? {};
     let fields: TmdbFields = entry.imdbId
       ? await lookupTmdbFields(entry.imdbId)
@@ -377,8 +405,8 @@ export async function POST(request: Request) {
     // that's almost always a thin, weak IMDb entry, effectively a manual entry, and the user
     // can't realistically find a TMDb page the lookup itself couldn't. Previously a 400 here
     // (the original "Backfill Rescan" rule that every candidate-backed entry needs a TMDb id).
-    resolvedTmdb.push(fields);
-  }
+    return fields;
+  });
 
   const createdIds: string[] = [];
   let primaryShelfLocation: { before: string | null; after: string | null } | null = null;
@@ -407,6 +435,8 @@ export async function POST(request: Request) {
   // source URL, scoped to just this one confirm request/loop - reused across entries only
   // when they genuinely share the same source image, never across unrelated scans.
   const uploadedCaseImagePathByUrl = new Map<string, string | null>();
+  // Front-cover promotion (decision 4) - see the case-image step in the loop below.
+  const frontCoverPath = pickFrontCoverPath(coverAnalysis);
   // OMDb records fetched below, reused for title_metadata's scores so the metadata refresh at
   // the end doesn't spend a second OMDb request on the same film.
   const omdbDetailById = new Map<string, NonNullable<Awaited<ReturnType<typeof omdbGetById>>>>();
@@ -620,9 +650,29 @@ export async function POST(request: Request) {
     // upload as before; every later entry sharing that same URL points at that same stored
     // path instead - a deliberate, documented exception to the usual "own uuid, own folder"
     // convention, specifically for this shared-cover case.
+    //
+    // Front-cover promotion (decision 4) - once per session, not per entry, since a multi-title
+    // collection submission still has just one set of staged photos for the one physical case
+    // that was actually photographed. Targets the first entry (a collection scan's own header,
+    // or the single title on an ordinary scan), the same row computeShelfLocation below treats
+    // as this session's primary. A captured front cover always wins over the barcode listing's
+    // own product photo; with no usable staged cover (no front-classified photo, and more than
+    // one ambiguous "unclear" candidate - see pickFrontCoverPath's own comment for why that's
+    // left alone rather than guessed), or if promoting it fails, the listing photo is used.
+    //
+    // Done here, BEFORE the listing photo's upload rather than after every row was written
+    // (2026-10-07, efficiency pass): it used to upload the listing photo to this same
+    // `titles/{id}/case.jpg` path first - an image download, two Jimp passes and a Gemini
+    // bounding-box request (uploadCaseImage) - only for the cover photo to overwrite it moments
+    // later, plus a separate `titles` update to point at it. Collection members sharing the
+    // listing URL reuse the promoted path exactly as they reused the overwritten one before.
     const caseImageUrl = asString(manual.case_image_url);
     let caseImagePath: string | null = null;
-    if (caseImageUrl) {
+    if (i === 0 && frontCoverPath) {
+      caseImagePath = await promoteStagedCoverToCaseImage(supabase, frontCoverPath, uniqueId);
+      if (caseImagePath && caseImageUrl) uploadedCaseImagePathByUrl.set(caseImageUrl, caseImagePath);
+    }
+    if (caseImageUrl && !caseImagePath) {
       if (uploadedCaseImagePathByUrl.has(caseImageUrl)) {
         caseImagePath = uploadedCaseImagePathByUrl.get(caseImageUrl)!;
       } else {
@@ -861,19 +911,23 @@ export async function POST(request: Request) {
   for (let i = 0; i < built.length; i++) {
     const { entry, title } = built[i];
     const uniqueId = title.unique_id as string;
+    // Sheet-only cells already known at write time (the never-priced "n/a" below), written in
+    // the same Sheet call as the rest of the row.
+    const sheetOnlyFields: Record<string, unknown> = {};
+    const sheetFields = { ...title, ...sheetOnlyFields };
 
     if (entry.overwriteUniqueId) {
       const { error: updateError } = await supabase.from("titles").update(title).eq("unique_id", entry.overwriteUniqueId);
       if (updateError) {
         return NextResponse.json({ error: updateError.message }, { status: 500 });
       }
-      await updateSheetFieldsByUniqueId(entry.overwriteUniqueId, title, header, columnIndexes);
+      await updateSheetFieldsByUniqueId(entry.overwriteUniqueId, sheetFields, header, columnIndexes);
     } else {
       const { error: insertError } = await supabase.from("titles").insert(title);
       if (insertError) {
         return NextResponse.json({ error: insertError.message }, { status: 500 });
       }
-      const row = buildSheetRowFromTitle(title, columnIndexes, header.length);
+      const row = buildSheetRowFromTitle(sheetFields, columnIndexes, header.length);
       await appendRowToSheet(row);
     }
     createdIds.push(uniqueId);
@@ -890,17 +944,6 @@ export async function POST(request: Request) {
     }
   }
 
-  // Front-cover promotion (decision 4) - once per session, not per entry, since a multi-title
-  // collection submission still has just one set of staged photos for the one physical case
-  // that was actually photographed. Targets createdIds[0] (the primary/first entry - a
-  // collection scan's own header, or the single title on an ordinary scan), the same row
-  // computeShelfLocation above already treats as this session's primary. Overwrites whatever
-  // case_image_path that entry's own insert/update just wrote from a UPC listing photo - a
-  // captured front cover always wins over the barcode listing's own product photo. Falls
-  // through to that existing case_image_path untouched when there's no usable staged cover
-  // (no front-classified photo, and more than one ambiguous "unclear" candidate - see
-  // pickFrontCoverPath's own comment for why that's left alone rather than guessed).
-  const frontCoverPath = pickFrontCoverPath(coverAnalysis);
   // Every row this confirm wrote now shows on the website, which lists scanned rows only
   // (migration 0046). Kept out of `title` itself so the Sheet writes above never see it.
   if (createdIds.length > 0) {
@@ -910,12 +953,6 @@ export async function POST(request: Request) {
   // effort - a failure here never fails the confirm.
   if (createdIds.length > 0) {
     void tagWeirdMovieMatches(supabase, createdIds).catch((err) => console.error("[confirm] weird list tagging failed:", err));
-  }
-  if (frontCoverPath && createdIds[0]) {
-    const promotedPath = await promoteStagedCoverToCaseImage(supabase, frontCoverPath, createdIds[0]);
-    if (promotedPath) {
-      await supabase.from("titles").update({ case_image_path: promotedPath }).eq("unique_id", createdIds[0]);
-    }
   }
   // New and overwritten entries show on the website straight away, not after the 5-minute
   // page/search caches expire. An Overwrite updates the same row (same unique_id), so its
@@ -944,18 +981,22 @@ export async function POST(request: Request) {
 
   // Fire-and-forget film metadata (TMDb details/cast/crew + OMDb scores into title_metadata/
   // people/title_credits - see web-app-build-plan.md) so a newly confirmed film gets its web
-  // app page data immediately instead of waiting for the backfill. Reads imdb_page back from
-  // the saved rows rather than entry.imdbId, since the confirm may have rewritten it (e.g. an
-  // episode match resolved to its series). Same long-running-process caveat as the hooks
-  // above; refreshTitleMetadata never throws, and the catch only guards the lookup query.
+  // app page data immediately instead of waiting for the backfill. Uses each saved row's
+  // imdb_page rather than entry.imdbId, since the confirm may have rewritten it (e.g. an
+  // episode match resolved to its series) - taken from the rows this request just wrote
+  // (`built`) rather than read back from the database (2026-10-07: the extra query fetched
+  // exactly the values already in hand). Same long-running-process caveat as the hooks
+  // above; refreshTitlesMetadata never throws. One call for every film, so a collection's
+  // RT audience scores go to MDBList as one batch request instead of one per member.
   // Runs in after() so it outlives the response, then refreshes the caches again so the new
   // poster/cast/scores appear too.
   after(async () => {
     try {
-      const { data: rows } = await supabase.from("titles").select("imdb_page").in("unique_id", createdIds);
-      const imdbIds = new Set((rows ?? []).map((r) => extractImdbIdFromPage(r.imdb_page)).filter((id): id is string => !!id));
-      for (const imdbId of imdbIds) await refreshTitleMetadata(supabase, imdbId, { omdbDetail: omdbDetailById.get(imdbId) });
-      if (imdbIds.size > 0) refreshWebsiteCaches();
+      const imdbIds = [
+        ...new Set(built.map((b) => extractImdbIdFromPage(b.title.imdb_page as string | null)).filter((id): id is string => !!id)),
+      ];
+      if (imdbIds.length > 0) await refreshTitlesMetadata(supabase, imdbIds, { omdbDetailById });
+      if (imdbIds.length > 0) refreshWebsiteCaches();
     } catch (err) {
       console.error("[metadata] Failed to refresh metadata for newly confirmed title(s):", err);
     }

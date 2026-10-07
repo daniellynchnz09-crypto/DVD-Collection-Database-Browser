@@ -7,8 +7,11 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json", "x-scan-secret": API_SECRET },
     body: JSON.stringify(body),
   });
-  const data = await res.json();
+  // A non-JSON body (an HTML error page from the server or a proxy, 2026-10-07) used to throw
+  // a bare "JSON Parse error" here, hiding the status code the message below reports.
+  const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error(data?.error ?? `Request to ${path} failed (${res.status})`);
+  if (data === null) throw new Error(`Request to ${path} returned an unreadable response (${res.status})`);
   return data as T;
 }
 
@@ -318,4 +321,11 @@ export interface UpcQuotaStatus {
 
 export function fetchUpcQuotaStatus() {
   return post<{ quota: UpcQuotaStatus }>("/api/scan/upc-quota", {});
+}
+
+/** " (1982)" from a release date, for telling similar duplicate-check candidates apart (the
+ * user, 2026-10-07: remakes and same-named titles all read alike without their year). */
+export function yearSuffix(releaseDate: string | null | undefined): string {
+  const year = releaseDate?.slice(0, 4);
+  return year && /^\d{4}$/.test(year) ? ` (${year})` : "";
 }

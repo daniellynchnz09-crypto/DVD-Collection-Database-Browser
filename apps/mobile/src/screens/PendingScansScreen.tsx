@@ -13,6 +13,7 @@ import type { Title } from "@danflix/shared";
 import { createManualPendingScan, discardScan, fetchPendingScans, fetchUpcQuotaStatus, type UpcQuotaStatus } from "../lib/scanApi";
 import { clearConfirmDraft } from "../lib/confirmDrafts";
 import { getHiddenPendingScanIds, useSubmissionsVersion } from "../lib/backgroundSubmissions";
+import { getQueuedPendingScanIds } from "../lib/offlineQueue";
 import { CARD, CHROME_BAR, COLORS, FONTS, GLOSS, SCREEN, WELL } from "../theme";
 
 export interface PendingScan {
@@ -178,11 +179,14 @@ export default function PendingScansScreen({
   // draft intact. The server still lists it as unconfirmed until the write lands, which is
   // why this filter is client-side rather than part of the query.
   const submissionsVersion = useSubmissionsVersion();
+  // Scans saved to the on-device offline queue are hidden too (2026-10-07) - see
+  // offlineQueue.ts's getQueuedPendingScanIds. They're listed on the Offline Queue screen.
+  const [offlineQueuedIds, setOfflineQueuedIds] = useState<Set<string>>(new Set());
   const scans = useMemo(() => {
     const saving = getHiddenPendingScanIds();
-    return loadedScans.filter((s) => !saving.has(s.id));
+    return loadedScans.filter((s) => !saving.has(s.id) && !offlineQueuedIds.has(s.id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadedScans, submissionsVersion]);
+  }, [loadedScans, offlineQueuedIds, submissionsVersion]);
   const [loading, setLoading] = useState(true);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -195,7 +199,8 @@ export default function PendingScansScreen({
     // Via the web server since 2026-10-06 (migration 0044 removed the public key's direct read
     // access to pending_scans). A failed load keeps whatever list was already showing.
     try {
-      const { scans } = await fetchPendingScans<PendingScan>();
+      const [{ scans }, queuedIds] = await Promise.all([fetchPendingScans<PendingScan>(), getQueuedPendingScanIds()]);
+      setOfflineQueuedIds(queuedIds);
       setLoadedScans(scans);
     } catch {
       // Offline or server unreachable - leave the current list in place.
@@ -251,17 +256,24 @@ export default function PendingScansScreen({
   async function doDelete() {
     setDeleting(true);
     const idsToDelete = [...selectedIds];
-    const barcodes = scans
-      .filter((s) => selectedIds.has(s.id))
-      .map((s) => s.barcode)
-      .filter((b): b is string => b !== null);
     try {
-      await Promise.all(idsToDelete.map((id) => discardScan(id)));
+      // Settled one by one (2026-10-07) rather than Promise.all: when one of several deletes
+      // failed, the others had still gone through server-side, but their drafts and re-scan
+      // cooldowns were never cleared because the whole batch was treated as failed.
+      const results = await Promise.allSettled(idsToDelete.map((id) => discardScan(id)));
+      const deletedIds = idsToDelete.filter((_, i) => results[i].status === "fulfilled");
       // A deleted pending scan can never be reopened - its local autosaved draft, if any,
       // must go with it (same principle as the queue route's own replacedIds cleanup: a
       // draft should only ever outlive the pending_scans row it belongs to).
-      idsToDelete.forEach(clearConfirmDraft);
-      onDeleted?.(barcodes);
+      deletedIds.forEach(clearConfirmDraft);
+      onDeleted?.(
+        scans
+          .filter((s) => deletedIds.includes(s.id))
+          .map((s) => s.barcode)
+          .filter((b): b is string => b !== null)
+      );
+      const firstFailure = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+      if (firstFailure) throw firstFailure.reason;
     } catch (err) {
       // Previously silent: a failed request (e.g. the scan API being unreachable) left the
       // item sitting in the list with no explanation - found live 2026-09-24 after a power

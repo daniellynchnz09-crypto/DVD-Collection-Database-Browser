@@ -144,12 +144,14 @@ export default function ScannerScreen({
     setAutoBarcode(code);
   }
 
+  // Fires for every camera frame a barcode is visible in - only touch state when the code
+  // actually changed (2026-10-07, efficiency pass), not many times a second with the same one.
   function handleBarcodeScanned(result: BarcodeScanningResult) {
     if (captureMode === "positioningCover") {
-      noteAutoBarcode(result.data);
+      if (result.data !== autoBarcode) noteAutoBarcode(result.data);
       return;
     }
-    setDetectedBarcode(result.data);
+    if (result.data !== detectedBarcode) setDetectedBarcode(result.data);
   }
 
   function handleCaptureBarcode() {
@@ -249,6 +251,10 @@ export default function ScannerScreen({
   }
 
   async function handleCancelSession() {
+    // Ignored while Done is still finishing this same session (2026-10-07): Cancel Session sits
+    // right beside Done, and cancelling in that moment deleted the staged cover photos the
+    // just-created pending scan points at, so the resolver found no covers to read.
+    if (busyRef.current) return;
     const { sessionId } = session;
     setSession(freshSession());
     setDetectedBarcode(null);

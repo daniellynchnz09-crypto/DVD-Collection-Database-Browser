@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
-import { downloadStagedCoverPhoto } from "@danflix/backend";
+import { downloadStagedCoverPhoto, STAGED_COVER_PATH_PATTERN } from "@danflix/backend";
+import { IMAGE_RESPONSE_SECURITY_HEADERS, requireScanSecretHeaderOrQuery } from "@/lib/scanAuth";
 
 /**
  * Serves a staged cover photo (the private `cover-scan-staging` bucket - see
@@ -18,27 +19,21 @@ import { downloadStagedCoverPhoto } from "@danflix/backend";
  * writes, so this can't be pointed at anything else in the bucket (or traverse out of it).
  * Nothing cached - staged photos are deleted once their scan reaches a terminal state.
  */
-const STAGED_PATH_PATTERN = /^sessions\/[A-Za-z0-9_-]+\/[0-9a-f-]+\.jpg$/i;
-
 export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const expectedSecret = process.env.SCAN_API_SECRET;
-  if (!expectedSecret) {
-    return NextResponse.json({ error: "SCAN_API_SECRET is not configured on the server." }, { status: 500 });
-  }
-  const providedSecret = request.headers.get("x-scan-secret") ?? url.searchParams.get("secret");
-  if (providedSecret !== expectedSecret) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authError = requireScanSecretHeaderOrQuery(request);
+  if (authError) return authError;
 
-  const path = url.searchParams.get("path") ?? "";
-  if (!STAGED_PATH_PATTERN.test(path)) {
+  const path = new URL(request.url).searchParams.get("path") ?? "";
+  if (!STAGED_COVER_PATH_PATTERN.test(path)) {
     return NextResponse.json({ error: "A valid staged cover path is required." }, { status: 400 });
   }
 
   const staged = await downloadStagedCoverPhoto(getSupabaseServerClient(), path);
   if (!staged) return NextResponse.json({ error: "Staged cover photo not found." }, { status: 404 });
+  // Only a raster image type is echoed back (2026-10-07) - the stored type came from the upload
+  // request, so anything else is served as plain JPEG rather than trusted.
+  const contentType = /^image\/(jpeg|png|webp)$/i.test(staged.contentType) ? staged.contentType : "image/jpeg";
   return new NextResponse(new Uint8Array(staged.bytes), {
-    headers: { "Content-Type": staged.contentType, "Cache-Control": "no-store" },
+    headers: { "Content-Type": contentType, "Cache-Control": "no-store", ...IMAGE_RESPONSE_SECURITY_HEADERS },
   });
 }

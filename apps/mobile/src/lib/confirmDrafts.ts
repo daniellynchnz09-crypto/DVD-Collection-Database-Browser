@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { AppState } from "react-native";
 
 /**
  * In-progress form state for a pending scan's Confirm screen. ConfirmScreen fully
@@ -127,7 +128,25 @@ const STORAGE_KEY = "confirmDrafts";
 
 const drafts = new Map<string, ConfirmDraft>();
 
+// Coalesces disk writes (2026-10-07, efficiency pass): ConfirmScreen saves its draft on every
+// state change - every keystroke - and each save used to JSON-stringify EVERY pending scan's
+// draft (candidate lists included) and write it all to AsyncStorage on the JS thread. Now at
+// most one write per PERSIST_DELAY_MS, always of the latest Map contents; the in-memory Map
+// stays the source of truth meanwhile, and a pending write is flushed straight away when the
+// app leaves the foreground, so a draft still survives the app being backgrounded or killed.
+const PERSIST_DELAY_MS = 500;
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
 function persistDrafts(): void {
+  if (persistTimer) return;
+  persistTimer = setTimeout(flushDrafts, PERSIST_DELAY_MS);
+}
+
+function flushDrafts(): void {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
   // Fire-and-forget, same convention offlineQueue.ts's own writeQueue is called with from
   // every mutating call site there - a write failure (disk full, whatever) must never block
   // the UI, and the in-memory Map above is already correct regardless of whether this
@@ -136,6 +155,10 @@ function persistDrafts(): void {
     console.warn("Failed to persist confirm drafts (non-fatal):", err);
   });
 }
+
+AppState.addEventListener("change", (state) => {
+  if (state !== "active" && persistTimer) flushDrafts();
+});
 
 /** Loads every saved draft from AsyncStorage into the in-memory Map - call once at app boot
  * (App.tsx), before any screen that could call getConfirmDraft has a chance to mount. A

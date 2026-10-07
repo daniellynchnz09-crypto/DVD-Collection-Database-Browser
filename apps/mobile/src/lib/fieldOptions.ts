@@ -183,16 +183,28 @@ async function loadSavedFieldOptions(forceRefresh: boolean): Promise<FieldOption
 
   inflight = (async () => {
     const rows: Record<string, string | string[] | null>[] = [];
+    // Set when any read below fails (2026-10-07). A failed read used to look exactly like the
+    // end of the table, so opening a scan while offline cached empty (or part-paged) option
+    // lists for the rest of the app's life. Now that result is still returned for this screen,
+    // but not cached, so the next screen to ask tries again.
+    let incomplete = false;
     // Started alongside the paged reads below; a failure (offline, old server) just means no
     // Rented By suggestions rather than breaking every other field's options.
     const rentedByPromise = fetchRentedByOptions()
       .then((r) => r.names)
-      .catch(() => [] as string[]);
+      .catch(() => {
+        incomplete = true;
+        return [] as string[];
+      });
     for (let from = 0; ; from += PAGE_SIZE) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("titles")
         .select(COLUMNS)
         .range(from, from + PAGE_SIZE - 1);
+      if (error) {
+        incomplete = true;
+        break;
+      }
       const page = data ?? [];
       rows.push(...page);
       if (page.length < PAGE_SIZE) break;
@@ -222,10 +234,13 @@ async function loadSavedFieldOptions(forceRefresh: boolean): Promise<FieldOption
         rows.map((r) => r.rating as string | null)
       ),
     };
-    cached = options;
-    inflight = null;
+    if (!incomplete) cached = options;
     return options;
-  })();
+  })().finally(() => {
+    // Cleared even if something above throws, or every later call would get the same
+    // rejected promise back forever.
+    inflight = null;
+  });
 
   return inflight;
 }

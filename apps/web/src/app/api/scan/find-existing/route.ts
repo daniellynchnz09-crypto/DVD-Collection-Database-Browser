@@ -273,7 +273,9 @@ export async function POST(request: Request) {
       if (r.case_image_url) return { ...r, posterUrl: r.case_image_url, existingMemberTitles };
       const imdbIdForRow = extractImdbIdFromPage(r.imdb_page);
       if (imdbIdForRow) {
-        const detail = await omdbGetById(imdbIdForRow);
+        // Only a preview image - an OMDb outage must not fail the whole duplicate check, which
+        // blocked Confirm (and marked offline-queue items failed) over a poster (2026-10-07).
+        const detail = await omdbGetById(imdbIdForRow).catch(() => null);
         if (detail?.Poster && detail.Poster !== "N/A") {
           return { ...r, posterUrl: detail.Poster, existingMemberTitles };
         }

@@ -22,8 +22,8 @@ import { extractListingTextFields, type ListingTextExtraction } from "./listingT
 import { recordUpcRateLimit } from "./upcQuota";
 import { getSignedPosterImageUrl } from "./posterImageStorage";
 import { downloadStagedCoverPhoto, replaceStagedCoverPhoto } from "./coverStagingStorage";
-import { detectCoverFromImage, detectCoverOrientationAndBox, type StagedCoverAnalysis } from "./coverVision";
-import { cropImageBufferToBox, normalizeImageOrientation, rotateImageBuffer } from "./imageCrop";
+import { detectCoverFromImage, detectCoverOrientationAndBoxFromPreviews, type StagedCoverAnalysis } from "./coverVision";
+import { straightenAndCropCoverPhoto } from "./imageCrop";
 import { searchTitleCandidates } from "./titleTextSearch";
 import { matchClassicWhoSerial } from "./classicWhoSerials";
 
@@ -139,7 +139,8 @@ async function withResolvedPoster<
   }
   const imdbId = extractImdbIdFromPage(existing.imdb_page);
   if (!imdbId) return existing;
-  const detail = await omdbGetById(imdbId);
+  // A failed poster lookup just means no fallback poster, not a failed scan (2026-10-07).
+  const detail = await omdbGetById(imdbId).catch(() => null);
   if (detail?.Poster && detail.Poster !== "N/A") {
     return { ...existing, resolvedPosterUrl: detail.Poster };
   }
@@ -180,28 +181,15 @@ async function analyzeStagedCoverPhotos(
 
     // EXIF orientation baked into the pixels first (see normalizeImageOrientation) - without
     // this, Gemini's rotation read and Jimp's own rotate disagreed about which way was up.
-    let bytes = await normalizeImageOrientation(staged.bytes, staged.contentType);
-    let changed = bytes !== staged.bytes;
-
-    // One request for both: which way is up, and where the case is once it's upright
-    // (2026-10-06 - was two separate requests; see detectCoverOrientationAndBox).
-    const oriented = await detectCoverOrientationAndBox(bytes, staged.contentType);
-    if (oriented?.rotation) {
-      const rotated = await rotateImageBuffer(bytes, staged.contentType, oriented.rotation);
-      if (rotated !== bytes) {
-        bytes = rotated;
-        changed = true;
-      }
-    }
-
-    const box = oriented?.box;
-    if (box) {
-      const cropped = await cropImageBufferToBox(bytes, staged.contentType, box);
-      if (cropped !== bytes) {
-        bytes = cropped;
-        changed = true;
-      }
-    }
+    // Then one request for both: which way is up, and where the case is once it's upright
+    // (2026-10-06 - was two separate requests; see detectCoverOrientationAndBox). Since
+    // 2026-10-07 all of it runs on one decoded copy of the photo, encoded once at the end
+    // (straightenAndCropCoverPhoto) instead of a full decode/encode per step.
+    const { bytes, changed } = await straightenAndCropCoverPhoto(
+      staged.bytes,
+      staged.contentType,
+      detectCoverOrientationAndBoxFromPreviews
+    );
 
     if (changed) await replaceStagedCoverPhoto(supabase, stagedPath, bytes, staged.contentType);
 
@@ -253,6 +241,11 @@ function pickCoverDerivedMemberTitles(analyses: StagedCoverAnalysis[]): string[]
   return merged.length > 0 ? merged : null;
 }
 
+// Pending scans whose last resolve attempt threw, and when they may be tried again (per
+// process, like the poller itself). See the catch in resolvePendingScansBatch.
+const FAILED_SCAN_RETRY_MS = 5 * 60 * 1000;
+const failedScanRetryAt = new Map<string, number>();
+
 export async function resolvePendingScansBatch(
   supabase: SupabaseClient,
   limit: number
@@ -268,234 +261,248 @@ export async function resolvePendingScansBatch(
 
   let resolved = 0;
   let needsManual = 0;
+  let attempted = 0;
 
   for (const scan of pending ?? []) {
-    const stagedCoverPaths: string[] = (scan.staged_cover_photos as string[] | null) ?? [];
-    const coverAnalysis = await analyzeStagedCoverPhotos(supabase, stagedCoverPaths);
-    const coverDerivedTitle = pickCoverDerivedTitle(coverAnalysis);
-    // The box set's own member titles, when the cover actually lists them (see
-    // pickCoverDerivedMemberTitles's own comment) - ConfirmScreen.tsx's Collection flow shows
-    // these as tappable suggestion chips, never auto-added.
-    const coverDerivedMemberTitles = pickCoverDerivedMemberTitles(coverAnalysis);
-    // Added 2026-09-30, per the user's own explicit request: a cover photo's own printed title
-    // ("The Alfred Hitchcock Classics Collection") is just as real a collection signal as a UPC
-    // listing's title text, but nothing checked it before now - `isCollection` below only ever
-    // looked at `upcProduct.title`, so a collection scanned by cover photo alone (or alongside a
-    // barcode whose OWN listing text doesn't happen to say "Collection") never defaulted
-    // ConfirmScreen into its Collection flow. A cover actually listing 2+ member titles is
-    // itself unambiguous proof this is a collection, even when the box's own printed name uses
-    // none of looksLikeCollection's trigger words (e.g. "Universal Monsters Essentials" naming
-    // Dracula/Frankenstein/The Mummy) - folded in as a second, independent signal alongside the
-    // keyword check. Computed once here so every branch below (cover-only, barcode-with-failed-
-    // UPC-lookup, and the full barcode+UPC path) can fold it in.
-    const coverLooksLikeCollection =
-      (coverDerivedTitle ? looksLikeCollection(coverDerivedTitle) : false) ||
-      (coverDerivedMemberTitles?.length ?? 0) >= 2;
+    const retryAt = failedScanRetryAt.get(scan.id);
+    if (retryAt !== undefined && Date.now() < retryAt) continue;
+    attempted++;
+    failedScanRetryAt.delete(scan.id);
+    try {
+      const stagedCoverPaths: string[] = (scan.staged_cover_photos as string[] | null) ?? [];
+      const coverAnalysis = await analyzeStagedCoverPhotos(supabase, stagedCoverPaths);
+      const coverDerivedTitle = pickCoverDerivedTitle(coverAnalysis);
+      // The box set's own member titles, when the cover actually lists them (see
+      // pickCoverDerivedMemberTitles's own comment) - ConfirmScreen.tsx's Collection flow shows
+      // these as tappable suggestion chips, never auto-added.
+      const coverDerivedMemberTitles = pickCoverDerivedMemberTitles(coverAnalysis);
+      // Added 2026-09-30, per the user's own explicit request: a cover photo's own printed title
+      // ("The Alfred Hitchcock Classics Collection") is just as real a collection signal as a UPC
+      // listing's title text, but nothing checked it before now - `isCollection` below only ever
+      // looked at `upcProduct.title`, so a collection scanned by cover photo alone (or alongside a
+      // barcode whose OWN listing text doesn't happen to say "Collection") never defaulted
+      // ConfirmScreen into its Collection flow. A cover actually listing 2+ member titles is
+      // itself unambiguous proof this is a collection, even when the box's own printed name uses
+      // none of looksLikeCollection's trigger words (e.g. "Universal Monsters Essentials" naming
+      // Dracula/Frankenstein/The Mummy) - folded in as a second, independent signal alongside the
+      // keyword check. Computed once here so every branch below (cover-only, barcode-with-failed-
+      // UPC-lookup, and the full barcode+UPC path) can fold it in.
+      const coverLooksLikeCollection =
+        (coverDerivedTitle ? looksLikeCollection(coverDerivedTitle) : false) ||
+        (coverDerivedMemberTitles?.length ?? 0) >= 2;
 
-    // Cover-only session (no barcode at all - decision 6 in the plan this implements): none
-    // of the UPC/existing-title lookup below applies, since there's no barcode to look either
-    // up by. The cover-derived title (when the vision read found one) drives the exact same
-    // best-match search a typed title would, via searchTitleCandidates - this is the direct
-    // "cover photo replaces typing a title" path the feature exists for.
-    if (!scan.barcode) {
-      // Never search OMDB by a collection's own title text (2026-09-20 design decision, see
-      // barcode-scanning-pipeline.md's Collections section) - a box set's own name almost never
-      // matches a real OMDB film entry, and a multi-word query with no real match can come back
-      // with junk results OMDB's fuzzy search partially matched on a single generic word (found
-      // live 2026-09-30: "Gidget Film Collection" returned "Collection"/"The Collection"/"La
-      // Collection" - real films, just entirely unrelated ones). Applies here the same way it
-      // already applied to the full barcode+UPC path below - this branch just never checked
-      // isCollection at all before today, since it didn't exist here yet.
-      const omdbCandidates =
-        coverDerivedTitle && !coverLooksLikeCollection ? await searchTitleCandidates(supabase, coverDerivedTitle) : [];
-      // A real collection stays "needs_manual" (same as the full barcode+UPC path below,
-      // per barcode-scanning-pipeline.md's Collections section) - ConfirmScreen drives the
-      // whole Collection flow from its own UI state, not resolved candidates.
+      // Cover-only session (no barcode at all - decision 6 in the plan this implements): none
+      // of the UPC/existing-title lookup below applies, since there's no barcode to look either
+      // up by. The cover-derived title (when the vision read found one) drives the exact same
+      // best-match search a typed title would, via searchTitleCandidates - this is the direct
+      // "cover photo replaces typing a title" path the feature exists for.
+      if (!scan.barcode) {
+        // Never search OMDB by a collection's own title text (2026-09-20 design decision, see
+        // barcode-scanning-pipeline.md's Collections section) - a box set's own name almost never
+        // matches a real OMDB film entry, and a multi-word query with no real match can come back
+        // with junk results OMDB's fuzzy search partially matched on a single generic word (found
+        // live 2026-09-30: "Gidget Film Collection" returned "Collection"/"The Collection"/"La
+        // Collection" - real films, just entirely unrelated ones). Applies here the same way it
+        // already applied to the full barcode+UPC path below - this branch just never checked
+        // isCollection at all before today, since it didn't exist here yet.
+        const omdbCandidates =
+          coverDerivedTitle && !coverLooksLikeCollection ? await searchTitleCandidates(supabase, coverDerivedTitle) : [];
+        // A real collection stays "needs_manual" (same as the full barcode+UPC path below,
+        // per barcode-scanning-pipeline.md's Collections section) - ConfirmScreen drives the
+        // whole Collection flow from its own UI state, not resolved candidates.
+        const status = omdbCandidates.length > 0 ? "resolved" : "needs_manual";
+        await supabase
+          .from("pending_scans")
+          .update({
+            status,
+            resolved_candidates: {
+              coverAnalysis,
+              omdbCandidates,
+              existingMatch: null,
+              isCollection: coverLooksLikeCollection,
+              coverMemberTitles: coverDerivedMemberTitles,
+            },
+          })
+          .eq("id", scan.id);
+        if (status === "resolved") resolved++;
+        else needsManual++;
+        continue;
+      }
+
+      // Re-scan case: this exact disc was already logged (STEP BY STEP PROCESS AND
+      // AUTOMATION.md's reason for having a barcode identifier at all). Per the user's own
+      // "Overwrite" design (Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan"
+      // section - Overwrite replaces every field of the existing row with the new scan's
+      // data, in place), this no longer short-circuits the whole resolution - the rest of
+      // the pipeline still runs below so ConfirmScreen has real candidate/poster data to
+      // pre-fill from, and `existingMatch` rides along on resolved_candidates so
+      // ConfirmScreen can pre-fill every field from the current entry and route straight to
+      // the same Overwrite/Is-a-new-entry/Reject choice the ordinary similar-entry check
+      // uses, instead of a dead-end "Dismiss only" screen.
+      // `barcode_id` has no uniqueness constraint (e.g. choosing "Is a new entry" for a
+      // genuine second identical copy on this very screen would give two rows the same
+      // barcode) - `.limit(1)` keeps that from ever making `.maybeSingle()` throw on more
+      // than one match.
+      const { data: existing } = await supabase
+        .from("titles")
+        .select("*")
+        .eq("barcode_id", scan.barcode)
+        .limit(1)
+        .maybeSingle();
+
+      const { product: upcProduct, rateLimit: upcRateLimit } = await upcLookup(scan.barcode);
+      // Mirrors UPCitemdb's own real rate-limit headers from this call - see upcQuota.ts's own
+      // comment on why this reads the provider's authoritative number rather than counting
+      // calls itself. Never blocks/awaits-critically on failure - a quota-tracking write
+      // failing must never stop the actual scan resolution below it.
+      await recordUpcRateLimit(supabase, upcRateLimit).catch(() => {});
+      if (!upcProduct) {
+        // No barcode listing at all, but a cover photo was also captured this session (any
+        // combination of barcode/front/back is valid - decision 6) - fall back to the same
+        // cover-derived search a cover-only session would use, rather than dead-ending straight
+        // into needs_manual when the resolver actually has a usable title in hand. Same
+        // never-search-OMDB-for-a-collection's-own-title rule as the cover-only branch above.
+        const omdbCandidates =
+          coverDerivedTitle && !coverLooksLikeCollection ? await searchTitleCandidates(supabase, coverDerivedTitle) : [];
+        const status = omdbCandidates.length > 0 ? "resolved" : "needs_manual";
+        await supabase
+          .from("pending_scans")
+          .update({
+            status,
+            resolved_candidates: {
+              upcLookupFailed: true,
+              coverAnalysis,
+              omdbCandidates,
+              isCollection: coverLooksLikeCollection,
+              coverMemberTitles: coverDerivedMemberTitles,
+              existingMatch: await withResolvedPoster(supabase, existing),
+            },
+          })
+          .eq("id", scan.id);
+        if (status === "resolved") resolved++;
+        else needsManual++;
+        continue;
+      }
+
+      // Search OMDB by the film's own base title, not the barcode's full cut/edition text
+      // ("Blade Runner the Final Cut" -> "Blade Runner") - OMDB indexes one entry per film, not
+      // one per re-release cut, so searching the full text can miss the real entry entirely and
+      // fall through to whatever unrelated title OMDB's fuzzy `s=` search happens to surface
+      // instead (candidate list, poster, everything downstream - see splitCutVariantTitle's own
+      // comment in titleParsing.ts for the real case this was found from). The full cleaned
+      // title (base + cut, when a cut was found) is what ConfirmScreen separately offers as the
+      // release_name pre-fill - not threaded through here, since that's purely a UI concern.
+      const isCollection = looksLikeCollection(upcProduct.title) || coverLooksLikeCollection;
+      // A listing's year is the disc's own home-video release year, not necessarily the
+      // film's - but home video always follows theatrical release, so it's a valid upper
+      // bound: no film released after this year could already have a disc for it. Computed
+      // unconditionally (still useful context for a collection's own depicted-era/format
+      // guessing below), but the OMDB search itself is skipped entirely for a collection - see
+      // the isCollection branch immediately below.
+      const productYear = extractProductYear(`${upcProduct.title} ${upcProduct.description ?? ""}`);
+      // A collection scan never searches OMDB by the box set's own listing title (2026-09-20,
+      // per the user's explicit decision to drop the "extract a franchise/director/actor name
+      // and search OMDB for it" idea in favor of a manual per-title entry loop on the Confirm
+      // screen instead - see Claude/TECH STACK AND ARCHITECTURE/barcode-scanning-pipeline.md).
+      // Searching a box set's own title text ("Alfred Hitchcock Collection") almost never
+      // matches a real OMDB film entry anyway, so this both saves a wasted OMDB call and avoids
+      // populating a candidate list ConfirmScreen's collection flow no longer reads from.
+      let omdbCandidates: OmdbSearchCandidate[] = [];
+      // Only ever populated when the plain regex-cleaned search below finds nothing at all -
+      // see listingTextExtract.ts's own doc comment for why an LLM call is deliberately the
+      // fallback, not the first attempt.
+      let listingTextExtraction: ListingTextExtraction | null = null;
+      if (!isCollection) {
+        const { baseTitle: searchQuery } = splitCutVariantTitle(cleanProductTitleForSearch(upcProduct.title));
+        // Same classic-Doctor-Who-serial short-circuit searchTitleCandidates applies for a
+        // cover-derived title (see classicWhoSerials.ts) - a UPC listing's own title text can
+        // just as easily be "Doctor Who The Underwater Menace" and hit the exact same false-
+        // match problem via the plain omdbSearch call below.
+        let rawCandidates = await matchClassicWhoSerial(supabase, upcProduct.title).catch(() => []);
+        if (rawCandidates.length === 0) rawCandidates = searchQuery ? await omdbSearch(searchQuery) : [];
+        if (rawCandidates.length === 0) {
+          listingTextExtraction = await extractListingTextFields(upcProduct.title, upcProduct.description);
+          if (listingTextExtraction?.title) {
+            rawCandidates = await omdbSearch(listingTextExtraction.title);
+          }
+        }
+        const yearFilteredCandidates = filterCandidatesByMaxYear(rawCandidates, productYear);
+        omdbCandidates = await enrichAndNarrowCandidates(yearFilteredCandidates, upcProduct.title, listingTextExtraction?.actors);
+      }
+      const depictedEraStart = inferDepictedEraStart(upcProduct.title, upcProduct.description);
+
+      // Box-set covers don't correspond to any single film's poster, and the checklist flow
+      // already handles picking multiple titles - auto-matching only makes sense for a
+      // single-title scan with its own listing photo to compare against.
+      const posterMatch =
+        !isCollection && upcProduct.imageUrl && omdbCandidates.length > 0
+          ? await matchPosterToCandidates(upcProduct.imageUrl, omdbCandidates)
+          : null;
+
+      // Vision-based format detection (added 2026-09-17) - deliberately the LAST resort, only
+      // ever attempted when the barcode listing's own text doesn't already give a SPECIFIC
+      // format, per the user's own explicit instruction: text is always more reliable than a
+      // model guessing from a photo, so it's tried first and free (no API call) before this
+      // ever runs. "DVD" is treated as not-specific rather than skipped outright (found
+      // 2026-09-17 against a real "Blade Runner: The Final Cut" listing whose own title text
+      // said "...Dvd" despite the actual disc being 4K UHD) - extractFormatHint only ever
+      // returns "DVD" once its own 4K/Blu-ray/VHS patterns have all already failed to match, so
+      // it's really this function's generic fallback rather than a confirmed signal the way
+      // "Blu-Ray"/"4K UHD Blu-Ray"/"VHS" are; a real product photo is worth cross-checking
+      // against it. Text still always wins outright for every other, more specific hint - see
+      // formatVision.ts's own header comment for the full reasoning (model choice, prompt
+      // design, why no training data was collected), and ConfirmScreen.tsx's own comment for
+      // how the two are reconciled once both are available.
+      const textFormatHint = extractFormatHint(`${upcProduct.title} ${upcProduct.description ?? ""}`);
+      const visionFormatGuess =
+        (!textFormatHint || textFormatHint === "DVD") && upcProduct.imageUrl
+          ? await detectFormatFromImage(upcProduct.imageUrl)
+          : null;
+
+      // Merge strategy for a session that captured both a barcode AND a cover photo (decision 6):
+      // the barcode/UPC path stays authoritative whenever it already found real candidates - the
+      // cover analysis rides along in resolved_candidates.coverAnalysis purely as a secondary
+      // cross-reference and format/disc-count pre-fill signal, the same way visionFormatGuess
+      // already works today, without touching omdbCandidates. It only takes over as the actual
+      // search when the barcode path itself found nothing, and never for a collection scan
+      // (isCollection deliberately never searches OMDB by title text at all - see that branch
+      // above).
+      if (omdbCandidates.length === 0 && !isCollection && coverDerivedTitle) {
+        omdbCandidates = await searchTitleCandidates(supabase, coverDerivedTitle);
+      }
+
       const status = omdbCandidates.length > 0 ? "resolved" : "needs_manual";
       await supabase
         .from("pending_scans")
         .update({
           status,
           resolved_candidates: {
-            coverAnalysis,
+            upcProduct,
             omdbCandidates,
-            existingMatch: null,
-            isCollection: coverLooksLikeCollection,
+            isCollection,
             coverMemberTitles: coverDerivedMemberTitles,
-          },
-        })
-        .eq("id", scan.id);
-      if (status === "resolved") resolved++;
-      else needsManual++;
-      continue;
-    }
-
-    // Re-scan case: this exact disc was already logged (STEP BY STEP PROCESS AND
-    // AUTOMATION.md's reason for having a barcode identifier at all). Per the user's own
-    // "Overwrite" design (Claude/TECH STACK AND ARCHITECTURE.md's "Backfill Rescan"
-    // section - Overwrite replaces every field of the existing row with the new scan's
-    // data, in place), this no longer short-circuits the whole resolution - the rest of
-    // the pipeline still runs below so ConfirmScreen has real candidate/poster data to
-    // pre-fill from, and `existingMatch` rides along on resolved_candidates so
-    // ConfirmScreen can pre-fill every field from the current entry and route straight to
-    // the same Overwrite/Is-a-new-entry/Reject choice the ordinary similar-entry check
-    // uses, instead of a dead-end "Dismiss only" screen.
-    // `barcode_id` has no uniqueness constraint (e.g. choosing "Is a new entry" for a
-    // genuine second identical copy on this very screen would give two rows the same
-    // barcode) - `.limit(1)` keeps that from ever making `.maybeSingle()` throw on more
-    // than one match.
-    const { data: existing } = await supabase
-      .from("titles")
-      .select("*")
-      .eq("barcode_id", scan.barcode)
-      .limit(1)
-      .maybeSingle();
-
-    const { product: upcProduct, rateLimit: upcRateLimit } = await upcLookup(scan.barcode);
-    // Mirrors UPCitemdb's own real rate-limit headers from this call - see upcQuota.ts's own
-    // comment on why this reads the provider's authoritative number rather than counting
-    // calls itself. Never blocks/awaits-critically on failure - a quota-tracking write
-    // failing must never stop the actual scan resolution below it.
-    await recordUpcRateLimit(supabase, upcRateLimit).catch(() => {});
-    if (!upcProduct) {
-      // No barcode listing at all, but a cover photo was also captured this session (any
-      // combination of barcode/front/back is valid - decision 6) - fall back to the same
-      // cover-derived search a cover-only session would use, rather than dead-ending straight
-      // into needs_manual when the resolver actually has a usable title in hand. Same
-      // never-search-OMDB-for-a-collection's-own-title rule as the cover-only branch above.
-      const omdbCandidates =
-        coverDerivedTitle && !coverLooksLikeCollection ? await searchTitleCandidates(supabase, coverDerivedTitle) : [];
-      const status = omdbCandidates.length > 0 ? "resolved" : "needs_manual";
-      await supabase
-        .from("pending_scans")
-        .update({
-          status,
-          resolved_candidates: {
-            upcLookupFailed: true,
+            depictedEraStart,
+            productYear,
+            posterMatch,
+            visionFormatGuess,
+            listingTextExtraction,
             coverAnalysis,
-            omdbCandidates,
-            isCollection: coverLooksLikeCollection,
-            coverMemberTitles: coverDerivedMemberTitles,
             existingMatch: await withResolvedPoster(supabase, existing),
           },
         })
         .eq("id", scan.id);
+
       if (status === "resolved") resolved++;
       else needsManual++;
-      continue;
+    } catch (err) {
+      // One scan whose lookups throw (OMDb or UPCitemdb unreachable, an unreadable response)
+      // used to abort the whole batch (2026-10-07). The row stays "pending" and is oldest
+      // first, so every later scan sat behind it, and each 15s retry spent another UPCitemdb
+      // lookup on it. Now it is skipped for a while and the rest of the batch carries on.
+      failedScanRetryAt.set(scan.id, Date.now() + FAILED_SCAN_RETRY_MS);
+      console.error(`[scan-resolver] Failed to resolve pending scan ${scan.id}:`, err);
     }
-
-    // Search OMDB by the film's own base title, not the barcode's full cut/edition text
-    // ("Blade Runner the Final Cut" -> "Blade Runner") - OMDB indexes one entry per film, not
-    // one per re-release cut, so searching the full text can miss the real entry entirely and
-    // fall through to whatever unrelated title OMDB's fuzzy `s=` search happens to surface
-    // instead (candidate list, poster, everything downstream - see splitCutVariantTitle's own
-    // comment in titleParsing.ts for the real case this was found from). The full cleaned
-    // title (base + cut, when a cut was found) is what ConfirmScreen separately offers as the
-    // release_name pre-fill - not threaded through here, since that's purely a UI concern.
-    const isCollection = looksLikeCollection(upcProduct.title) || coverLooksLikeCollection;
-    // A listing's year is the disc's own home-video release year, not necessarily the
-    // film's - but home video always follows theatrical release, so it's a valid upper
-    // bound: no film released after this year could already have a disc for it. Computed
-    // unconditionally (still useful context for a collection's own depicted-era/format
-    // guessing below), but the OMDB search itself is skipped entirely for a collection - see
-    // the isCollection branch immediately below.
-    const productYear = extractProductYear(`${upcProduct.title} ${upcProduct.description ?? ""}`);
-    // A collection scan never searches OMDB by the box set's own listing title (2026-09-20,
-    // per the user's explicit decision to drop the "extract a franchise/director/actor name
-    // and search OMDB for it" idea in favor of a manual per-title entry loop on the Confirm
-    // screen instead - see Claude/TECH STACK AND ARCHITECTURE/barcode-scanning-pipeline.md).
-    // Searching a box set's own title text ("Alfred Hitchcock Collection") almost never
-    // matches a real OMDB film entry anyway, so this both saves a wasted OMDB call and avoids
-    // populating a candidate list ConfirmScreen's collection flow no longer reads from.
-    let omdbCandidates: OmdbSearchCandidate[] = [];
-    // Only ever populated when the plain regex-cleaned search below finds nothing at all -
-    // see listingTextExtract.ts's own doc comment for why an LLM call is deliberately the
-    // fallback, not the first attempt.
-    let listingTextExtraction: ListingTextExtraction | null = null;
-    if (!isCollection) {
-      const { baseTitle: searchQuery } = splitCutVariantTitle(cleanProductTitleForSearch(upcProduct.title));
-      // Same classic-Doctor-Who-serial short-circuit searchTitleCandidates applies for a
-      // cover-derived title (see classicWhoSerials.ts) - a UPC listing's own title text can
-      // just as easily be "Doctor Who The Underwater Menace" and hit the exact same false-
-      // match problem via the plain omdbSearch call below.
-      let rawCandidates = await matchClassicWhoSerial(supabase, upcProduct.title).catch(() => []);
-      if (rawCandidates.length === 0) rawCandidates = searchQuery ? await omdbSearch(searchQuery) : [];
-      if (rawCandidates.length === 0) {
-        listingTextExtraction = await extractListingTextFields(upcProduct.title, upcProduct.description);
-        if (listingTextExtraction?.title) {
-          rawCandidates = await omdbSearch(listingTextExtraction.title);
-        }
-      }
-      const yearFilteredCandidates = filterCandidatesByMaxYear(rawCandidates, productYear);
-      omdbCandidates = await enrichAndNarrowCandidates(yearFilteredCandidates, upcProduct.title, listingTextExtraction?.actors);
-    }
-    const depictedEraStart = inferDepictedEraStart(upcProduct.title, upcProduct.description);
-
-    // Box-set covers don't correspond to any single film's poster, and the checklist flow
-    // already handles picking multiple titles - auto-matching only makes sense for a
-    // single-title scan with its own listing photo to compare against.
-    const posterMatch =
-      !isCollection && upcProduct.imageUrl && omdbCandidates.length > 0
-        ? await matchPosterToCandidates(upcProduct.imageUrl, omdbCandidates)
-        : null;
-
-    // Vision-based format detection (added 2026-09-17) - deliberately the LAST resort, only
-    // ever attempted when the barcode listing's own text doesn't already give a SPECIFIC
-    // format, per the user's own explicit instruction: text is always more reliable than a
-    // model guessing from a photo, so it's tried first and free (no API call) before this
-    // ever runs. "DVD" is treated as not-specific rather than skipped outright (found
-    // 2026-09-17 against a real "Blade Runner: The Final Cut" listing whose own title text
-    // said "...Dvd" despite the actual disc being 4K UHD) - extractFormatHint only ever
-    // returns "DVD" once its own 4K/Blu-ray/VHS patterns have all already failed to match, so
-    // it's really this function's generic fallback rather than a confirmed signal the way
-    // "Blu-Ray"/"4K UHD Blu-Ray"/"VHS" are; a real product photo is worth cross-checking
-    // against it. Text still always wins outright for every other, more specific hint - see
-    // formatVision.ts's own header comment for the full reasoning (model choice, prompt
-    // design, why no training data was collected), and ConfirmScreen.tsx's own comment for
-    // how the two are reconciled once both are available.
-    const textFormatHint = extractFormatHint(`${upcProduct.title} ${upcProduct.description ?? ""}`);
-    const visionFormatGuess =
-      (!textFormatHint || textFormatHint === "DVD") && upcProduct.imageUrl
-        ? await detectFormatFromImage(upcProduct.imageUrl)
-        : null;
-
-    // Merge strategy for a session that captured both a barcode AND a cover photo (decision 6):
-    // the barcode/UPC path stays authoritative whenever it already found real candidates - the
-    // cover analysis rides along in resolved_candidates.coverAnalysis purely as a secondary
-    // cross-reference and format/disc-count pre-fill signal, the same way visionFormatGuess
-    // already works today, without touching omdbCandidates. It only takes over as the actual
-    // search when the barcode path itself found nothing, and never for a collection scan
-    // (isCollection deliberately never searches OMDB by title text at all - see that branch
-    // above).
-    if (omdbCandidates.length === 0 && !isCollection && coverDerivedTitle) {
-      omdbCandidates = await searchTitleCandidates(supabase, coverDerivedTitle);
-    }
-
-    const status = omdbCandidates.length > 0 ? "resolved" : "needs_manual";
-    await supabase
-      .from("pending_scans")
-      .update({
-        status,
-        resolved_candidates: {
-          upcProduct,
-          omdbCandidates,
-          isCollection,
-          coverMemberTitles: coverDerivedMemberTitles,
-          depictedEraStart,
-          productYear,
-          posterMatch,
-          visionFormatGuess,
-          listingTextExtraction,
-          coverAnalysis,
-          existingMatch: await withResolvedPoster(supabase, existing),
-        },
-      })
-      .eq("id", scan.id);
-
-    if (status === "resolved") resolved++;
-    else needsManual++;
   }
 
-  return { processed: pending?.length ?? 0, resolved, needsManual };
+  return { processed: attempted, resolved, needsManual };
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { autocropImageBuffer } from "@danflix/backend";
+import { autocropImageBuffer, fetchRemoteImage } from "@danflix/backend";
+import { IMAGE_RESPONSE_SECURITY_HEADERS, requireScanSecretHeaderOrQuery } from "@/lib/scanAuth";
 
 /**
  * On-the-fly crop-preview proxy for `ConfirmScreen.tsx`'s "Your scanned item" image (added
@@ -18,9 +19,11 @@ import { autocropImageBuffer } from "@danflix/backend";
  * scan route uses (RN's `Image` source supports a `headers` field), rather than putting the
  * secret in the URL's own query string where it could end up in logs.
  *
- * `url` must be `http(s)` - a basic sanity check, not a hardened SSRF defense (this app has no
- * untrusted external users; the `url` value only ever comes from this app's own
- * UPCitemdb-sourced `upcProduct.imageUrl`), but cheap enough to keep regardless.
+ * `url` must be `http(s)`, and since 2026-10-07 (security pass) it's fetched through
+ * remoteImageFetch.ts: public hosts only, raster images only, size-capped. Before that any
+ * reachable URL's body came back as-is with its own Content-Type - an internal address could be
+ * read through here, and an HTML page would be served from the site's own origin (where the
+ * owner passcode sits in sessionStorage). The response also carries nosniff + a sandbox CSP.
  *
  * Auth accepts the secret via `x-scan-secret` header OR a `secret` query param, unlike every
  * other scan route (which is header-only via `requireScanSecret`). Found live 2026-09-23: the
@@ -37,31 +40,23 @@ import { autocropImageBuffer } from "@danflix/backend";
  * private builds like every other `/api/scan/*` route, no sanitizer exclusion needed.
  */
 export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const expectedSecret = process.env.SCAN_API_SECRET;
-  if (!expectedSecret) {
-    return NextResponse.json({ error: "SCAN_API_SECRET is not configured on the server." }, { status: 500 });
-  }
-  const providedSecret = request.headers.get("x-scan-secret") ?? url.searchParams.get("secret");
-  if (providedSecret !== expectedSecret) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authError = requireScanSecretHeaderOrQuery(request);
+  if (authError) return authError;
 
-  const imageUrl = url.searchParams.get("url");
+  const imageUrl = new URL(request.url).searchParams.get("url");
   if (!imageUrl || !/^https?:\/\//i.test(imageUrl)) {
     return NextResponse.json({ error: "A valid http(s) url query param is required." }, { status: 400 });
   }
 
   try {
-    const res = await fetch(imageUrl);
-    if (!res.ok) return NextResponse.json({ error: `Source image fetch failed (${res.status}).` }, { status: 502 });
-    const contentType = res.headers.get("content-type") ?? "image/jpeg";
-    const rawBytes = Buffer.from(await res.arrayBuffer());
-    const cropped = await autocropImageBuffer(rawBytes, contentType);
+    const fetched = await fetchRemoteImage(imageUrl);
+    if (!fetched.ok) return NextResponse.json({ error: fetched.reason }, { status: fetched.status });
+    const cropped = await autocropImageBuffer(fetched.bytes, fetched.contentType);
     return new NextResponse(new Uint8Array(cropped), {
-      headers: { "Content-Type": contentType, "Cache-Control": "no-store" },
+      headers: { "Content-Type": fetched.contentType, "Cache-Control": "no-store", ...IMAGE_RESPONSE_SECURITY_HEADERS },
     });
   } catch (err) {
-    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
+    console.error("[case-image-preview] failed:", err);
+    return NextResponse.json({ error: "Couldn't load the source image." }, { status: 500 });
   }
 }

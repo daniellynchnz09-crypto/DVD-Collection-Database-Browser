@@ -26,6 +26,9 @@ export interface MdblistScores {
   /** The film's Metacritic / Rotten Tomatoes pages (migration 0052), when MDBList knows them. */
   metacriticUrl: string | null;
   rottenTomatoesUrl: string | null;
+  /** RT critics' Tomatometer, 0-100 - used to decide whether a title gets an RT link at all
+   * (RESOURCES.md: the Sheet's RT page column is only for titles with an RT score). */
+  criticsScore: number | null;
 }
 
 export type MdblistBatchResult =
@@ -43,6 +46,9 @@ interface MdblistItem {
  * slugs become links. Metacritic's path has no movie/TV prefix, so the media type adds it. */
 function metacriticUrl(path: unknown, mediaType: MdblistMediaType): string | null {
   return typeof path === "string" && /^\/[a-z0-9][a-z0-9-]*$/i.test(path) ? `https://www.metacritic.com/${mediaType === "show" ? "tv" : "movie"}${path}/` : null;
+}
+function percent(n: unknown): number | null {
+  return typeof n === "number" && n >= 0 && n <= 100 ? Math.round(n) : null;
 }
 function rottenTomatoesUrl(path: unknown): string | null {
   return typeof path === "string" && /^\/(m|tv)\/[a-z0-9_-]+$/i.test(path) ? `https://www.rottentomatoes.com${path}` : null;
@@ -90,6 +96,7 @@ export async function fetchMdblistAudienceScores(imdbIds: string[], mediaType: M
       audience: typeof value === "number" && value >= 0 && value <= 100 ? Math.round(value) : null,
       metacriticUrl: metacriticUrl(item.ratings?.find((r) => r.source === "metacritic")?.url, mediaType),
       rottenTomatoesUrl: rottenTomatoesUrl(item.ratings?.find((r) => r.source === "tomatoes")?.url ?? popcorn?.url),
+      criticsScore: percent(item.ratings?.find((r) => r.source === "tomatoes")?.score),
     };
     scores.set(imdbId, entry);
   }

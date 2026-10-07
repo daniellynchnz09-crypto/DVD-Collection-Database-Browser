@@ -103,6 +103,10 @@ function validNzRatingOrNull(value: string | undefined): string | null {
  * movie_results first (this collection is overwhelmingly films), then tv_results, since the
  * same endpoint returns both in one call regardless of which the id actually is. */
 async function findTmdbIdByImdbId(imdbId: string): Promise<{ tmdbId: number; mediaType: TmdbMediaType } | null> {
+  // The id goes straight into the request path (and tmdb-preview takes it from a request
+  // body), so anything but a real IMDb id is refused rather than letting `../` or `?` steer
+  // a bearer-token request at some other TMDb endpoint (2026-10-07 security pass).
+  if (!/^tt\d+$/.test(imdbId)) return null;
   const data = await tmdbFetch<TmdbFindResponse>(`/find/${imdbId}?external_source=imdb_id`);
   const movieMatch = data?.movie_results?.[0];
   if (typeof movieMatch?.id === "number") return { tmdbId: movieMatch.id, mediaType: "movie" };
@@ -360,13 +364,33 @@ export interface TmdbFields {
  * confirm flow. `isAnimated: null` here means "no TMDb match at all", same "unknown, not a
  * confirmed answer" reasoning as fetchTmdbFieldsById above. */
 export async function lookupTmdbFields(imdbId: string): Promise<TmdbFields> {
+  const cached = lookupCache.get(imdbId);
+  if (cached && Date.now() - cached.at < LOOKUP_CACHE_MS) return cached.fields;
   const found = await findTmdbIdByImdbId(imdbId);
   if (found == null) {
     return { tmdbId: null, tmdbMediaType: null, rating: null, studio: null, isAnimated: null, originalLanguage: null, genres: [] };
   }
   const { rating, studio, isAnimated, originalLanguage, genres, tvInfo } = await fetchTmdbFieldsById(found.tmdbId, found.mediaType);
-  return { tmdbId: found.tmdbId, tmdbMediaType: found.mediaType, rating, studio, isAnimated, originalLanguage, genres, tvInfo: tvInfo ?? null };
+  const fields: TmdbFields = { tmdbId: found.tmdbId, tmdbMediaType: found.mediaType, rating, studio, isAnimated, originalLanguage, genres, tvInfo: tvInfo ?? null };
+  // isAnimated is only null here when the detail fetch itself failed - never remembered.
+  if (isAnimated !== null) {
+    if (lookupCache.size >= LOOKUP_CACHE_MAX) {
+      const oldest = lookupCache.keys().next().value;
+      if (oldest !== undefined) lookupCache.delete(oldest);
+    }
+    lookupCache.set(imdbId, { at: Date.now(), fields });
+  }
+  return fields;
 }
+
+// Recent lookups (2026-10-07, efficiency pass): ConfirmScreen's /api/scan/tmdb-preview runs this
+// for the picked candidate, and the confirm a minute later ran the same 3 TMDb requests (find +
+// details + certification) again for the same film - per entry, before anything is written. Same
+// shape as omdbGetById's detail cache: per process, successful answers only, a short 10 minutes
+// (the confirm's own tmdb_synced_at stays accurate to well within TMDb's 6-month limit).
+const LOOKUP_CACHE_MS = 10 * 60 * 1000;
+const LOOKUP_CACHE_MAX = 200;
+const lookupCache = new Map<string, { at: number; fields: TmdbFields }>();
 
 interface TmdbTvSearchResponse {
   results?: { id: number; name?: string; first_air_date?: string }[];

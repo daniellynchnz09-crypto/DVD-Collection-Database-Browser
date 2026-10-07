@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { requireScanSecret } from "@/lib/scanAuth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
-import { uploadStagedCoverPhoto } from "@danflix/backend";
+import { STAGED_SESSION_ID_PATTERN, uploadStagedCoverPhoto } from "@danflix/backend";
+
+// A full-resolution phone photo at quality 0.9 is a few MB; base64 adds a third. 25M characters
+// (~18MB of image) leaves plenty of room while still bounding one request.
+const MAX_UPLOAD_BODY_CHARS = 25_000_000;
+const ALLOWED_UPLOAD_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 /**
  * Receives a cover photo's bytes straight from the device - the one genuinely new upload
@@ -27,16 +32,38 @@ export async function POST(request: Request) {
   const authError = requireScanSecret(request);
   if (authError) return authError;
 
+  // Size checked off the declared length before the body is parsed, then again on the decoded
+  // bytes (2026-10-07 security pass) - nothing else limits how much one request can make the
+  // server buffer and push into Storage.
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_UPLOAD_BODY_CHARS) {
+    return NextResponse.json({ error: "That photo is too large." }, { status: 413 });
+  }
+
   const body = await request.json().catch(() => null);
   const sessionId = typeof body?.sessionId === "string" ? body.sessionId.trim() : "";
   const imageBase64 = typeof body?.imageBase64 === "string" ? body.imageBase64 : "";
-  const contentType = typeof body?.contentType === "string" ? body.contentType : "image/jpeg";
+  const requestedType = typeof body?.contentType === "string" ? body.contentType.toLowerCase() : "image/jpeg";
   if (!sessionId || !imageBase64) {
     return NextResponse.json({ error: "sessionId and imageBase64 are required" }, { status: 400 });
+  }
+  // sessionId becomes part of a Storage path, so it must be the app's own id shape - no `/` or
+  // `..` to reach outside this session's folder.
+  if (!STAGED_SESSION_ID_PATTERN.test(sessionId)) {
+    return NextResponse.json({ error: "Invalid sessionId" }, { status: 400 });
+  }
+  // The stored type is what staged-cover-preview serves the photo back as, so only real photo
+  // types are kept (the app always sends image/jpeg).
+  const contentType = ALLOWED_UPLOAD_TYPES.has(requestedType) ? requestedType : "image/jpeg";
+  if (imageBase64.length > MAX_UPLOAD_BODY_CHARS) {
+    return NextResponse.json({ error: "That photo is too large." }, { status: 413 });
   }
 
   const supabase = getSupabaseServerClient();
   const bytes = Buffer.from(imageBase64, "base64");
+  if (bytes.length === 0) {
+    return NextResponse.json({ error: "imageBase64 isn't valid image data" }, { status: 400 });
+  }
   const path = `sessions/${sessionId}/${randomUUID()}.jpg`;
 
   const stagedPath = await uploadStagedCoverPhoto(supabase, path, bytes, contentType);
@@ -62,6 +89,9 @@ export async function DELETE(request: Request) {
   const sessionId = new URL(request.url).searchParams.get("sessionId")?.trim();
   if (!sessionId) {
     return NextResponse.json({ error: "sessionId is required" }, { status: 400 });
+  }
+  if (!STAGED_SESSION_ID_PATTERN.test(sessionId)) {
+    return NextResponse.json({ error: "Invalid sessionId" }, { status: 400 });
   }
 
   const supabase = getSupabaseServerClient();

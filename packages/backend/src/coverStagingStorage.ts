@@ -16,6 +16,13 @@ import { autocropImageBuffer } from "./imageCrop";
 const STAGING_BUCKET = "cover-scan-staging";
 const CASE_IMAGES_BUCKET = "case-images";
 
+/** The only shapes a staged path or session id may take - exactly what cover-photo/route.ts
+ * writes (`sessions/{sessionId}/{uuid}.jpg`, the session id from the app's scanSession.ts).
+ * Shared (2026-10-07 security pass) by every route that takes one from a request, so none of
+ * them can be handed `..` or another prefix inside the bucket. */
+export const STAGED_SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+export const STAGED_COVER_PATH_PATTERN = /^sessions\/[A-Za-z0-9_-]{1,64}\/[0-9a-f-]{36}\.jpg$/i;
+
 /** Uploads a freshly-captured cover photo's raw, uncropped bytes to the staging bucket -
  * cropping now happens server-side, during resolution (scanResolver.ts's
  * analyzeStagedCoverPhotos, via coverVision.ts's detectCoverBoundingBox +

@@ -125,40 +125,125 @@ export async function buildOrientationPreviews(
 ): Promise<Buffer[] | null> {
   if (!/^image\/(jpe?g|png)$/i.test(contentType)) return null;
   try {
-    const image = await Jimp.fromBuffer(buffer);
-    const { width, height, data } = image.bitmap;
-    const factor = Math.max(1, Math.ceil(Math.max(width, height) / maxSide));
-    const w = Math.floor(width / factor);
-    const h = Math.floor(height / factor);
-    const out = Buffer.alloc(w * h * 4);
-    const area = factor * factor;
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        let r = 0, g = 0, b = 0;
-        for (let dy = 0; dy < factor; dy++) {
-          let i = ((y * factor + dy) * width + x * factor) * 4;
-          for (let dx = 0; dx < factor; dx++, i += 4) {
-            r += data[i];
-            g += data[i + 1];
-            b += data[i + 2];
-          }
-        }
-        const o = (y * w + x) * 4;
-        out[o] = r / area;
-        out[o + 1] = g / area;
-        out[o + 2] = b / area;
-        out[o + 3] = 255;
-      }
-    }
-    const previews: Buffer[] = [];
-    for (const degreesClockwise of [0, 90, 180, 270]) {
-      const small = Jimp.fromBitmap({ width: w, height: h, data: out });
-      const turned = degreesClockwise === 0 ? small : rotateMethods.rotate(small, -degreesClockwise);
-      previews.push(await turned.getBuffer("image/jpeg", { quality: 85 }));
-    }
-    return previews;
+    return await previewsFromBitmap((await Jimp.fromBuffer(buffer)).bitmap, maxSide);
   } catch {
     return null;
+  }
+}
+
+/** buildOrientationPreviews' work on an already-decoded bitmap (shared with
+ * straightenAndCropCoverPhoto below, which has one in hand already). Throws on failure. */
+async function previewsFromBitmap(
+  bitmap: { width: number; height: number; data: Buffer },
+  maxSide: number
+): Promise<Buffer[]> {
+  const { width, height, data } = bitmap;
+  const factor = Math.max(1, Math.ceil(Math.max(width, height) / maxSide));
+  const w = Math.floor(width / factor);
+  const h = Math.floor(height / factor);
+  const out = Buffer.alloc(w * h * 4);
+  const area = factor * factor;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let r = 0, g = 0, b = 0;
+      for (let dy = 0; dy < factor; dy++) {
+        let i = ((y * factor + dy) * width + x * factor) * 4;
+        for (let dx = 0; dx < factor; dx++, i += 4) {
+          r += data[i];
+          g += data[i + 1];
+          b += data[i + 2];
+        }
+      }
+      const o = (y * w + x) * 4;
+      out[o] = r / area;
+      out[o + 1] = g / area;
+      out[o + 2] = b / area;
+      out[o + 3] = 255;
+    }
+  }
+  const previews: Buffer[] = [];
+  for (const degreesClockwise of [0, 90, 180, 270]) {
+    const small = Jimp.fromBitmap({ width: w, height: h, data: out });
+    const turned = degreesClockwise === 0 ? small : rotateMethods.rotate(small, -degreesClockwise);
+    previews.push(await turned.getBuffer("image/jpeg", { quality: 85 }));
+  }
+  return previews;
+}
+
+/**
+ * Straightens and crops a freshly staged cover photo in ONE decode and ONE encode (2026-10-07,
+ * efficiency pass). scanResolver.ts used to chain normalizeImageOrientation ->
+ * buildOrientationPreviews -> rotateImageBuffer -> cropImageBufferToBox, and each of those
+ * decodes the full-size phone photo again (pure-JS Jimp, roughly a second or more per decode of
+ * a 12 MP JPEG) and three of them re-encode it - four decodes, three encodes and three rounds
+ * of JPEG quality loss per photo. Same steps, same order, same results: the EXIF orientation is
+ * baked in by the one decode (see normalizeImageOrientation's comment), the previews come from
+ * that same upright bitmap, `locate` (the Gemini call) answers rotation + box, and the rotate
+ * and crop are applied to the decoded image before a single encode at JPEG_QUALITY.
+ *
+ * `changed` mirrors the old chain: a JPEG always counts as changed (the orientation bake
+ * re-encodes it, as before), a PNG only when it was rotated or cropped. Any failure to decode or
+ * encode returns the original bytes unchanged - same "wrong/missing data is worse than no crop"
+ * convention as the rest of this file.
+ */
+export async function straightenAndCropCoverPhoto(
+  buffer: Buffer,
+  contentType: string,
+  locate: (previews: Buffer[]) => Promise<{
+    rotation: 0 | 90 | 180 | 270;
+    box: { xMin: number; yMin: number; xMax: number; yMax: number } | null;
+  } | null>
+): Promise<{ bytes: Buffer; changed: boolean }> {
+  if (!/^image\/(jpe?g|png)$/i.test(contentType)) return { bytes: buffer, changed: false };
+  const isPng = /png/i.test(contentType);
+  let image: Awaited<ReturnType<typeof Jimp.fromBuffer>>;
+  try {
+    image = await Jimp.fromBuffer(buffer);
+  } catch {
+    return { bytes: buffer, changed: false };
+  }
+
+  let previews: Buffer[] | null = null;
+  try {
+    previews = await previewsFromBitmap(image.bitmap, 768);
+  } catch {
+    // No previews, no rotation/crop answer - the photo is still orientation-normalized below.
+  }
+  const located = previews ? await locate(previews) : null;
+
+  let transformed = false;
+  if (located?.rotation) {
+    try {
+      image = rotateMethods.rotate(image, -located.rotation) as typeof image;
+      transformed = true;
+    } catch {
+      // Left unrotated, same as rotateImageBuffer's own failure fallback.
+    }
+  }
+  const box = located?.box;
+  if (box) {
+    const imgWidth = image.bitmap.width;
+    const imgHeight = image.bitmap.height;
+    const x = Math.max(0, Math.round((box.xMin / 100) * imgWidth));
+    const y = Math.max(0, Math.round((box.yMin / 100) * imgHeight));
+    const w = Math.min(imgWidth - x, Math.round(((box.xMax - box.xMin) / 100) * imgWidth));
+    const h = Math.min(imgHeight - y, Math.round(((box.yMax - box.yMin) / 100) * imgHeight));
+    if (w > 0 && h > 0) {
+      try {
+        image = cropMethods.crop(image, { x, y, w, h }) as typeof image;
+        transformed = true;
+      } catch {
+        // Left uncropped, same as cropImageBufferToBox's own failure fallback.
+      }
+    }
+  }
+
+  if (isPng && !transformed) return { bytes: buffer, changed: false };
+  try {
+    const bytes = isPng ? await image.getBuffer("image/png") : await image.getBuffer("image/jpeg", { quality: JPEG_QUALITY });
+    return { bytes, changed: true };
+  } catch {
+    return { bytes: buffer, changed: false };
   }
 }
 

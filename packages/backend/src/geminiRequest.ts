@@ -51,9 +51,11 @@ export async function generateGeminiJson(parts: unknown[], generationConfig: Rec
   for (const model of modelChain()) {
     if ((skipUntil.get(model) ?? 0) > Date.now()) continue;
     try {
-      const res = await fetch(`${API_BASE}/${model}:generateContent?key=${apiKey}`, {
+      // Key in Google's x-goog-api-key header, not the `?key=` query string (2026-10-07), so it
+      // can't turn up in a logged or error-reported URL.
+      const res = await fetch(`${API_BASE}/${encodeURIComponent(model)}:generateContent`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
         body,
       });
       if (res.status === 429 || res.status === 404 || res.status >= 500) {
