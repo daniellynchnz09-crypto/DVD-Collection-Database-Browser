@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { confirmScan, yearSuffix } from "../lib/scanApi";
+import { confirmScan, ScanApiError, yearSuffix } from "../lib/scanApi";
 import {
   getQueuedSubmissions,
   removeQueuedSubmission,
@@ -74,6 +74,12 @@ export default function OfflineQueueScreen({ onBack }: { onBack: () => void }) {
       await removeQueuedSubmission(item.id);
       await load();
     } catch (err) {
+      // Already saved (409) - nothing left to do, so the item just goes (2026-10-09).
+      if (err instanceof ScanApiError && err.status === 409) {
+        await removeQueuedSubmission(item.id);
+        await load();
+        return;
+      }
       Alert.alert("Couldn't submit", (err as Error).message);
     } finally {
       setResolvingId(null);
@@ -87,6 +93,12 @@ export default function OfflineQueueScreen({ onBack }: { onBack: () => void }) {
       await removeQueuedSubmission(item.id);
       await load();
     } catch (err) {
+      // Already saved (409) - nothing left to do, so the item just goes (2026-10-09).
+      if (err instanceof ScanApiError && err.status === 409) {
+        await removeQueuedSubmission(item.id);
+        await load();
+        return;
+      }
       Alert.alert("Couldn't submit", (err as Error).message);
     } finally {
       setResolvingId(null);

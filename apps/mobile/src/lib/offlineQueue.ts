@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { confirmScan, findExistingTitle, type ConfirmEntry, type FindExistingResult } from "./scanApi";
+import { confirmScan, findExistingTitle, ScanApiError, type ConfirmEntry, type FindExistingResult } from "./scanApi";
 
 /**
  * On-device queue for a Confirm submission made while offline (added 2026-09-18, per the
@@ -178,6 +178,15 @@ async function syncOfflineQueueOnce(): Promise<{ submitted: number; flagged: num
         flagged++;
       }
     } catch (err) {
+      // 409: the server already saved this scan - typically the first attempt reached it but
+      // its reply was lost, which is what put the item in this queue. The job is done, so the
+      // item goes quietly instead of sitting as an error retried forever (the user's call,
+      // 2026-10-09). Counted as submitted, since that's what happened.
+      if (err instanceof ScanApiError && err.status === 409) {
+        await removeQueuedSubmission(item.id);
+        submitted++;
+        continue;
+      }
       await updateQueuedSubmission(item.id, { status: "error", lastError: (err as Error).message });
       failed++;
     }

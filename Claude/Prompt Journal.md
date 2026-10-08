@@ -908,3 +908,14 @@ They also asked to save the agent's report artifact in the project, now at TECH 
 - **TMDb:** logo added.
 
 Full list is in rate-limits.md section 5. Hosting research: Vercel is fine with this design; Render's free tier (sleeps after 15 min) is the only real free alternative.
+- **Applied the same day:** shrink-stored-case-images --apply (90 of 92 photos, 181.5 MB to 14.1 MB) and remove-retail-listing-images --apply (1,407 photos, 321.8 MB, deleted; 94 kept). Private Storage is now ~35 MB instead of 524 MB. Removed the three merged agent worktrees. Migrations 0055/0056 are written but NOT yet applied, waiting for a fresh Management API token, and scan resolving needs 0055.
+
+2026-10-09 (follow-up): the user supplied a fresh Management API token (used in-chat only, not stored).
+- **Migrations:** applied 0055 to both projects and 0056 to the private one. Verified: the claimed_until column exists, anon has no access to the new table or function, and the job claim gives first-call true, second-call false (test row deleted). A live resolver run worked (0 pending).
+- **Decisions:** stay on Vercel; no OMDb Patreon tier.
+- **Questions answered:** explained the offline-queue 409 question (still awaiting the user's choice), gave the Supabase sign-up steps again, and listed the disc condition values.
+
+2026-10-09 (follow-up 2):
+- **Offline queue:** now removes an item automatically when the server answers 409 (already saved), both in the background sync and in the Offline Queue screen's Overwrite/New-entry buttons (new ScanApiError carries the status). Untested on device.
+- **Sign-ups:** the user turned off Supabase sign-ups themselves; marked done on the checklist.
+- **Darkness Falls (2003 DVD):** disc_condition set to Unplayable Scenes in Supabase and the Sheet, both verified.

@@ -1,6 +1,14 @@
 const API_URL = process.env.EXPO_PUBLIC_SCAN_API_URL!;
 const API_SECRET = process.env.EXPO_PUBLIC_SCAN_API_SECRET!;
 
+/** A request the server answered with an error status - `status` lets callers tell a real failure
+ * from an answer like 409 "this scan has already been saved" (2026-10-09, offlineQueue.ts). */
+export class ScanApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     method: "POST",
@@ -10,7 +18,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   // A non-JSON body (an HTML error page from the server or a proxy, 2026-10-07) used to throw
   // a bare "JSON Parse error" here, hiding the status code the message below reports.
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.error ?? `Request to ${path} failed (${res.status})`);
+  if (!res.ok) throw new ScanApiError(data?.error ?? `Request to ${path} failed (${res.status})`, res.status);
   if (data === null) throw new Error(`Request to ${path} returned an unreadable response (${res.status})`);
   return data as T;
 }
