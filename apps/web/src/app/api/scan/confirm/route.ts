@@ -4,7 +4,14 @@ import { refreshWebsiteCaches } from "@/lib/catalog/cacheRefresh";
 import { requireScanSecret } from "@/lib/scanAuth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { logScanEvent } from "@/lib/scanLog";
-import { appendRowToSheet, getSheetHeaderAndColumns, updateSheetFieldsByUniqueId } from "@/lib/googleSheets";
+import {
+  appendRowToSheet,
+  deleteSheetRowsByUniqueIds,
+  getSheetHeaderAndColumns,
+  getSheetRowByUniqueId,
+  restoreSheetRowByUniqueId,
+  updateSheetFieldsByUniqueId,
+} from "@/lib/googleSheets";
 import { canonicalizeValue } from "@/lib/canonicalizeValue";
 import {
   buildColumnIndexes,
@@ -44,6 +51,58 @@ import {
   tagWeirdMovieMatches,
 } from "@danflix/backend";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
+/** A confirm write that failed and must roll the whole confirm back (see rollBackConfirmWrites). */
+class ConfirmWriteError extends Error {}
+
+/** What a confirm has written so far, so a failure can undo it (2026-10-07). */
+type WriteJournalEntry =
+  | { kind: "insert"; uniqueId: string; caseImagePath: string | null }
+  | { kind: "overwrite"; uniqueId: string; previousRow: Record<string, unknown>; previousSheetValues: string[] };
+
+/**
+ * Undoes a failed confirm's writes, newest first: inserted rows are deleted from the database and
+ * the Sheet (with the case image stored under their own new id), overwritten rows get their
+ * previous database values and Sheet cells back. Best effort - returns a description of anything
+ * that couldn't be undone, so the error the app shows says exactly what to check.
+ * (An Overwrite's replaced case image can't be restored - it's written to the same path.)
+ */
+async function rollBackConfirmWrites(
+  supabase: SupabaseClient,
+  journal: WriteJournalEntry[],
+  header: string[],
+  columnIndexes: Record<string, number>
+): Promise<string[]> {
+  const problems: string[] = [];
+  const inserted = journal.filter((j): j is Extract<WriteJournalEntry, { kind: "insert" }> => j.kind === "insert");
+  for (const j of [...journal].reverse()) {
+    if (j.kind !== "overwrite") continue;
+    const { error } = await supabase.from("titles").update(j.previousRow).eq("unique_id", j.uniqueId);
+    if (error) problems.push(`database row ${j.uniqueId} (restore: ${error.message})`);
+    try {
+      if (!(await restoreSheetRowByUniqueId(j.uniqueId, j.previousSheetValues, header, columnIndexes))) {
+        problems.push(`Sheet row ${j.uniqueId} (not found to restore)`);
+      }
+    } catch (err) {
+      problems.push(`Sheet row ${j.uniqueId} (restore: ${err instanceof Error ? err.message : err})`);
+    }
+  }
+  if (inserted.length) {
+    const ids = inserted.map((j) => j.uniqueId);
+    try {
+      // Every inserted id is tried, even ones whose append threw - a timed-out append may still have landed.
+      await deleteSheetRowsByUniqueIds(ids, columnIndexes);
+    } catch (err) {
+      problems.push(`Sheet rows for ${ids.join(", ")} (delete: ${err instanceof Error ? err.message : err})`);
+    }
+    const { error } = await supabase.from("titles").delete().in("unique_id", ids);
+    if (error) problems.push(`database rows ${ids.join(", ")} (delete: ${error.message})`);
+    // Only images stored under one of these brand-new ids - never an existing title's image.
+    const images = [...new Set(inserted.map((j) => j.caseImagePath).filter((p): p is string => !!p && ids.some((id) => p.includes(id))))];
+    if (images.length) await supabase.storage.from("case-images").remove(images);
+  }
+  return problems;
+}
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
@@ -908,40 +967,72 @@ export async function POST(request: Request) {
     }
   }
 
-  for (let i = 0; i < built.length; i++) {
-    const { entry, title } = built[i];
-    const uniqueId = title.unique_id as string;
-    // Sheet-only cells already known at write time (the never-priced "n/a" below), written in
-    // the same Sheet call as the rest of the row.
-    const sheetOnlyFields: Record<string, unknown> = {};
-    const sheetFields = { ...title, ...sheetOnlyFields };
+  // All-or-nothing writes (the user, 2026-10-07: "a sheet failure should stop the save so that
+  // once fixed the import can happen again and there will be no duplicates"). Every database
+  // and Sheet write below is journalled; if any of them fails - the Sheet most often (quota,
+  // auth, network) - everything already written by this confirm is undone and the scan stays
+  // pending, so retrying later starts clean instead of adding a box set's first titles twice.
+  const journal: WriteJournalEntry[] = [];
+  try {
+    for (let i = 0; i < built.length; i++) {
+      const { entry, title } = built[i];
+      const uniqueId = title.unique_id as string;
+      // Sheet-only cells already known at write time (the never-priced "n/a" below), written in
+      // the same Sheet call as the rest of the row.
+      const sheetOnlyFields: Record<string, unknown> = {};
+      const sheetFields = { ...title, ...sheetOnlyFields };
 
-    if (entry.overwriteUniqueId) {
-      const { error: updateError } = await supabase.from("titles").update(title).eq("unique_id", entry.overwriteUniqueId);
-      if (updateError) {
-        return NextResponse.json({ error: updateError.message }, { status: 500 });
-      }
-      await updateSheetFieldsByUniqueId(entry.overwriteUniqueId, sheetFields, header, columnIndexes);
-    } else {
-      const { error: insertError } = await supabase.from("titles").insert(title);
-      if (insertError) {
-        return NextResponse.json({ error: insertError.message }, { status: 500 });
-      }
-      const row = buildSheetRowFromTitle(sheetFields, columnIndexes, header.length);
-      await appendRowToSheet(row);
-    }
-    createdIds.push(uniqueId);
+      if (entry.overwriteUniqueId) {
+        // Snapshot both copies first, so a later failure can put this row back exactly.
+        const overwriteId = entry.overwriteUniqueId;
+        const { data: previousRow, error: snapshotError } = await supabase
+          .from("titles")
+          .select(Object.keys(title).join(","))
+          .eq("unique_id", overwriteId)
+          .maybeSingle();
+        if (snapshotError || !previousRow) throw new ConfirmWriteError(`Couldn't read the entry being overwritten: ${snapshotError?.message ?? "not found"}`);
+        const previousSheetRow = await getSheetRowByUniqueId(overwriteId, columnIndexes);
+        if (!previousSheetRow) throw new ConfirmWriteError("The entry being overwritten isn't in the Google Sheet (no row with its Unique Identifier).");
+        journal.push({ kind: "overwrite", uniqueId: overwriteId, previousRow: previousRow as unknown as Record<string, unknown>, previousSheetValues: previousSheetRow.values });
 
-    if (i === 0) {
-      primaryShelfLocation = await computeShelfLocation(
-        supabase,
-        title.genre_location as string | null,
-        title.title as string,
-        title.depicted_era_start as number | null,
-        title.who_shelf_order as number | null,
-        uniqueId
-      );
+        const { error: updateError } = await supabase.from("titles").update(title).eq("unique_id", overwriteId);
+        if (updateError) throw new ConfirmWriteError(`Database update failed: ${updateError.message}`);
+        if (!(await updateSheetFieldsByUniqueId(overwriteId, sheetFields, header, columnIndexes))) {
+          throw new ConfirmWriteError("The entry being overwritten disappeared from the Google Sheet mid-save.");
+        }
+      } else {
+        const { error: insertError } = await supabase.from("titles").insert(title);
+        if (insertError) throw new ConfirmWriteError(`Database insert failed: ${insertError.message}`);
+        journal.push({ kind: "insert", uniqueId, caseImagePath: (title.case_image_path as string | null) ?? null });
+        const row = buildSheetRowFromTitle(sheetFields, columnIndexes, header.length);
+        await appendRowToSheet(row);
+      }
+      createdIds.push(uniqueId);
+
+      if (i === 0) {
+        primaryShelfLocation = await computeShelfLocation(
+          supabase,
+          title.genre_location as string | null,
+          title.title as string,
+          title.depicted_era_start as number | null,
+          title.who_shelf_order as number | null,
+          uniqueId
+        );
+      }
     }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error("[confirm] write failed, rolling back:", reason);
+    const rollbackProblems = await rollBackConfirmWrites(supabase, journal, header, columnIndexes);
+    if (rollbackProblems.length) console.error("[confirm] rollback incomplete:", rollbackProblems);
+    return NextResponse.json(
+      {
+        error: rollbackProblems.length
+          ? `Saving failed (${reason}) and some of it couldn't be undone - check these entries before retrying: ${rollbackProblems.join("; ")}`
+          : `Saving failed, so nothing was saved - the scan is still pending and can be retried. (${reason})`,
+      },
+      { status: 502 }
+    );
   }
 
   // Every row this confirm wrote now shows on the website, which lists scanned rows only

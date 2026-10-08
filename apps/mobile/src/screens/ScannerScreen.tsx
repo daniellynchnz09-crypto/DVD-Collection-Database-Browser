@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Modal, StyleSheet, Switch, Text, TouchableOpacity, View } from "react-native";
 import { CameraView, scanFromURLAsync, useCameraPermissions, type BarcodeScanningResult, type BarcodeType } from "expo-camera";
+import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cancelScanSession, fetchUpcQuotaStatus, finishScanSession, uploadCoverPhoto } from "../lib/scanApi";
 import { useScannerSettings } from "../lib/scannerSettings";
@@ -86,6 +87,26 @@ const BARCODE_TYPES: BarcodeType[] = ["ean13", "upc_a", "upc_e"];
  * exposure. It resets back to `"on"` once the capture finishes (success or failure) so the next
  * positioning phase - or plain barcode scanning - gets continuous autofocus again.
  */
+// Cover photos keep the camera's full resolution but are saved as smaller JPEGs (the user,
+// 2026-10-07: shrink the files, keep the dimensions). Quality 0.9 made 3-6MB photos, and the
+// upload is base64 (a third bigger) through an API route - over Vercel's 4.5MB request cap.
+// 0.7 still reads cover text cleanly; an unusually detailed photo that's still too big is
+// re-compressed a step or two further, never resized.
+const COVER_JPEG_QUALITY = 0.7;
+const COVER_UPLOAD_MAX_BASE64_CHARS = 4_000_000;
+
+async function fitCoverUpload(uri: string, base64: string): Promise<string> {
+  if (base64.length <= COVER_UPLOAD_MAX_BASE64_CHARS) return base64;
+  const image = await ImageManipulator.manipulate(uri).renderAsync();
+  let smallest = base64;
+  for (const compress of [0.55, 0.4]) {
+    const saved = await image.saveAsync({ compress, format: SaveFormat.JPEG, base64: true });
+    if (saved.base64) smallest = saved.base64;
+    if (smallest.length <= COVER_UPLOAD_MAX_BASE64_CHARS) break;
+  }
+  return smallest;
+}
+
 export default function ScannerScreen({
   onGoToPending,
   wasRecentlyQueued,
@@ -186,9 +207,10 @@ export default function ScannerScreen({
       setFocusLocked(true);
       await new Promise((resolve) => setTimeout(resolve, 250));
 
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.9, shutterSound: false, base64: true });
+      const photo = await cameraRef.current.takePictureAsync({ quality: COVER_JPEG_QUALITY, shutterSound: false, base64: true });
       if (!photo) throw new Error("No photo returned");
       if (!photo.base64) throw new Error("Capture produced no image data");
+      const coverBase64 = await fitCoverUpload(photo.uri, photo.base64);
 
       // Second automatic-barcode source (see header comment) - best-effort, never blocks the photo.
       if (autoBarcodeEnabled && !session.barcode && photo.uri) {
@@ -200,7 +222,7 @@ export default function ScannerScreen({
         }
       }
 
-      const { stagedPath } = await uploadCoverPhoto(session.sessionId, photo.base64, "image/jpeg");
+      const { stagedPath } = await uploadCoverPhoto(session.sessionId, coverBase64, "image/jpeg");
       setSession((prev) => ({ ...prev, stagedCoverPaths: [...prev.stagedCoverPaths, stagedPath] }));
       setLastMessage(`Cover photo captured (${session.stagedCoverPaths.length + 1} this session).`);
     } catch (err) {
