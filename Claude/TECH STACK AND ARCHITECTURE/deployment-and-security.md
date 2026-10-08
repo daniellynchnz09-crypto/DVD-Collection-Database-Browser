@@ -38,4 +38,4 @@ The user asked to be reminded of these before publishing:
 2. **Turn off Supabase sign-ups and anonymous sign-ins** in both projects (Authentication settings). Migrations 0053/0054 already removed the signed-in role's access, but switching these off stops the accounts being created at all.
 3. **Set up rate limiting** (Vercel Firewall). See the rate-limits report.
 4. **Set OWNER_PASSCODE, MDBLIST_API_KEY** and the other keys in Vercel.
-5. **Replace the in-process background pollers** (`instrumentation.ts`), which won't run on serverless. See the rate-limits report.
+5. ~~**Replace the in-process background pollers** (`instrumentation.ts`), which won't run on serverless.~~ Done 2026-10-09: `instrumentation.ts` is gone. Background work (scan resolving, TMDb refresh, Estimated Value pricing queue, weekly staging clean-up) now runs in `after()` only while the site or scanner app is in use (`apps/web/src/lib/backgroundJobs.ts`, `/api/activity`, migrations 0055/0056). Apply 0055 to both projects and 0056 to the private one before deploying.

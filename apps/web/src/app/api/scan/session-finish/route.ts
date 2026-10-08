@@ -2,11 +2,15 @@ import { NextResponse } from "next/server";
 import { requireScanSecret } from "@/lib/scanAuth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { logScanEvent } from "@/lib/scanLog";
+import { kickBackgroundJobs } from "@/lib/backgroundJobs";
 import { deleteStagedCoverPhotos, STAGED_COVER_PATH_PATTERN } from "@danflix/backend";
 
 // Each staged photo costs several Gemini calls at resolve time; no real session comes near this,
 // it just stops one request from queueing an unbounded amount of work.
 const MAX_STAGED_COVERS = 20;
+
+// The new scan is resolved in after(), right away (lib/backgroundJobs.ts).
+export const maxDuration = 300;
 
 /**
  * Renamed from /api/scan/queue (2026-09-28) as part of cover-photo scanning: ScannerScreen no
@@ -87,5 +91,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  kickBackgroundJobs(["resolve-scans"], { immediate: true });
   return NextResponse.json({ pendingScanId: data.id, replacedIds });
 }

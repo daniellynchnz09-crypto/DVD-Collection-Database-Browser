@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { autocropImageBuffer } from "./imageCrop";
+import { autocropImageBuffer, shrinkForStorage } from "./imageCrop";
 
 /**
  * Storage helper for cover-photo scanning's temporary holding area
@@ -120,7 +120,8 @@ export async function promoteStagedCoverToCaseImage(
   const staged = await downloadStagedCoverPhoto(supabase, stagedPath);
   if (!staged) return null;
   try {
-    const bytes = await autocropImageBuffer(staged.bytes, staged.contentType);
+    // Scaled down for keeping (shrinkForStorage, 2026-10-09) - the staged copy is full size.
+    const bytes = await shrinkForStorage(await autocropImageBuffer(staged.bytes, staged.contentType), staged.contentType);
     const path = `titles/${uniqueId}/case.jpg`;
     const { error } = await supabase.storage.from(CASE_IMAGES_BUCKET).upload(path, bytes, {
       contentType: staged.contentType,
@@ -130,4 +131,40 @@ export async function promoteStagedCoverToCaseImage(
   } catch {
     return null;
   }
+}
+
+// A staged photo older than this, belonging to no scan still waiting in Pending Scans, was left
+// behind by a session that never reached Done (app closed mid-session, a failed upload's retry).
+const STALE_STAGED_COVER_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Deletes staged cover photos nothing will ever use (2026-10-09, rate-limit report: the bucket
+ * only ever grew, since cleanup happens on a scan's terminal step and an abandoned session never
+ * gets one). Keeps anything newer than a week and anything a pending/resolved/needs-manual scan
+ * still lists. Run weekly by apps/web's background jobs. Returns how many files were deleted.
+ */
+export async function removeAbandonedStagedCovers(supabase: SupabaseClient): Promise<number> {
+  const { data: openScans, error: scansError } = await supabase
+    .from("pending_scans")
+    .select("staged_cover_photos")
+    .in("status", ["pending", "resolved", "needs_manual"]);
+  if (scansError) throw new Error(scansError.message);
+  const inUse = new Set((openScans ?? []).flatMap((s) => (s.staged_cover_photos as string[] | null) ?? []));
+
+  const cutoff = Date.now() - STALE_STAGED_COVER_MS;
+  const { data: sessions } = await supabase.storage.from(STAGING_BUCKET).list("sessions", { limit: 1000 });
+  const doomed: string[] = [];
+  for (const session of sessions ?? []) {
+    const folder = `sessions/${session.name}`;
+    const { data: files } = await supabase.storage.from(STAGING_BUCKET).list(folder, { limit: 1000 });
+    for (const file of files ?? []) {
+      const path = `${folder}/${file.name}`;
+      const created = Date.parse(file.created_at ?? "");
+      if (!inUse.has(path) && Number.isFinite(created) && created < cutoff) doomed.push(path);
+    }
+  }
+  for (let i = 0; i < doomed.length; i += 100) {
+    await supabase.storage.from(STAGING_BUCKET).remove(doomed.slice(i, i + 100));
+  }
+  return doomed.length;
 }

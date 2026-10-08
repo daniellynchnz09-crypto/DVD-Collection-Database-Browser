@@ -87,24 +87,30 @@ const BARCODE_TYPES: BarcodeType[] = ["ean13", "upc_a", "upc_e"];
  * exposure. It resets back to `"on"` once the capture finishes (success or failure) so the next
  * positioning phase - or plain barcode scanning - gets continuous autofocus again.
  */
-// Cover photos keep the camera's full resolution but are saved as smaller JPEGs (the user,
-// 2026-10-07: shrink the files, keep the dimensions). Quality 0.9 made 3-6MB photos, and the
-// upload is base64 (a third bigger) through an API route - over Vercel's 4.5MB request cap.
-// 0.7 still reads cover text cleanly; an unusually detailed photo that's still too big is
-// re-compressed a step or two further, never resized.
-const COVER_JPEG_QUALITY = 0.7;
+// Cover photos are scaled down on the phone before upload, keeping their aspect ratio (the user,
+// 2026-10-09: the camera shoots around 4K, far more than a case photo needs - "keep the aspect
+// ratio, but you can change the dimensions"). The long side is capped at 1920px (Full HD), still
+// plenty for Gemini to read the cover text and find the case; the server then crops to the case
+// and stores it smaller again (imageCrop.ts's shrinkForStorage). A 1920px JPEG at 0.8 is a few
+// hundred KB, far under Vercel's 4.5MB request cap even as base64. Captured at 0.85 because it
+// is re-encoded once more here.
+const COVER_CAPTURE_QUALITY = 0.85;
+const COVER_UPLOAD_MAX_SIDE = 1920;
+const COVER_UPLOAD_QUALITY = 0.8;
 const COVER_UPLOAD_MAX_BASE64_CHARS = 4_000_000;
 
 async function fitCoverUpload(uri: string, base64: string): Promise<string> {
-  if (base64.length <= COVER_UPLOAD_MAX_BASE64_CHARS) return base64;
-  const image = await ImageManipulator.manipulate(uri).renderAsync();
-  let smallest = base64;
-  for (const compress of [0.55, 0.4]) {
-    const saved = await image.saveAsync({ compress, format: SaveFormat.JPEG, base64: true });
-    if (saved.base64) smallest = saved.base64;
-    if (smallest.length <= COVER_UPLOAD_MAX_BASE64_CHARS) break;
+  const original = await ImageManipulator.manipulate(uri).renderAsync();
+  const portrait = original.height > original.width;
+  if (Math.max(original.width, original.height) <= COVER_UPLOAD_MAX_SIDE && base64.length <= COVER_UPLOAD_MAX_BASE64_CHARS) {
+    return base64;
   }
-  return smallest;
+  // Only one side is given, so the other follows from the photo's own aspect ratio.
+  const resized = await ImageManipulator.manipulate(uri)
+    .resize(portrait ? { height: COVER_UPLOAD_MAX_SIDE } : { width: COVER_UPLOAD_MAX_SIDE })
+    .renderAsync();
+  const saved = await resized.saveAsync({ compress: COVER_UPLOAD_QUALITY, format: SaveFormat.JPEG, base64: true });
+  return saved.base64 ?? base64;
 }
 
 export default function ScannerScreen({
@@ -207,7 +213,7 @@ export default function ScannerScreen({
       setFocusLocked(true);
       await new Promise((resolve) => setTimeout(resolve, 250));
 
-      const photo = await cameraRef.current.takePictureAsync({ quality: COVER_JPEG_QUALITY, shutterSound: false, base64: true });
+      const photo = await cameraRef.current.takePictureAsync({ quality: COVER_CAPTURE_QUALITY, shutterSound: false, base64: true });
       if (!photo) throw new Error("No photo returned");
       if (!photo.base64) throw new Error("Capture produced no image data");
       const coverBase64 = await fitCoverUpload(photo.uri, photo.base64);

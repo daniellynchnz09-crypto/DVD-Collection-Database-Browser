@@ -1,5 +1,6 @@
 import { createJimp } from "@jimp/core";
 import { methods as cropMethods } from "@jimp/plugin-crop";
+import { methods as resizeMethods } from "@jimp/plugin-resize";
 import { methods as rotateMethods } from "@jimp/plugin-rotate";
 import jpeg from "@jimp/js-jpeg";
 import png from "@jimp/js-png";
@@ -9,12 +10,45 @@ import png from "@jimp/js-png";
 // to resolve it) - see that file's own comment for the full explanation. Crop and rotate are
 // both added on top of the two decoders this build needs (rotate() itself also pulls in
 // @jimp/plugin-resize as a peer, since rotating resizes the canvas to fit).
-const Jimp = createJimp({ plugins: [cropMethods, rotateMethods], formats: [jpeg, png] });
+const Jimp = createJimp({ plugins: [cropMethods, resizeMethods, rotateMethods], formats: [jpeg, png] });
 
 /** JPEG quality for every image this file writes. Jimp's default is 100, which made a re-crop
  * of a 380 KB product photo come out at 2.5 MB (2026-10-07); 88 looks the same on a case photo
  * at a fraction of the size. */
 const JPEG_QUALITY = 88;
+
+/**
+ * Size of every image kept for good in case-images (2026-10-09, the user's call after the
+ * rate-limit report found case photos averaging 2 MB and the free 1 GB of Storage half full):
+ * "keep the aspect ratio, but you can change the dimensions to shrink the image", below HD is
+ * fine. The long side is capped at 1200px - sharp on a title page even on a large screen - and
+ * saved at JPEG quality 80, roughly a tenth of the old size. Never enlarged.
+ */
+export const STORED_IMAGE_MAX_SIDE = 1200;
+const STORED_JPEG_QUALITY = 80;
+
+/**
+ * Scales an image down to STORED_IMAGE_MAX_SIDE on its long side (the other side follows, so the
+ * aspect ratio is unchanged) and re-encodes it, for the final copy written to case-images. A PNG
+ * stays a PNG (it may have transparency). Any failure returns the original bytes.
+ */
+export async function shrinkForStorage(buffer: Buffer, contentType: string): Promise<Buffer> {
+  if (!/^image\/(jpe?g|png)$/i.test(contentType)) return buffer;
+  try {
+    let image = await Jimp.fromBuffer(buffer);
+    const { width, height } = image.bitmap;
+    if (Math.max(width, height) > STORED_IMAGE_MAX_SIDE) {
+      image = resizeMethods.resize(image, height > width ? { h: STORED_IMAGE_MAX_SIDE } : { w: STORED_IMAGE_MAX_SIDE }) as typeof image;
+    }
+    const out = /png/i.test(contentType)
+      ? await image.getBuffer("image/png")
+      : await image.getBuffer("image/jpeg", { quality: STORED_JPEG_QUALITY });
+    // An already-small, already-compressed image can come out bigger; keep whichever is smaller.
+    return out.length < buffer.length ? out : buffer;
+  } catch {
+    return buffer;
+  }
+}
 
 /**
  * Auto-crops a uniform-color border (almost always a plain white studio background on a

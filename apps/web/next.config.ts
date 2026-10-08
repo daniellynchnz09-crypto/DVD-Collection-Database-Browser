@@ -43,9 +43,12 @@ const nextConfig: NextConfig = {
   },
 
   images: {
-    // Only our own private-bucket signed URLs go through the optimizer (lib/catalog/images.ts);
-    // TMDb posters are already pre-sized and rendered `unoptimized`. Kept tight so the
-    // optimizer can't be used as an open image proxy.
+    // Nothing goes through the optimizer at the moment: TMDb posters come pre-sized and Storage
+    // photos are served as they are (lib/catalog/images.ts, 2026-10-09). The allow-list stays
+    // tight so the optimizer can't be used as an open image proxy, and anything that does use it
+    // later is kept for a month rather than re-converted (each conversion counts against
+    // Vercel's free monthly allowance).
+    minimumCacheTTL: 2678400,
     remotePatterns: [
       ...(supabaseHost
         ? [{ protocol: "https" as const, hostname: supabaseHost, pathname: "/storage/v1/object/sign/**" }]

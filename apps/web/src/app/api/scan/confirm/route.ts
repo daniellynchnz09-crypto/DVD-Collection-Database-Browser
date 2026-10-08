@@ -5,7 +5,7 @@ import { requireScanSecret } from "@/lib/scanAuth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
 import { logScanEvent } from "@/lib/scanLog";
 import {
-  appendRowToSheet,
+  appendRowsToSheet,
   deleteSheetRowsByUniqueIds,
   getSheetHeaderAndColumns,
   getSheetRowByUniqueId,
@@ -316,7 +316,7 @@ async function computeShelfLocation(
  * `entry.overwriteUniqueId` (per-entry, added 2026-09-20): instead of inserting a new row for
  * THAT entry, fully replaces every field of the already-catalogued title at that unique_id
  * with this entry's data (Supabase update + a full Sheet row rewrite via
- * updateSheetFieldsByUniqueId, not appendRowToSheet). This is the "Overwrite" option
+ * updateSheetFieldsByUniqueId, not appendRowsToSheet). This is the "Overwrite" option
  * ConfirmScreen's pre-submit similar-entry check offers (Claude/TECH STACK AND
  * ARCHITECTURE.md's "Backfill Rescan" section) - functionally equivalent to deleting the old
  * entry and re-adding it as described, but implemented as an update-in-place so the row's
@@ -329,6 +329,9 @@ async function computeShelfLocation(
  * one request - the write loop below already processed this per-iteration even before this
  * change, so only the field's origin (per-entry vs. request-level) actually moved.
  */
+// Room for after()'s metadata refresh and the Estimated Value job it starts (lib/backgroundJobs.ts).
+export const maxDuration = 300;
+
 export async function POST(request: Request) {
   const authError = requireScanSecret(request);
   if (authError) return authError;
@@ -973,6 +976,9 @@ export async function POST(request: Request) {
   // auth, network) - everything already written by this confirm is undone and the scan stays
   // pending, so retrying later starts clean instead of adding a box set's first titles twice.
   const journal: WriteJournalEntry[] = [];
+  // New rows go to the Sheet together after the loop, in one call (2026-10-09: a 9-title box set
+  // made 18 Sheets calls appending them one by one; now it makes 2). Same rows either way.
+  const newSheetRows: string[][] = [];
   try {
     for (let i = 0; i < built.length; i++) {
       const { entry, title } = built[i];
@@ -1004,8 +1010,7 @@ export async function POST(request: Request) {
         const { error: insertError } = await supabase.from("titles").insert(title);
         if (insertError) throw new ConfirmWriteError(`Database insert failed: ${insertError.message}`);
         journal.push({ kind: "insert", uniqueId, caseImagePath: (title.case_image_path as string | null) ?? null });
-        const row = buildSheetRowFromTitle(sheetFields, columnIndexes, header.length);
-        await appendRowToSheet(row);
+        newSheetRows.push(buildSheetRowFromTitle(sheetFields, columnIndexes, header.length));
       }
       createdIds.push(uniqueId);
 
@@ -1020,6 +1025,7 @@ export async function POST(request: Request) {
         );
       }
     }
+    await appendRowsToSheet(newSheetRows);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     console.error("[confirm] write failed, rolling back:", reason);

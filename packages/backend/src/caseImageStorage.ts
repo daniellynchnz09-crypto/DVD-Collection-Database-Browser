@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { detectCoverBoundingBox } from "./coverVision";
-import { autocropImageBuffer, cropImageBufferToBox } from "./imageCrop";
+import { autocropImageBuffer, cropImageBufferToBox, shrinkForStorage } from "./imageCrop";
 import { fetchRemoteImage } from "./remoteImageFetch";
 
 /**
@@ -47,6 +47,7 @@ export async function uploadCaseImage(supabase: SupabaseClient, path: string, im
     if (box && ((box.xMax - box.xMin) / 100) * ((box.yMax - box.yMin) / 100) < MAX_UNCROPPED_AREA_FRACTION) {
       bytes = await cropImageBufferToBox(bytes, contentType, box);
     }
+    bytes = await shrinkForStorage(bytes, contentType);
 
     const { error } = await supabase.storage.from(BUCKET).upload(path, bytes, { contentType, upsert: true });
     return error ? null : path;

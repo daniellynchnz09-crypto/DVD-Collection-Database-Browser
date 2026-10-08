@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { requireScanSecret } from "@/lib/scanAuth";
 import { getSupabaseServerClient } from "@/lib/supabaseServer";
+import { ALL_JOBS, kickBackgroundJobs } from "@/lib/backgroundJobs";
+
+// Opening the list also starts any background job that is due (lib/backgroundJobs.ts) - a scan
+// waiting on quota, the TMDb refresh, Estimated Value pricing - in after().
+export const maxDuration = 300;
 
 /**
  * The scanner app's Pending Scans list (added 2026-10-06). The app used to read
@@ -27,5 +32,6 @@ export async function POST(request: Request) {
     .order("scanned_at", { ascending: true });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+  kickBackgroundJobs(ALL_JOBS);
   return NextResponse.json({ scans: data ?? [] });
 }

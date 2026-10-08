@@ -5,7 +5,7 @@
  * value the user typed in themselves (rating_is_manual/studio_is_manual). Run by hand
  * (`npm run refresh:tmdb` from the repo root) until a Vercel Cron job can call this
  * automatically once deployed - the same interval also runs continuously inside
- * apps/web/instrumentation.ts while `next dev`/the deployed server is up, so this script
+ * apps/web/src/lib/backgroundJobs.ts while the site or scanner app is in use, so this script
  * is mainly for testing or forcing an immediate catch-up pass.
  *
  * Required env vars (see .env.example): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,

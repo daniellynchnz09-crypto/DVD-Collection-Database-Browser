@@ -60,11 +60,16 @@ function TitleBackdrop({ image }: { image: CatalogImage | null }) {
   );
 }
 
+/** TMDb's API terms ask for their logo alongside this notice, less prominent than the site's own
+ * branding (logo added 2026-10-09; public/tmdb-logo.svg is TMDb's official stacked logo). */
 export function TmdbAttribution() {
   return (
-    <p className="mx-auto max-w-screen-2xl px-4 pb-6 text-[11px] leading-snug text-mist-dim sm:px-6">
-      This product uses the TMDB API but is not endorsed or certified by TMDB.
-    </p>
+    <div className="mx-auto flex max-w-screen-2xl items-center gap-3 px-4 pb-6 sm:px-6">
+      <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" className="shrink-0" aria-label="The Movie Database (TMDB)">
+        <Image src="/tmdb-logo.svg" alt="TMDB" width={40} height={29} unoptimized className="h-auto w-10 opacity-80" />
+      </a>
+      <p className="text-[11px] leading-snug text-mist-dim">This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+    </div>
   );
 }
 

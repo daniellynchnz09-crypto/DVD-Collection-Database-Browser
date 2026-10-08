@@ -20,7 +20,8 @@
     "backfill-classic-who-serial-release-dates": "tsx src/backfill-classic-who-serial-release-dates.ts",
     "find-missing-rotten-tomatoes": "tsx src/find-missing-rotten-tomatoes.ts",
     "backfill-title-metadata": "tsx src/backfill-title-metadata.ts",
-    "backfill-rotten-tomatoes-links": "tsx src/backfill-rotten-tomatoes-links.ts"
+    "backfill-rotten-tomatoes-links": "tsx src/backfill-rotten-tomatoes-links.ts",
+    "shrink-stored-case-images": "tsx src/shrink-stored-case-images.ts"
   },
   "dependencies": {
     "@danflix/backend": "*",

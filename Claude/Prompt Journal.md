@@ -889,3 +889,22 @@ Same session: the user pointed at the person/franchise portrait circle and asked
   - **Public history rewrite (user approved):** filter-branch replaced the borrower's name in all 41 affected journal versions, then a force-push with lease. The final tree is unchanged, and a mirror backup was kept in the scratchpad. The public checkout's working folder had lost 158 files (commits intact, matching GitHub), so it was restored from HEAD first.
   - **Reminder saved:** rotate the scanner secret before Vercel or an APK (memory, plus a "Before going live" list in deployment-and-security.md).
   - **Rate limits:** sent a research agent to report on rate limits.
+  - **Rate-limit report:** delivered and published, then saved as TECH STACK AND ARCHITECTURE/rate-limits.md. Measured storage: 524 MB of 1 GB used, with case photos averaging 2.0 MB. Biggest risks: the 5-minute GitHub job versus 2,000 free minutes, storage, the Vercel pollers, and the UPCitemdb 6/min cap.
+
+2026-10-09 (rate-limit follow-up): the user answered the report and asked for action-list items 4-11, plus a check that last prompt's items were all done. Their answers:
+- the 5-minute GitHub job should only run while someone is on the site;
+- convert all photos to lower quality, below HD is fine, keeping the aspect ratio but not necessarily the dimensions;
+- retail listing photos stay only when the title has no case photo of its own, otherwise they're removed once its Estimated Value review is finished;
+- look for another provider than Vercel for background jobs;
+- UPCitemdb's 6/min cap won't be hit in practice.
+
+They also asked to save the agent's report artifact in the project, now at TECH STACK AND ARCHITECTURE/rate-limits-report.html. What was built:
+- **Background work:** instrumentation.ts removed. lib/backgroundJobs.ts runs jobs in after() only when the site (ActivityBeacon pinging /api/activity) or the scanner app is active, with a database claim per job (0055).
+- **GitHub job:** resolve-scans.yml is manual only.
+- **Scans:** claimed atomically. UPCitemdb 429/5xx defers the scan instead of losing the listing, and lookups are paced. Gemini is paced too, and a scan defers when every model is out of quota.
+- **Pricing:** Estimated Value is queued (0056) instead of fire-and-forget.
+- **Images:** stored photos are capped at 1200 px (sample 2.0 MB to 178 KB), and phone uploads at 1920 px. Retail photos are deleted when their review finishes. There are new one-off scripts for the existing photos, and storage images are served unoptimized.
+- **Sheets:** box-set rows are written in one call, with retries.
+- **TMDb:** logo added.
+
+Full list is in rate-limits.md section 5. Hosting research: Vercel is fine with this design; Render's free tier (sleeps after 15 min) is the only real free alternative.

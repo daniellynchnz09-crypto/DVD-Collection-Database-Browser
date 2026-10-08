@@ -24,6 +24,31 @@ const DEFAULT_MODELS = ["gemini-flash-lite-latest", "gemini-3.1-flash-lite", "ge
 
 const skipUntil = new Map<string, number>();
 
+// At most one request per model every 5s (~12 a minute) - the free tier allows about 15 a minute
+// per model, and one cover photo alone makes several calls back to back, so a burst of scans
+// used to run straight into per-minute 429s (2026-10-09 rate-limit report). Per process; the
+// resolver itself only ever runs one batch at a time (background_job_runs, 0055).
+const MIN_GAP_MS = 5_000;
+const lastCallAt = new Map<string, number>();
+
+async function paceModel(model: string): Promise<void> {
+  const wait = (lastCallAt.get(model) ?? 0) + MIN_GAP_MS - Date.now();
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  lastCallAt.set(model, Date.now());
+}
+
+/**
+ * When every model in the chain is currently skipped (out of quota, retired or down), the time
+ * the first one comes back; otherwise null. scanResolver.ts uses this to leave a cover-photo scan
+ * pending until then, rather than resolving it with no cover read at all.
+ */
+export function geminiUnavailableUntil(): number | null {
+  if (!process.env.GEMINI_API_KEY) return null;
+  const now = Date.now();
+  const until = modelChain().map((m) => skipUntil.get(m) ?? 0);
+  return until.every((t) => t > now) ? Math.min(...until) : null;
+}
+
 function modelChain(): string[] {
   const fromEnv = process.env.GEMINI_MODELS?.split(",").map((m) => m.trim()).filter(Boolean);
   return fromEnv && fromEnv.length > 0 ? fromEnv : DEFAULT_MODELS;
@@ -50,6 +75,7 @@ export async function generateGeminiJson(parts: unknown[], generationConfig: Rec
 
   for (const model of modelChain()) {
     if ((skipUntil.get(model) ?? 0) > Date.now()) continue;
+    await paceModel(model);
     try {
       // Key in Google's x-goog-api-key header, not the `?key=` query string (2026-10-07), so it
       // can't turn up in a logged or error-reported URL.

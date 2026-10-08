@@ -19,7 +19,8 @@ import {
 import { matchPosterToCandidates } from "./posterMatch";
 import { detectFormatFromImage } from "./formatVision";
 import { extractListingTextFields, type ListingTextExtraction } from "./listingTextExtract";
-import { recordUpcRateLimit } from "./upcQuota";
+import { getUpcQuotaStatus, recordUpcRateLimit } from "./upcQuota";
+import { geminiUnavailableUntil } from "./geminiRequest";
 import { getSignedPosterImageUrl } from "./posterImageStorage";
 import { downloadStagedCoverPhoto, replaceStagedCoverPhoto } from "./coverStagingStorage";
 import { detectCoverFromImage, detectCoverOrientationAndBoxFromPreviews, type StagedCoverAnalysis } from "./coverVision";
@@ -241,10 +242,44 @@ function pickCoverDerivedMemberTitles(analyses: StagedCoverAnalysis[]): string[]
   return merged.length > 0 ? merged : null;
 }
 
-// Pending scans whose last resolve attempt threw, and when they may be tried again (per
-// process, like the poller itself). See the catch in resolvePendingScansBatch.
+// A scan whose resolve attempt threw is tried again after this long. See the catch in
+// resolvePendingScansBatch.
 const FAILED_SCAN_RETRY_MS = 5 * 60 * 1000;
-const failedScanRetryAt = new Map<string, number>();
+// How long a resolver holds a scan it is working on (pending_scans.claimed_until, 0055). Far
+// longer than one scan takes, so another resolver never picks it up mid-way; a crashed run's
+// scan simply becomes available again once this passes.
+const SCAN_CLAIM_MS = 10 * 60 * 1000;
+// UPCitemdb's trial allows 6 lookups a minute; one every 12s stays at 5 (2026-10-09).
+const UPC_MIN_GAP_MS = 12_000;
+// When UPCitemdb refuses a lookup without saying when its quota resets.
+const UPC_RETRY_MS = 2 * 60 * 1000;
+let lastUpcLookupAt = 0;
+
+/** Raised inside the per-scan work when it has to wait for a provider's quota: the scan is left
+ * "pending" until `retryAt` instead of being resolved with that lookup missing. */
+class DeferScan extends Error {
+  constructor(readonly retryAt: number, reason: string) {
+    super(reason);
+  }
+}
+
+/** Takes one scan for this run - succeeds only while it's still pending and nobody else holds it.
+ * A single conditional UPDATE, so two resolvers racing for the same row can't both get it. */
+async function claimPendingScan(supabase: SupabaseClient, id: string): Promise<boolean> {
+  const now = new Date();
+  const { data } = await supabase
+    .from("pending_scans")
+    .update({ claimed_until: new Date(now.getTime() + SCAN_CLAIM_MS).toISOString() })
+    .eq("id", id)
+    .eq("status", "pending")
+    .or(`claimed_until.is.null,claimed_until.lt.${now.toISOString()}`)
+    .select("id");
+  return (data?.length ?? 0) > 0;
+}
+
+async function releasePendingScan(supabase: SupabaseClient, id: string, retryAt: number): Promise<void> {
+  await supabase.from("pending_scans").update({ claimed_until: new Date(retryAt).toISOString() }).eq("id", id);
+}
 
 export async function resolvePendingScansBatch(
   supabase: SupabaseClient,
@@ -254,6 +289,7 @@ export async function resolvePendingScansBatch(
     .from("pending_scans")
     .select("id, barcode, staged_cover_photos")
     .eq("status", "pending")
+    .or(`claimed_until.is.null,claimed_until.lt.${new Date().toISOString()}`)
     .order("scanned_at", { ascending: true })
     .limit(limit);
 
@@ -264,13 +300,17 @@ export async function resolvePendingScansBatch(
   let attempted = 0;
 
   for (const scan of pending ?? []) {
-    const retryAt = failedScanRetryAt.get(scan.id);
-    if (retryAt !== undefined && Date.now() < retryAt) continue;
+    if (!(await claimPendingScan(supabase, scan.id))) continue;
     attempted++;
-    failedScanRetryAt.delete(scan.id);
     try {
       const stagedCoverPaths: string[] = (scan.staged_cover_photos as string[] | null) ?? [];
+      // Cover photos are read by Gemini; with every model out of quota the read would come back
+      // empty and the scan would resolve as if the photos showed nothing. Wait for quota instead.
+      const geminiBackAt = stagedCoverPaths.length > 0 ? geminiUnavailableUntil() : null;
+      if (geminiBackAt) throw new DeferScan(geminiBackAt, "every Gemini model is out of quota");
       const coverAnalysis = await analyzeStagedCoverPhotos(supabase, stagedCoverPaths);
+      const geminiRanOutAt = stagedCoverPaths.length > 0 ? geminiUnavailableUntil() : null;
+      if (geminiRanOutAt) throw new DeferScan(geminiRanOutAt, "Gemini ran out of quota while reading the cover photos");
       const coverDerivedTitle = pickCoverDerivedTitle(coverAnalysis);
       // The box set's own member titles, when the cover actually lists them (see
       // pickCoverDerivedMemberTitles's own comment) - ConfirmScreen.tsx's Collection flow shows
@@ -350,12 +390,24 @@ export async function resolvePendingScansBatch(
         .limit(1)
         .maybeSingle();
 
-      const { product: upcProduct, rateLimit: upcRateLimit } = await upcLookup(scan.barcode);
+      // Out of today's UPCitemdb lookups: wait for the reset rather than spending a refused call.
+      const upcQuota = await getUpcQuotaStatus(supabase).catch(() => null);
+      if (upcQuota && upcQuota.remaining <= 0 && upcQuota.resetAt) {
+        throw new DeferScan(Date.parse(upcQuota.resetAt), "UPCitemdb's daily lookups are used up");
+      }
+      const upcWait = lastUpcLookupAt + UPC_MIN_GAP_MS - Date.now();
+      if (upcWait > 0) await new Promise((resolve) => setTimeout(resolve, upcWait));
+      lastUpcLookupAt = Date.now();
+      const { product: upcProduct, rateLimit: upcRateLimit, tryLater: upcTryLater } = await upcLookup(scan.barcode);
       // Mirrors UPCitemdb's own real rate-limit headers from this call - see upcQuota.ts's own
       // comment on why this reads the provider's authoritative number rather than counting
       // calls itself. Never blocks/awaits-critically on failure - a quota-tracking write
       // failing must never stop the actual scan resolution below it.
       await recordUpcRateLimit(supabase, upcRateLimit).catch(() => {});
+      if (upcTryLater) {
+        const resetAt = upcRateLimit?.remaining === 0 && upcRateLimit.resetAt ? Date.parse(upcRateLimit.resetAt) : NaN;
+        throw new DeferScan(Number.isFinite(resetAt) ? resetAt : Date.now() + UPC_RETRY_MS, "UPCitemdb refused the lookup or was down");
+      }
       if (!upcProduct) {
         // No barcode listing at all, but a cover photo was also captured this session (any
         // combination of barcode/front/back is valid - decision 6) - fall back to the same
@@ -495,11 +547,18 @@ export async function resolvePendingScansBatch(
       if (status === "resolved") resolved++;
       else needsManual++;
     } catch (err) {
+      if (err instanceof DeferScan) {
+        // Waiting on a provider's quota isn't a failure: the scan stays pending until then.
+        attempted--;
+        await releasePendingScan(supabase, scan.id, err.retryAt).catch(() => {});
+        console.log(`[scan-resolver] Pending scan ${scan.id} waits until ${new Date(err.retryAt).toISOString()}: ${err.message}.`);
+        continue;
+      }
       // One scan whose lookups throw (OMDb or UPCitemdb unreachable, an unreadable response)
       // used to abort the whole batch (2026-10-07). The row stays "pending" and is oldest
-      // first, so every later scan sat behind it, and each 15s retry spent another UPCitemdb
-      // lookup on it. Now it is skipped for a while and the rest of the batch carries on.
-      failedScanRetryAt.set(scan.id, Date.now() + FAILED_SCAN_RETRY_MS);
+      // first, so every later scan sat behind it, and each retry spent another UPCitemdb
+      // lookup on it. Now it waits a while (claimed_until) and the rest of the batch carries on.
+      await releasePendingScan(supabase, scan.id, Date.now() + FAILED_SCAN_RETRY_MS).catch(() => {});
       console.error(`[scan-resolver] Failed to resolve pending scan ${scan.id}:`, err);
     }
   }

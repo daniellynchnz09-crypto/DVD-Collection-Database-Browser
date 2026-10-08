@@ -34,6 +34,11 @@ export interface UpcLookupResult {
   // null only when the fetch itself failed outright (network error) before any response -
   // every real HTTP response, ok or not, still carries the rate-limit headers.
   rateLimit: UpcRateLimit | null;
+  // True when UPCitemdb refused the lookup (429 - its 6-a-minute or 100-a-day cap) or was down
+  // (5xx), so "no product" means "ask again later", not "this barcode has no listing"
+  // (2026-10-09 rate-limit report: a refused lookup used to be treated as not found, and the
+  // scan went to manual entry with that barcode's listing silently lost).
+  tryLater?: boolean;
 }
 
 /**
@@ -43,6 +48,7 @@ export interface UpcLookupResult {
 export async function upcLookup(barcode: string): Promise<UpcLookupResult> {
   const res = await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${encodeURIComponent(barcode)}`);
   const rateLimit = parseRateLimitHeaders(res.headers);
+  if (res.status === 429 || res.status >= 500) return { product: null, rateLimit, tryLater: true };
   if (!res.ok) return { product: null, rateLimit };
   const data = (await res.json()) as {
     items?: { title: string; description?: string; images?: string[]; category?: string }[];

@@ -1,0 +1,335 @@
+<title>DANFLIX Rate Limits</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one 880px reading column on the DANFLIX dark gradient; summary first (urgent list,
+   meters, table), then per-service detail in collapsible bevelled panels. Dark-only, like the app. */
+:root {
+  --void: #03060b;
+  --deep: #0a1422;
+  --panel: #0f1d30;
+  --rule: #1f3552;
+  --rule-strong: #2c4a70;
+  --chrome: #c6d4e3;
+  --chrome-hi: #eef5fb;
+  --mist: #8193ab;
+  --accent: #5cc8ff;
+  --accent-deep: #0c3554;
+  --high: #ff6b5a;
+  --med: #f5b942;
+  --low: #4fd18b;
+  --display: "Chakra Petch", "Bahnschrift", "Segoe UI", sans-serif;
+  --body: "Barlow", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: radial-gradient(120% 60% at 50% -10%, #12304f 0%, var(--deep) 45%, var(--void) 100%) fixed, var(--void);
+  color: var(--chrome);
+  font: 16px/1.6 var(--body);
+}
+.wrap { max-width: 880px; margin: 0 auto; padding: 32px 16px 64px; display: grid; gap: 40px; }
+h1, h2, h3 { font-family: var(--display); color: var(--chrome-hi); text-wrap: balance; margin: 0; letter-spacing: 0.02em; }
+h1 { font-size: clamp(1.9rem, 5vw, 2.6rem); line-height: 1.05; text-transform: uppercase; letter-spacing: 0.06em; }
+h2 { font-size: 1.3rem; text-transform: uppercase; letter-spacing: 0.1em; display: flex; align-items: center; gap: 10px; }
+h2::before { content: ""; width: 9px; height: 14px; background: var(--accent); clip-path: polygon(0 0, 100% 50%, 0 100%); flex: none; }
+h3 { font-size: 1.05rem; }
+p { margin: 0; max-width: 68ch; }
+.label { font: 600 0.72rem/1 var(--display); letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); }
+.muted { color: var(--mist); }
+code { font: 0.86em var(--mono); color: var(--chrome-hi); background: rgba(92, 200, 255, 0.08); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+a { color: var(--accent); }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+section { display: grid; gap: 16px; min-width: 0; }
+
+header { display: grid; gap: 12px; border-bottom: 1px solid var(--rule-strong); padding-bottom: 24px; }
+.lede { font-size: 1.08rem; color: var(--chrome); }
+
+/* Urgent list */
+.urgent { display: grid; gap: 12px; }
+.alert {
+  display: grid; grid-template-columns: auto 1fr; gap: 6px 14px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.04), transparent 40%), var(--panel);
+  border: 1px solid var(--rule); border-left: 3px solid var(--high);
+  padding: 16px 18px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 6px 18px rgba(0,0,0,0.35);
+}
+.alert.med { border-left-color: var(--med); }
+.alert .n { font: 700 1.6rem/1 var(--display); color: var(--high); grid-row: span 2; font-variant-numeric: tabular-nums; }
+.alert.med .n { color: var(--med); }
+.alert h3 { align-self: center; }
+.alert p { grid-column: 2; }
+
+/* Storage meter */
+.meter-card { background: var(--panel); border: 1px solid var(--rule); padding: 18px; display: grid; gap: 14px; }
+.meter { position: relative; height: 22px; background: var(--void); border: 1px solid var(--rule-strong); box-shadow: inset 0 2px 4px rgba(0,0,0,0.7); display: flex; overflow: hidden; }
+.meter span { height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 0.88rem; }
+.legend i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; }
+.scale { display: flex; justify-content: space-between; font: 0.75rem var(--mono); color: var(--mist); }
+
+/* Table */
+.table-wrap { overflow-x: auto; border: 1px solid var(--rule); background: var(--panel); }
+table { width: 100%; border-collapse: collapse; font-size: 0.9rem; min-width: 640px; }
+th { font: 600 0.7rem/1.2 var(--display); letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); text-align: left; padding: 12px; background: var(--accent-deep); border-bottom: 1px solid var(--rule-strong); }
+td { padding: 11px 12px; border-top: 1px solid var(--rule); vertical-align: top; font-variant-numeric: tabular-nums; }
+td:first-child { color: var(--chrome-hi); font-weight: 600; white-space: nowrap; }
+.pill { display: inline-block; font: 700 0.68rem/1 var(--display); letter-spacing: 0.12em; text-transform: uppercase; padding: 5px 8px; border: 1px solid currentColor; white-space: nowrap; }
+.pill.high { color: var(--high); background: rgba(255,107,90,0.1); }
+.pill.med { color: var(--med); background: rgba(245,185,66,0.1); }
+.pill.low { color: var(--low); background: rgba(79,209,139,0.08); }
+
+/* Decisions */
+.choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.choice { border: 1px solid var(--rule); background: var(--deep); padding: 14px 16px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.choice b { font-family: var(--display); color: var(--chrome-hi); letter-spacing: 0.03em; }
+
+/* Steps */
+ol.steps { margin: 0; padding: 0; list-style: none; counter-reset: s; display: grid; gap: 10px; }
+ol.steps li { counter-increment: s; display: grid; grid-template-columns: 2.2rem 1fr; gap: 12px; align-items: start; }
+ol.steps li::before { content: counter(s); font: 700 0.95rem/2rem var(--display); text-align: center; color: var(--accent); border: 1px solid var(--rule-strong); background: var(--accent-deep); height: 2rem; }
+ol.steps li > div { min-width: 0; }
+.group-label { margin-top: 8px; }
+
+/* Detail panels */
+details { border: 1px solid var(--rule); background: var(--panel); }
+details[open] { border-color: var(--rule-strong); }
+summary { cursor: pointer; padding: 14px 16px; display: flex; align-items: center; gap: 12px; font: 600 1rem var(--display); color: var(--chrome-hi); list-style: none; letter-spacing: 0.03em; }
+summary::-webkit-details-marker { display: none; }
+summary::before { content: ""; width: 8px; height: 10px; background: var(--accent); clip-path: polygon(0 0, 100% 50%, 0 100%); transition: transform 0.15s; flex: none; }
+details[open] summary::before { transform: rotate(90deg); }
+summary .pill { margin-left: auto; }
+.detail { padding: 4px 16px 18px 36px; display: grid; gap: 10px; border-top: 1px solid var(--rule); padding-top: 14px; }
+.detail ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.detail .k { font: 600 0.7rem var(--display); letter-spacing: 0.14em; text-transform: uppercase; color: var(--mist); }
+.sources { font-size: 0.8rem; color: var(--mist); overflow-wrap: anywhere; }
+footer { font-size: 0.85rem; color: var(--mist); border-top: 1px solid var(--rule); padding-top: 16px; display: grid; gap: 6px; }
+@media (max-width: 480px) { .detail { padding-left: 16px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="label">DANFLIX 5.0 // Limits check // 9 Oct 2026</span>
+    <h1>Rate limits &amp; free-tier ceilings</h1>
+    <p class="lede">Every outside service the scanner and website lean on, how close we come to its limits, and what to change before the site goes live on Vercel. Limits were checked against each provider's own pages on 9 October 2026; storage figures are measured from your Supabase projects the same day.</p>
+  </header>
+
+  <section>
+    <h2>Fix first</h2>
+    <div class="urgent">
+      <div class="alert">
+        <span class="n">1</span>
+        <h3>The 5-minute GitHub job is likely over your free minutes</h3>
+        <p><code>resolve-scans.yml</code> runs every 5 minutes on a private repo: at least 8,640 minutes a month against a free 2,000. When minutes run out GitHub blocks <em>every</em> workflow, including the daily Supabase keep-alive, and the public demo database pauses after 7 quiet days. If a card is on file, it's costing roughly US$40–80 a month. Check GitHub → Settings → Billing and plans → Actions, and switch the job to manual.</p>
+      </div>
+      <div class="alert">
+        <span class="n">2</span>
+        <h3>Supabase photo storage is half full</h3>
+        <p>The private project already holds 524 MB of the free 1 GB. Each stored case photo averages 2.0 MB, so there's room for about 240 more scanned cases, against a collection of ~3,000. See the meter and options below.</p>
+      </div>
+      <div class="alert">
+        <span class="n">3</span>
+        <h3>The background jobs won't run on Vercel</h3>
+        <p>The 15-second scan resolver, hourly TMDb refresh and 30-minute Estimated Value check all live in <code>instrumentation.ts</code>, which needs an always-on server. Vercel has none, and its free cron runs once a day. They need replacing before deploying.</p>
+      </div>
+      <div class="alert med">
+        <span class="n">4</span>
+        <h3>UPCitemdb also caps you at 6 lookups a minute</h3>
+        <p>When it refuses one, the code reads that as "no listing for this barcode" and never retries, so real barcode data is lost silently after the 6th scan in a minute.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Supabase storage, measured</h2>
+    <div class="meter-card">
+      <span class="label">Private project // 1 GB free</span>
+      <div class="meter" role="img" aria-label="524 of 1024 megabytes used">
+        <span style="width:31.9%;background:#c98bff" title="Estimated Value retail images 327 MB"></span>
+        <span style="width:17.7%;background:var(--accent)" title="Case photos 182 MB"></span>
+        <span style="width:1.2%;background:var(--med)" title="Staged covers 13 MB"></span>
+        <span style="width:0.3%;background:var(--low)" title="Posters 3 MB"></span>
+      </div>
+      <div class="scale"><span>0</span><span>512 MB</span><span>1 GB</span></div>
+      <div class="legend">
+        <span><i style="background:#c98bff"></i>Estimated Value retail images · 1,501 files · 327 MB</span>
+        <span><i style="background:var(--accent)"></i>Case photos · 92 files · 182 MB (2.0 MB each)</span>
+        <span><i style="background:var(--med)"></i>Leftover staged covers · 13 MB</span>
+        <span><i style="background:var(--low)"></i>Posters · 3 MB</span>
+      </div>
+      <p class="muted">Database: 144 MB of 500 MB, comfortable. The public demo project is 11 MB and has no titles yet.</p>
+    </div>
+    <p>The upload change made today (JPEG quality 0.7 at full resolution) keeps uploads under Vercel's 4.5 MB request limit, but it doesn't shrink what's <em>stored</em>: the server crops each photo and re-saves it at full size and high quality, so stored case photos stay around 2 MB. You asked to keep photo dimensions, so the choice here is yours:</p>
+    <div class="choices">
+      <div class="choice"><b>Lower stored quality, same size</b><span>Re-save case photos at a lower JPEG quality with dimensions unchanged. Roughly halves each file (estimate). Buys ~500 more cases, not 3,000.</span></div>
+      <div class="choice"><b>Resize stored copies</b><span>Save case photos at ~1,200 px on the long side (~150–250 KB). Fits the whole collection in about 0.5 GB. Changes the dimensions you asked to keep.</span></div>
+      <div class="choice"><b>Supabase Pro, US$25/mo</b><span>100 GB storage, 250 GB downloads, no pausing, daily backups. Keeps full-size photos as they are.</span></div>
+      <div class="choice"><b>Trim retail images</b><span>The Estimated Value retail images are the biggest user at 327 MB. Clearing ones for already-priced titles frees space whichever way you go.</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Every service at a glance</h2>
+    <p class="muted">"Normal day" is a few dozen scans; "box set" is one confirm of about 10 titles; "backfill" is a whole-collection run.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Service</th><th>Free limit</th><th>Our use (day / box set / backfill)</th><th>Risk</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr><td>GitHub Actions</td><td>2,000 min/month (private repo)</td><td>≥ 8,640 min/month from <code>resolve-scans</code></td><td><span class="pill high">High</span></td><td>Make it manual; schedule from Supabase Cron instead</td></tr>
+          <tr><td>Supabase storage</td><td>1 GB files, 5 GB downloads/mo</td><td>524 MB used; +2 MB per case</td><td><span class="pill high">High</span></td><td>Your call (see above)</td></tr>
+          <tr><td>Vercel Hobby</td><td>4.5 MB body; cron once a day; 5,000 image conversions/mo</td><td>n/a until deployed</td><td><span class="pill high">High</span></td><td>Replace pollers; serve case images at stable URLs</td></tr>
+          <tr><td>UPCitemdb</td><td>100/day and 6/min</td><td>~30–40 / 1 / ~3,000</td><td><span class="pill high">High</span></td><td>Pace to ≤5/min; keep refused scans pending</td></tr>
+          <tr><td>OMDb</td><td>1,000/day</td><td>150–400 / 10–25 / 950</td><td><span class="pill med">Medium</span></td><td>US$1/month Patreon tier: 100,000/day</td></tr>
+          <tr><td>Gemini</td><td>~500/day per model; ~15/min (unverified)</td><td>120–150 / 4–6 / ~12,000</td><td><span class="pill med">Medium</span></td><td>Pace to ~10/min; keep scans pending when out of quota</td></tr>
+          <tr><td>Google Sheets</td><td>60 reads + 60 writes/min</td><td>3–10 / 25–55 per confirm</td><td><span class="pill med">Medium</span></td><td>Write a box set's rows in one batch</td></tr>
+          <tr><td>TMDb</td><td>~40/sec; keep data ≤ 6 months</td><td>100–300 / 20–40 / 10,000+</td><td><span class="pill med">Medium</span></td><td>Daily refresh of ~50 titles once deployed</td></tr>
+          <tr><td>MDBList</td><td>1,000/day</td><td>1–5 / 1 / 20–40</td><td><span class="pill low">Low</span></td><td>Nothing needed</td></tr>
+          <tr><td>eBay Browse</td><td>5,000/day</td><td>2–40 / 1–10 / none</td><td><span class="pill low">Low</span></td><td>Nothing needed</td></tr>
+          <tr><td>RapidAPI Amazon</td><td>100/month each, 3 providers</td><td>Manual button only</td><td><span class="pill low">Low</span></td><td>Keep it manual</td></tr>
+          <tr><td>RT, Wikidata, IMDb files</td><td>Politeness rules only</td><td>Small</td><td><span class="pill low">Low</span></td><td>Run big backfills from your PC</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Action list</h2>
+    <span class="label group-label">Now · free</span>
+    <ol class="steps">
+      <li><div>Check GitHub billing and switch <code>resolve-scans.yml</code> to manual-only, so the keep-alive keeps running and nothing is charged.</div></li>
+      <li><div>Decide how case photos are stored (options above) before scanning many more.</div></li>
+      <li><div>Consider the US$1/month OMDb Patreon tier. It's the cheapest fix here; confirm the tier on Patreon first.</div></li>
+    </ol>
+    <span class="label group-label">Before deploying to Vercel · free code changes</span>
+    <ol class="steps" style="counter-reset: s 3">
+      <li><div>Resolve each scan straight after the phone finishes its session, with a Supabase Cron backstop every 5–10 minutes and a daily Vercel cron for the TMDb refresh. Guard the old loops so they only run on your PC.</div></li>
+      <li><div>UPCitemdb safety: treat a refusal as "try later", pace to ≤5 a minute, check the quota table first, and claim each scan so two processes can't pay for the same lookup.</div></li>
+      <li><div>Gemini: pace to about 10 a minute and leave scans pending when every model is out of quota.</div></li>
+      <li><div>Serve case images at stable addresses (or unoptimized once small) so Vercel's 5,000 free image conversions aren't used up by ever-changing signed links.</div></li>
+      <li><div>Move Estimated Value pricing to a queue run off Vercel; checking 15 shops with 5–15 s gaps can't finish inside Vercel's 300 s limit.</div></li>
+    </ol>
+    <span class="label group-label">Soon after · free</span>
+    <ol class="steps" style="counter-reset: s 8">
+      <li><div>Write a box set's Sheet rows in one batch, and retry the background Sheet updates with back-off.</div></li>
+      <li><div>Weekly clean-up of staged cover photos older than 7 days.</div></li>
+      <li><div>Show the TMDb logo beside the attribution notice (their terms ask for both).</div></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Service detail</h2>
+
+    <details>
+      <summary>GitHub Actions <span class="pill high">High</span></summary>
+      <div class="detail">
+        <p>Private repos on a free account get 2,000 minutes a month; when they run out without a payment method, all workflows are blocked. Schedules can't run more often than every 5 minutes and are often delayed at busy times.</p>
+        <span class="k">Our use</span>
+        <p><code>resolve-scans.yml</code> runs <code>*/5 * * * *</code>: checkout, a full <code>npm ci</code> (no cache), then the resolver. That's 288 runs a day, at least 8,640 minutes a month, on since 29 Sept. <code>keep-alive.yml</code> runs daily and needs ~30–60 minutes a month.</p>
+        <span class="k">Recommendations</span>
+        <ul><li>Make <code>resolve-scans</code> manual (<code>workflow_dispatch</code> only) until its Vercel-era replacement exists.</li><li>Add <code>cache: npm</code> to the keep-alive's Node setup.</li></ul>
+        <p class="sources">docs.github.com/en/billing/concepts/product-billing/github-actions · checked 9 Oct 2026. Rounding each run up to a whole minute is long-standing but wasn't on today's page.</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>Vercel Hobby <span class="pill high">High</span></summary>
+      <div class="detail">
+        <ul>
+          <li>Function time: 300 s. Request and response body: 4.5 MB (the same on Pro).</li>
+          <li>1M invocations, 100 GB bandwidth, 4 hours of active CPU a month.</li>
+          <li>5,000 image conversions a month. Cron jobs: at most once a day, timing can drift up to an hour.</li>
+          <li>Going over usually pauses the project rather than billing you.</li>
+        </ul>
+        <span class="k">What breaks</span>
+        <p>The <code>instrumentation.ts</code> loops would start and stop with random server copies, sometimes two at once (paying for the same barcode lookup twice). Case images go through <code>next/image</code> from Supabase signed links that change every 12–24 hours, and each new link counts as a new image, so 5,000 conversions go quickly. Fire-and-forget work started with <code>void</code> in the confirm route can be cut off once the response is sent; the scan log and the Letterboxd folder rely on local files that don't exist there.</p>
+        <span class="k">Allowed?</span>
+        <p>Yes. Hobby is for non-commercial personal use; a personal collection site shared by link qualifies. Ads, affiliate links or payments would end that.</p>
+        <p class="sources">vercel.com/docs/functions/limitations · /limits/fair-use-guidelines · /image-optimization/limits-and-pricing · /cron-jobs/usage-and-pricing · checked 9 Oct 2026</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>Supabase Free <span class="pill high">High</span></summary>
+      <div class="detail">
+        <ul><li>500 MB database, 1 GB file storage (50 MB per file), 5 GB downloads + 5 GB cached downloads a month.</li><li>Pauses after a week of inactivity. Two active free projects per account, and you're using both.</li><li>Over the limit: an email and grace period, then read-only, paused, or 402 errors.</li></ul>
+        <span class="k">Measured 9 Oct</span>
+        <p>Private: database 144 MB; storage 524 MB (case photos 182 MB at 2.0 MB average, retail images 327 MB, staged covers 13 MB, posters 3 MB). Public: 11 MB, no titles.</p>
+        <span class="k">Also</span>
+        <p>Once the site is public, Vercel's image converter downloads full-size originals from Supabase each time a link changes, so 5 GB of downloads is only a couple of thousand case-photo fetches. The public project stays awake only through the GitHub keep-alive.</p>
+        <p class="sources">supabase.com/pricing · /docs/guides/platform/billing-faq · checked 9 Oct 2026</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>UPCitemdb <span class="pill high">High</span></summary>
+      <div class="detail">
+        <p>Free trial: 100 requests a day and 6 lookups a minute. DEV plan: 20,000 lookups a day. Prices aren't published (about US$99/month from memory; ask before buying).</p>
+        <span class="k">What breaks</span>
+        <p><code>packages/shared/src/upc.ts</code> returns "no product" for any refused response, including a 429. The resolver then takes the "no barcode listing" path, the scan becomes needs-manual, and it's never retried. A batch of 20 barcode-only scans hits the per-minute cap at the 7th.</p>
+        <span class="k">Already protecting us</span>
+        <p>Quota tracked from UPCitemdb's own headers into <code>upc_quota_status</code> and shown as a bar; one process can't overlap itself any more.</p>
+        <p class="sources">upcitemdb.com/wp/docs/main/development/api-rate-limits · checked 9 Oct 2026</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>OMDb <span class="pill med">Medium</span></summary>
+      <div class="detail">
+        <p>Free key: 1,000 requests a day. Patreon tiers: about US$1/month for 100,000 a day (from a third-party summary; confirm on Patreon).</p>
+        <p>A scan uses one search plus up to 10 detail calls, and its confirm 1–2 more. A metadata backfill day uses 950 by design, which starves scanning that day. When OMDb says "Request limit reached", scans go to manual and confirms save without plot, director or scores.</p>
+        <p>Protection: a rolling 950/24 h budget in the backfill, IMDb ratings imported from IMDb's own files, and 1-hour caches.</p>
+        <p class="sources">omdbapi.com/apikey.aspx · patreon.com/omdb · checked 9 Oct 2026</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>Google Gemini <span class="pill med">Medium</span></summary>
+      <div class="detail">
+        <p>Limits are per model and per Google Cloud project, resetting at midnight Pacific. Google's own 429 in our logs said 500 a day for <code>gemini-flash-lite-latest</code>; per-minute (~15) is from third-party guides and unverified. The code falls back through 3.5 Flash-Lite, 3.1 Flash-Lite, then Gemma 4.</p>
+        <p>Daily scanning uses ~120–150. The risk is bursts: 20 cover scans in one resolver batch is ~80 requests in a few minutes. When every model is refused, the scan saves without its cover reading (no title guess, crop or rotation) and nothing says it was a quota problem.</p>
+        <p>Paid: switching on billing costs roughly US$0.001 per cover read; a 12,000-request backfill about US$10–15 (estimate). Set a budget alert.</p>
+        <p class="sources">ai.google.dev/gemini-api/docs/rate-limits · /pricing · checked 9 Oct 2026</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>Google Sheets <span class="pill med">Medium</span></summary>
+      <div class="detail">
+        <p>60 reads and 60 writes a minute per user (the service account is one user), 300 a minute per project, no daily cap.</p>
+        <p>A single new title is ~3 calls; a 10-title box set ~23 on the main path, up to ~55 with Letterboxd and Estimated Value extras. Two box sets in the same minute can pass 60 reads. Since 9 Oct a failed Sheet write rolls the whole confirm back and keeps the scan pending, so the cost is a retry, not a duplicate.</p>
+        <p class="sources">developers.google.com/workspace/sheets/api/limits · checked 9 Oct 2026</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>TMDb <span class="pill med">Medium</span></summary>
+      <div class="detail">
+        <p>About 40 requests a second (subject to change). The terms forbid keeping TMDb data longer than 6 months and require their logo plus the "not endorsed" notice.</p>
+        <p>Speed is fine. The 6-month rule is the risk: the refresh only runs from the <code>instrumentation.ts</code> loop or by hand, so on Vercel cast, crew and posters would quietly pass 6 months old. A daily job refreshing ~50 titles keeps it inside.</p>
+        <p class="sources">developer.themoviedb.org/docs/rate-limiting · themoviedb.org/api-terms-of-use · checked 9 Oct 2026</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>MDBList, eBay, RapidAPI, RT, Wikidata, IMDb files <span class="pill low">Low</span></summary>
+      <div class="detail">
+        <ul>
+          <li><b>MDBList:</b> 1,000/day free; €1.20/month for 10,000. We use a handful a day and ~20–40 for a full backfill. Whether a 100-id batch counts as one request is unconfirmed.</li>
+          <li><b>eBay Browse:</b> 5,000 calls a day; we use a few.</li>
+          <li><b>RapidAPI Amazon:</b> 100 a month per provider; manual button only.</li>
+          <li><b>Rotten Tomatoes pages:</b> no published limit; robots.txt allows <code>/m/</code> pages. Cloud servers may get blocked, which the code treats as "no link".</li>
+          <li><b>Wikidata:</b> 60 s of query time per minute per client; one small query per preview.</li>
+          <li><b>IMDb data files:</b> personal, non-commercial use; one ~8 MB download per backfill.</li>
+        </ul>
+      </div>
+    </details>
+  </section>
+
+  <footer>
+    <span>Not verified on 9 Oct: Gemini per-minute limits, UPCitemdb paid prices, OMDb Patreon amounts, MDBList batch counting, eBay's page (blocked), RapidAPI limits (last checked 17 Sept), GitHub's whole-minute rounding.</span>
+    <span>Research was read-only: no code changed and no paid or limited API called.</span>
+  </footer>
+</div>

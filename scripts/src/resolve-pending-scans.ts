@@ -2,9 +2,10 @@
  * Runner for the shared resolver (packages/backend/src/scanResolver.ts) - works through
  * pending_scans at a safe rate against UPCitemdb's free 100/day tier. Runnable by hand
  * (`npm run resolve-scans` from the repo root), and also the script
- * .github/workflows/resolve-scans.yml runs every 5 minutes - a backstop for whenever
- * apps/web's own instrumentation.ts poller (15s, but only while that Node process is
- * actually running - e.g. a local `next dev` left closed) isn't up. See Claude/TECH STACK
+ * .github/workflows/resolve-scans.yml runs - by hand only since 2026-10-09 (its every-5-minutes
+ * schedule used ~4x GitHub's free Actions minutes). Normally apps/web resolves scans itself
+ * (lib/backgroundJobs.ts: as each scan session finishes, and while the site or scanner app is
+ * in use); this is for when that server isn't up. See Claude/TECH STACK
  * AND ARCHITECTURE/barcode-scanning-pipeline.md's "BARCODE SCANNING PIPELINE" section.
  *
  * Required env vars (see .env.example): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,

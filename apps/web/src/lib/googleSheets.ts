@@ -29,6 +29,34 @@ export function getSheetConfig(): { sheetId: string; range: string; tabName: str
   return { sheetId, range, tabName: range.split("!")[0] };
 }
 
+// Waits before each retry of a Sheets call Google refused (429, its 60-reads/60-writes-a-minute
+// quota) or failed on its side (5xx). The 2026-10-09 rate-limit report found the fire-and-forget
+// Sheet updates that run after a confirm simply dropped their write on a 429.
+const SHEETS_RETRY_DELAYS_MS = [2_000, 8_000, 30_000];
+
+function isRetryableSheetsError(err: unknown): boolean {
+  const e = err as { code?: unknown; status?: unknown; response?: { status?: unknown } };
+  const status = Number(e?.response?.status ?? e?.status ?? e?.code);
+  return status === 429 || (status >= 500 && status < 600);
+}
+
+/**
+ * Runs one Sheets API call, retrying with back-off on a 429 or 5xx. Only for calls that are
+ * safe to repeat: reads, and writes to a fixed range (writing the same cells twice changes
+ * nothing). Never used for row deletions, where a retry after an unseen success would delete
+ * the wrong rows.
+ */
+async function withSheetsRetry<T>(call: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await call();
+    } catch (err) {
+      if (attempt >= SHEETS_RETRY_DELAYS_MS.length || !isRetryableSheetsError(err)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, SHEETS_RETRY_DELAYS_MS[attempt]));
+    }
+  }
+}
+
 /**
  * Appends one new row to the Sheet (after the last row with data - Sheets API handles
  * finding the right row for us) and returns the header row + column-index map used,
@@ -40,15 +68,22 @@ export async function getSheetHeaderAndColumns(): Promise<{
 }> {
   const sheets = getSheetsClient();
   const { sheetId, tabName } = getSheetConfig();
-  const { data } = await sheets.spreadsheets.values.get({
-    spreadsheetId: sheetId,
-    range: `${tabName}!1:1`,
-  });
+  const { data } = await withSheetsRetry(() =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: `${tabName}!1:1`,
+    })
+  );
   const header = data.values?.[0] ?? [];
   return { header, headerRowValues: data.values ?? [[]] };
 }
 
-export async function appendRowToSheet(row: string[]): Promise<void> {
+/**
+ * Appends rows below the last row with data, in one write however many there are (2026-10-09:
+ * a box set's members used to be appended one call at a time - same rows, fewer calls).
+ */
+export async function appendRowsToSheet(rows: string[][]): Promise<void> {
+  if (rows.length === 0) return;
   const sheets = getSheetsClient();
   const { sheetId, tabName } = getSheetConfig();
 
@@ -59,18 +94,23 @@ export async function appendRowToSheet(row: string[]): Promise<void> {
   // above it). Computing the target row explicitly - via the Title column, which is
   // NOT NULL so it's non-blank on every real row - sidesteps that auto-detection
   // entirely instead of trying to out-guess it.
-  const { data } = await sheets.spreadsheets.values.get({
-    spreadsheetId: sheetId,
-    range: `${tabName}!A:A`,
-  });
-  const nextRow = (data.values?.length ?? 1) + 1;
+  const { data } = await withSheetsRetry(() =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: `${tabName}!A:A`,
+    })
+  );
+  const firstRow = (data.values?.length ?? 1) + 1;
+  const lastRow = firstRow + rows.length - 1;
 
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: sheetId,
-    range: `${tabName}!${nextRow}:${nextRow}`,
-    valueInputOption: "RAW",
-    requestBody: { values: [row] },
-  });
+  await withSheetsRetry(() =>
+    sheets.spreadsheets.values.update({
+      spreadsheetId: sheetId,
+      range: `${tabName}!${firstRow}:${lastRow}`,
+      valueInputOption: "RAW",
+      requestBody: { values: rows },
+    })
+  );
 }
 
 /** Finds the Sheet row holding a Unique Identifier: its 1-indexed row number and raw cells. */
@@ -83,11 +123,15 @@ export async function getSheetRowByUniqueId(
   const sheets = getSheetsClient();
   const { sheetId, tabName } = getSheetConfig();
   const idColLetter = columnLetter(uniqueIdCol);
-  const { data } = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `${tabName}!${idColLetter}2:${idColLetter}` });
+  const { data } = await withSheetsRetry(() =>
+    sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `${tabName}!${idColLetter}2:${idColLetter}` })
+  );
   const rowOffset = (data.values ?? []).findIndex((r) => r[0] === uniqueId);
   if (rowOffset === -1) return null;
   const rowNumber = rowOffset + 2;
-  const { data: rowData } = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `${tabName}!${rowNumber}:${rowNumber}` });
+  const { data: rowData } = await withSheetsRetry(() =>
+    sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `${tabName}!${rowNumber}:${rowNumber}` })
+  );
   return { rowNumber, values: rowData.values?.[0] ?? [] };
 }
 
@@ -103,12 +147,14 @@ export async function restoreSheetRowByUniqueId(uniqueId: string, values: string
   // Cells the failed write may have filled beyond the old row's last non-empty cell are blanked.
   while (row.length < Math.max(header.length, found.values.length)) row.push("");
   const { sheetId, tabName } = getSheetConfig();
-  await getSheetsClient().spreadsheets.values.update({
-    spreadsheetId: sheetId,
-    range: `${tabName}!${found.rowNumber}:${found.rowNumber}`,
-    valueInputOption: "RAW",
-    requestBody: { values: [row] },
-  });
+  await withSheetsRetry(() =>
+    getSheetsClient().spreadsheets.values.update({
+      spreadsheetId: sheetId,
+      range: `${tabName}!${found.rowNumber}:${found.rowNumber}`,
+      valueInputOption: "RAW",
+      requestBody: { values: [row] },
+    })
+  );
   return true;
 }
 
@@ -123,14 +169,19 @@ export async function deleteSheetRowsByUniqueIds(uniqueIds: string[], columnInde
   const sheets = getSheetsClient();
   const { sheetId, tabName } = getSheetConfig();
   const idColLetter = columnLetter(uniqueIdCol);
-  const { data } = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `${tabName}!${idColLetter}2:${idColLetter}` });
+  const { data } = await withSheetsRetry(() =>
+    sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `${tabName}!${idColLetter}2:${idColLetter}` })
+  );
   const wanted = new Set(uniqueIds);
   const rowIndexes = (data.values ?? []).flatMap((r, i) => (wanted.has(r[0]) ? [i + 1] : [])).sort((a, b) => b - a); // 0-indexed incl. header
   if (!rowIndexes.length) return 0;
   // deleteDimension needs the tab's numeric id, not its name.
-  const { data: meta } = await sheets.spreadsheets.get({ spreadsheetId: sheetId, fields: "sheets.properties(sheetId,title)" });
+  const { data: meta } = await withSheetsRetry(() =>
+    sheets.spreadsheets.get({ spreadsheetId: sheetId, fields: "sheets.properties(sheetId,title)" })
+  );
   const tabId = meta.sheets?.find((s) => s.properties?.title === tabName)?.properties?.sheetId;
   if (tabId == null) throw new Error(`Sheet tab "${tabName}" not found.`);
+  // Not retried - see withSheetsRetry.
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId: sheetId,
     requestBody: {
@@ -162,19 +213,23 @@ export async function updateSheetFieldsByUniqueId(
   const { sheetId, tabName } = getSheetConfig();
   const idColLetter = columnLetter(uniqueIdCol);
 
-  const { data: idColumnData } = await sheets.spreadsheets.values.get({
-    spreadsheetId: sheetId,
-    range: `${tabName}!${idColLetter}2:${idColLetter}`,
-  });
+  const { data: idColumnData } = await withSheetsRetry(() =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: `${tabName}!${idColLetter}2:${idColLetter}`,
+    })
+  );
   const ids = idColumnData.values ?? [];
   const rowOffset = ids.findIndex((r) => r[0] === uniqueId);
   if (rowOffset === -1) return false;
   const rowNumber = rowOffset + 2; // +1 for the header row, +1 for 1-indexing
 
-  const { data: rowData } = await sheets.spreadsheets.values.get({
-    spreadsheetId: sheetId,
-    range: `${tabName}!${rowNumber}:${rowNumber}`,
-  });
+  const { data: rowData } = await withSheetsRetry(() =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: `${tabName}!${rowNumber}:${rowNumber}`,
+    })
+  );
   const row = rowData.values?.[0] ?? [];
   while (row.length < header.length) row.push("");
 
@@ -184,11 +239,13 @@ export async function updateSheetFieldsByUniqueId(
     row[index] = formatFieldForSheet(field, value);
   }
 
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: sheetId,
-    range: `${tabName}!${rowNumber}:${rowNumber}`,
-    valueInputOption: "RAW",
-    requestBody: { values: [row] },
-  });
+  await withSheetsRetry(() =>
+    sheets.spreadsheets.values.update({
+      spreadsheetId: sheetId,
+      range: `${tabName}!${rowNumber}:${rowNumber}`,
+      valueInputOption: "RAW",
+      requestBody: { values: [row] },
+    })
+  );
   return true;
 }

@@ -16,7 +16,13 @@ import type { CatalogImage, TitleCardRow, TitleMetadata } from "./types";
  * signed URLs, which only the service-role key can mint. That key is used here for
  * `storage.createSignedUrls` ONLY - never for row reads (those go through the anon client in
  * client.ts). Signed URLs are cached in memory and reused until close to expiry, so the same
- * image keeps the same URL across requests and browser/optimizer caches stay warm.
+ * image keeps the same URL across requests and browser caches stay warm.
+ *
+ * Storage images are served straight from Supabase, not through Next's image optimizer
+ * (2026-10-09, rate-limit report): a signed URL changes whenever it is re-signed and differs
+ * between server copies, so on Vercel every one counted as a new optimizer conversion against
+ * the free plan's monthly allowance. Stored photos are capped at 1200px now
+ * (imageCrop.ts's shrinkForStorage), small enough to send as they are.
  */
 
 export const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p";
@@ -122,14 +128,14 @@ export async function resolveImages<R extends ImageRow>(
   const out = new Map<string, ResolvedImages>();
   for (const row of rows) {
     const caseSigned = row.case_image_path ? caseUrls.get(row.case_image_path) : undefined;
-    const scannedCase: CatalogImage | null = caseSigned ? { src: caseSigned, source: "case_image", unoptimized: false } : null;
+    const scannedCase: CatalogImage | null = caseSigned ? { src: caseSigned, source: "case_image", unoptimized: true } : null;
     const caseImage = scannedCase ?? externalCaseUrl(row.case_image_url);
 
     const posterSigned = row.movie_poster_path ? posterUrls.get(row.movie_poster_path) : undefined;
     const poster =
       scannedCase ??
       tmdbImage(metadataFor(row)?.poster_path, posterSize) ??
-      (posterSigned ? { src: posterSigned, source: "movie_poster" as const, unoptimized: false } : null) ??
+      (posterSigned ? { src: posterSigned, source: "movie_poster" as const, unoptimized: true } : null) ??
       caseImage;
 
     out.set(row.unique_id, { poster, caseImage });

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Barlow, Chakra_Petch } from "next/font/google";
 import { Suspense } from "react";
+import { ActivityBeacon } from "@/components/ActivityBeacon";
 import { Header } from "@/components/Header";
 import { NavigationTracker } from "@/components/NavigationTracker";
 import { HeaderSearch } from "@/components/search/HeaderSearch";
@@ -46,6 +47,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <Suspense fallback={null}>
           <NavigationTracker />
         </Suspense>
+        <ActivityBeacon />
         <Header search={<HeaderSearch />} />
         <main className="flex-1">{children}</main>
         <footer className="border-t border-rule px-4 py-4 sm:px-6">
