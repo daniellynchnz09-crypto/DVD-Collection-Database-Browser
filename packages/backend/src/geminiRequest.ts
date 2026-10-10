@@ -69,6 +69,15 @@ interface GeminiResponse {
  * or null. Gemma can wrap its JSON in prose or a code fence, so only the outermost {...} is kept.
  */
 export async function generateGeminiJson(parts: unknown[], generationConfig: Record<string, unknown>): Promise<string | null> {
+  return (await generateGeminiJsonWithModel(parts, generationConfig))?.text ?? null;
+}
+
+/** generateGeminiJson, plus which model in the chain answered - for callers that trust some
+ * answers only from the stronger models (Gemma's crop boxes were 4/9 in testing, 2026-10-06). */
+export async function generateGeminiJsonWithModel(
+  parts: unknown[],
+  generationConfig: Record<string, unknown>
+): Promise<{ text: string; model: string } | null> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
   const body = JSON.stringify({ contents: [{ parts }], generationConfig });
@@ -97,7 +106,7 @@ export async function generateGeminiJson(parts: unknown[], generationConfig: Rec
         .join("");
       const start = text.indexOf("{");
       const end = text.lastIndexOf("}");
-      return start >= 0 && end > start ? text.slice(start, end + 1) : null;
+      return start >= 0 && end > start ? { text: text.slice(start, end + 1), model } : null;
     } catch {
       continue;
     }

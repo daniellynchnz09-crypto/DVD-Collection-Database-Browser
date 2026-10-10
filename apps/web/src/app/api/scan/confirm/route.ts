@@ -1045,6 +1045,14 @@ export async function POST(request: Request) {
   // (migration 0046). Kept out of `title` itself so the Sheet writes above never see it.
   if (createdIds.length > 0) {
     await supabase.from("titles").update({ scanned: true }).in("unique_id", createdIds);
+    // A new row gets date_added from the column default; an Overwrite of a Sheet-only row
+    // never did, so it sank to the bottom of the website's Recently Added row. The first scan
+    // is when it really joins the site (the user, 2026-10-11) - later overwrites keep that date.
+    await supabase
+      .from("titles")
+      .update({ date_added: new Date().toISOString() })
+      .in("unique_id", createdIds)
+      .is("date_added", null);
   }
   // "Weird and Wonderful" (migration 0049): tag anything on the 366 Weird Movies lists. Best
   // effort - a failure here never fails the confirm.

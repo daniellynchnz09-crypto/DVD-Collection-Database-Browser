@@ -536,15 +536,20 @@ export async function loadArchiveStats(): Promise<ArchiveStats | null> {
     reportQueryError(`stats ${context}`, error);
     return n ?? 0;
   };
-  const [total, boxSets, dvd, bluray, uhd, tv, boxSetMovies] = await Promise.all([
+  // The TV bar: series, plus mini-series longer than 4 episodes. A mini-series of 4 or fewer
+  // counts as a movie, like a TV movie (the user, 2026-10-11); one with no episode count stays TV.
+  const isTv = (q: CardQuery) =>
+    q.or('movie_or_tv.eq."TV Series",and(movie_or_tv.eq."TV Mini-Series",or(episode_count.gt.4,episode_count.is.null))');
+  const [total, boxSets, dvd, bluray, uhd, tv, boxSetTitles, boxSetTv] = await Promise.all([
     count("total", (q) => q),
     count("box sets", (q) => q, true),
     count("dvd", (q) => q.ilike("format", "DVD%")),
     count("blu-ray", (q) => q.ilike("format", "Blu-Ray%")),
     count("4k", (q) => q.ilike("format", "4K%")),
-    count("tv", (q) => q.in("movie_or_tv", ["TV Series", "TV Mini-Series"])),
-    count("box set movies", (q) => q.eq("title_in_a_collection", true).not("movie_or_tv", "in", '("TV Series","TV Mini-Series")')),
+    count("tv", isTv),
+    count("box set titles", (q) => q.eq("title_in_a_collection", true)),
+    count("box set tv", (q) => isTv(q.eq("title_in_a_collection", true))),
   ]);
   if (total === 0) return null;
-  return { total, boxSets, dvd, bluray, uhd, tv, boxSetMovies };
+  return { total, boxSets, dvd, bluray, uhd, tv, boxSetMovies: boxSetTitles - boxSetTv };
 }
