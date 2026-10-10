@@ -91,10 +91,6 @@ Then, regardless of which side it is, read whatever of the following you can act
 - "artStyle": the main cover art's style - "drawn" if it's an illustrated/painted/animated-style image (flat colours, visible linework, a cel/comic-book look - not a photo of real actors, even if stylized), "photographic" if it's a real photo or photorealistic render of the actors/scene (the ordinary case for almost every live-action release), or "unclear" if you can't tell (too blurry/cropped) or this side has no real cover art to judge at all (e.g. a back cover that's just text).
 - "collectionMemberTitles": if this case is a box set/collection holding MULTIPLE distinct films or TV seasons (the case's own "title" reads like a collection name - "Collection", "Box Set", "Trilogy", a franchise/person's name, etc. - rather than one film's title), list the individual member titles it actually names, e.g. ["Rear Window", "Psycho", "The Birds", "Vertigo"]. These are usually laid out with real visual separation on the cover - separate lines, a column/grid, or one small poster thumbnail per title - not run together in one sentence, so read each title as its own distinct block of text rather than guessing where one title's words end and the next begins from a comma or "and". Skip any non-title text mixed into that layout (a tagline, year, "Digitally Remastered", a bonus-disc mention). Only include a title here if it's independently legible as a real, complete film/show name - if the list is only partially readable (some thumbnails too small/blurry to read), still report whichever ones genuinely are legible rather than skipping the whole field. Null (not an empty array) if this case isn't a multi-title collection at all, or if it is but no member titles are actually legible anywhere on this side.
 
-Finally, where the case sits in this photo. The photo was cropped automatically and may still show some background around the case - a desk, papers, a wall, hands:
-- "caseFillsFrame": true if the case's edges are at or right next to the photo's edges on all four sides, with no background showing; false if background is visible beside, above or below the case.
-- "caseXMin", "caseYMin", "caseXMax", "caseYMax": a tight box around just the case (or cassette), as percentages of this photo's width and height (0-100, 0 = left/top edge). Use 0, 0, 100, 100 when it already fills the frame.
-
 Only report what is actually legible in the image - never guess a value that isn't genuinely readable. If almost nothing is legible, answer "unclear" for side and null/"Unclear"/"NONE" for the rest rather than inventing an answer.`;
 
 export interface CoverVisionResult {
@@ -172,12 +168,6 @@ export interface CoverVisionResult {
    * this screen rather than silently trusted. Null if this case isn't a multi-title collection
    * at all, or is but no member titles are actually legible on this side. */
   collectionMemberTitles: string[] | null;
-  /** Where the case sits in the photo that was read, when background still shows around it
-   * (2026-10-11: the rotation request finds the case on small previews, so its crop can be
-   * loose - A Cure for Wellness kept a sheet of paper beside it). The resolver trims the stored
-   * photo to this and drops the field. Undefined when the case already fills the frame, the box
-   * looks wrong, or the answer came from the Gemma fallback. */
-  caseBox?: CoverBoundingBox;
 }
 
 /** A cover-vision read paired with the staged path it came from - the resolver needs this
@@ -240,15 +230,8 @@ export async function detectCoverFromImage(
               artStyle: { type: "STRING", enum: [...ART_STYLE_OPTIONS] },
               releaseName: { type: "STRING", nullable: true },
               collectionMemberTitles: { type: "ARRAY", items: { type: "STRING" }, nullable: true },
-              caseFillsFrame: { type: "BOOLEAN" },
-              caseXMin: { type: "NUMBER" },
-              caseYMin: { type: "NUMBER" },
-              caseXMax: { type: "NUMBER" },
-              caseYMax: { type: "NUMBER" },
             },
-            // The box is required, not optional - optional coordinates were silently left out
-            // on most calls the first time round (see detectCoverBoundingBox).
-            required: ["side", "mediaType", "format", "rating", "artStyle", "caseFillsFrame", "caseXMin", "caseYMin", "caseXMax", "caseYMax"],
+            required: ["side", "mediaType", "format", "rating", "artStyle"],
           },
       }
     );
@@ -267,11 +250,6 @@ export async function detectCoverFromImage(
       artStyle?: string;
       releaseName?: string | null;
       collectionMemberTitles?: string[] | null;
-      caseFillsFrame?: boolean;
-      caseXMin?: number;
-      caseYMin?: number;
-      caseXMax?: number;
-      caseYMax?: number;
     };
 
     if (!parsed.side || !(SIDE_OPTIONS as readonly string[]).includes(parsed.side)) return null;
@@ -313,10 +291,6 @@ export async function detectCoverFromImage(
             return cleaned.length > 0 ? cleaned : null;
           })()
         : null,
-      caseBox:
-        parsed.caseFillsFrame === false && !answer.model.startsWith("gemma")
-          ? worthTrimming(validBox(parsed.caseXMin, parsed.caseYMin, parsed.caseXMax, parsed.caseYMax))
-          : undefined,
     };
   } catch {
     return null;
@@ -423,16 +397,6 @@ export async function detectCoverBoundingBox(imageBytes: Buffer, mimeType: strin
  * never applied blindly, since a genuine 0-100 answer with a value just over 100 (a slightly
  * imprecise edge) should be rejected as out-of-range, not silently rescaled.
  */
-/** A trim box from the cover read, only when it removes a visible margin (over 2% on some side)
- * and still keeps most of the photo (at least 35% of its area) - a box that would throw away
- * most of an already-cropped photo is more likely a misread than a real margin. */
-function worthTrimming(box: CoverBoundingBox | null): CoverBoundingBox | undefined {
-  if (!box) return undefined;
-  const area = ((box.xMax - box.xMin) * (box.yMax - box.yMin)) / 10_000;
-  const margin = Math.max(box.xMin, box.yMin, 100 - box.xMax, 100 - box.yMax);
-  return margin > 2 && area >= 0.35 ? box : undefined;
-}
-
 /** A model's box answer as a sane 0-100 box, or null (see normalizeBoxScale). */
 function validBox(xMin: unknown, yMin: unknown, xMax: unknown, yMax: unknown): CoverBoundingBox | null {
   if (typeof xMin !== "number" || typeof yMin !== "number" || typeof xMax !== "number" || typeof yMax !== "number") return null;

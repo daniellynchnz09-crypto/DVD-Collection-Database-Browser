@@ -24,7 +24,7 @@ import { geminiUnavailableUntil } from "./geminiRequest";
 import { getSignedPosterImageUrl } from "./posterImageStorage";
 import { downloadStagedCoverPhoto, replaceStagedCoverPhoto } from "./coverStagingStorage";
 import { detectCoverFromImage, detectCoverOrientationAndBoxFromPreviews, type StagedCoverAnalysis } from "./coverVision";
-import { cropImageBufferToBox, straightenAndCropCoverPhoto } from "./imageCrop";
+import { straightenAndCropCoverPhoto } from "./imageCrop";
 import { searchTitleCandidates } from "./titleTextSearch";
 import { matchClassicWhoSerial } from "./classicWhoSerials";
 
@@ -195,16 +195,7 @@ async function analyzeStagedCoverPhotos(
     if (changed) await replaceStagedCoverPhoto(supabase, stagedPath, bytes, staged.contentType);
 
     const analysis = await detectCoverFromImage(bytes, staged.contentType);
-    if (!analysis) continue;
-    // The read sees the straightened photo at full size, so it spots background the first
-    // crop (made on small previews) left in - trim the stored copy to its box (2026-10-11).
-    // Costs no extra request; the read itself already ran on the first crop.
-    const { caseBox, ...read } = analysis;
-    if (caseBox) {
-      const trimmed = await cropImageBufferToBox(bytes, staged.contentType, caseBox);
-      if (trimmed !== bytes) await replaceStagedCoverPhoto(supabase, stagedPath, trimmed, staged.contentType);
-    }
-    analyses.push({ stagedPath, analysis: read });
+    if (analysis) analyses.push({ stagedPath, analysis });
   }
   return analyses;
 }

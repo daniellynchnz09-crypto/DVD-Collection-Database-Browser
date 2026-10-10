@@ -23,7 +23,10 @@
  * meaningfully smaller than the full frame (covers less than MAX_UNCROPPED_AREA_FRACTION of
  * the total area) - a box spanning almost the whole image (e.g. an already-tightly-cropped
  * photo like Eddington, re-analyzed here for completeness) would otherwise get needlessly
- * re-uploaded for a crop that changes essentially nothing.
+ * re-uploaded for a crop that changes essentially nothing. Keep this strict: a 2026-10-11 run
+ * with a looser "any margin over 3%" rule flagged 32 photos, and all but A Cure for Wellness
+ * (plus two near-misses) had boxes shifted 10-15% to one side that would have cut into the
+ * cover - always check --preview-dir output before applying a plan.
  *
  * `--include-small` (2026-10-06) skips that pre-filter, for the listing photos the Estimated
  * Value feature and UPC lookups stored (small files, but often a case on a table or at an
