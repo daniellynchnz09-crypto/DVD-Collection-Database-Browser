@@ -49,6 +49,7 @@ import {
   type FindExistingResult,
   type TmdbPreview,
   yearSuffix,
+  collectionPlacement,
 } from "../lib/scanApi";
 import { loadFieldOptions, type FieldOptions } from "../lib/fieldOptions";
 import { clearConfirmDraft, getConfirmDraft, saveConfirmDraft } from "../lib/confirmDrafts";
@@ -1743,10 +1744,12 @@ export default function ConfirmScreen({
             <Text style={styles.posterPlaceholderText}>No poster image found</Text>
           </View>
         )}
-        <Text style={styles.posterTitle}>
-          {selected.has(c.imdbID) ? "[x] " : "[ ] "}
-          {c.Title}
-        </Text>
+        <View style={[styles.checkboxRow, styles.posterTitleRow]}>
+          <View style={[styles.checkbox, selected.has(c.imdbID) && styles.checkboxChecked]}>
+            {selected.has(c.imdbID) && <Text style={styles.checkboxMark}>✓</Text>}
+          </View>
+          <Text style={[styles.posterTitle, styles.checkboxRowText, { marginTop: 0 }]}>{c.Title}</Text>
+        </View>
         <Text style={styles.posterYear}>
           {c.Year}
           {c.Runtime ? ` · ${c.Runtime}` : ""}
@@ -2555,11 +2558,15 @@ export default function ConfirmScreen({
                 style={[styles.candidateRow, chosenCollectionMatchId === c.unique_id && styles.candidateRowSelected]}
                 onPress={() => setChosenCollectionMatchId(c.unique_id)}
               >
-                <Text style={styles.candidateText}>
-                  {chosenCollectionMatchId === c.unique_id ? "(o) " : "( ) "}
-                  {c.title}
-                  {yearSuffix(c.release_date)} - {c.format}, {c.disc_count} disc{c.disc_count === 1 ? "" : "s"}
-                </Text>
+                <View style={styles.checkboxRow}>
+                  <View style={[styles.checkbox, chosenCollectionMatchId === c.unique_id && styles.checkboxChecked]}>
+                    {chosenCollectionMatchId === c.unique_id && <Text style={styles.checkboxMark}>✓</Text>}
+                  </View>
+                  <Text style={[styles.candidateText, styles.checkboxRowText]}>
+                    {c.title}
+                    {yearSuffix(c.release_date)} - {c.format}, {c.disc_count} disc{c.disc_count === 1 ? "" : "s"}
+                  </Text>
+                </View>
               </TouchableOpacity>
             ))}
           </>
@@ -2647,17 +2654,24 @@ export default function ConfirmScreen({
                 ]}
                 onPress={() => setChosenExistingId(c.unique_id)}
               >
-                <Text style={styles.candidateText}>
-                  {chosenExistingId === c.unique_id ? "(o) " : "( ) "}
-                  {c.title}
-                  {yearSuffix(c.release_date)}
-                  {/* release_name is the real disambiguator between two rows sharing the same
-                      base title (e.g. a plain DVD vs. a "Special Edition") - added 2026-09-18,
-                      since the title text alone can't tell them apart here. */}
-                  {c.release_name ? ` (${c.release_name})` : ""} - {c.format}, {c.disc_count} disc
-                  {c.disc_count === 1 ? "" : "s"}
-                  {c.barcode_id ? "" : " (no barcode yet)"}
-                </Text>
+                <View style={styles.checkboxRow}>
+                  <View style={[styles.checkbox, chosenExistingId === c.unique_id && styles.checkboxChecked]}>
+                    {chosenExistingId === c.unique_id && <Text style={styles.checkboxMark}>✓</Text>}
+                  </View>
+                  <View style={styles.checkboxRowText}>
+                    <Text style={styles.candidateText}>
+                      {c.title}
+                      {yearSuffix(c.release_date)}
+                      {/* release_name is the real disambiguator between two rows sharing the same
+                          base title (e.g. a plain DVD vs. a "Special Edition") - added 2026-09-18,
+                          since the title text alone can't tell them apart here. */}
+                      {c.release_name ? ` (${c.release_name})` : ""} - {c.format}, {c.disc_count} disc
+                      {c.disc_count === 1 ? "" : "s"}
+                      {c.barcode_id ? "" : " (no barcode yet)"}
+                    </Text>
+                    <Text style={styles.candidatePlacement}>{collectionPlacement(c)}</Text>
+                  </View>
+                </View>
               </TouchableOpacity>
             ))}
           </>
@@ -2669,6 +2683,7 @@ export default function ConfirmScreen({
               <Image source={{ uri: chosen.posterUrl }} style={styles.scannedImage} resizeMode="cover" />
             ) : null}
             <Text style={styles.label}>Existing entry</Text>
+            <Text style={styles.body}>{collectionPlacement(chosen)}</Text>
             {chosen.release_name && <Text style={styles.body}>Release: {chosen.release_name}</Text>}
             <Text style={styles.body}>
               {chosen.format}, {chosen.disc_count} disc{chosen.disc_count === 1 ? "" : "s"}
@@ -4447,6 +4462,9 @@ const styles = StyleSheet.create({
   },
   candidateRowSelected: { borderColor: "#1d6c9a", backgroundColor: "#0b2236" },
   candidateText: { fontFamily: FONTS.body, color: "#e9f1f9" },
+  candidatePlacement: { fontFamily: FONTS.body, color: "#a9b8cc", fontSize: 12, marginTop: 2 },
+  checkboxRowText: { flex: 1, flexShrink: 1 },
+  posterTitleRow: { alignItems: "flex-start", marginTop: 6 },
   candidateScroll: { marginTop: 4 },
   posterCard: {
     width: 120,

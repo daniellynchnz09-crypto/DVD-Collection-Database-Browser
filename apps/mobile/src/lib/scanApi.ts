@@ -337,3 +337,15 @@ export function yearSuffix(releaseDate: string | null | undefined): string {
   const year = releaseDate?.slice(0, 4);
   return year && /^\d{4}$/.test(year) ? ` (${year})` : "";
 }
+
+/** Where a duplicate-check candidate sits relative to collections - the user, 2026-10-11: two
+ * otherwise identical matches (one standalone, one inside a box set) couldn't be told apart. */
+export function collectionPlacement(
+  c: Pick<ExistingTitleCandidate, "is_collection" | "title_in_a_collection" | "name_of_collection">
+): string {
+  if (c.is_collection) return "Collection / box set entry";
+  if (c.title_in_a_collection) {
+    return c.name_of_collection ? `In collection: ${c.name_of_collection}` : "In a collection";
+  }
+  return "Standalone - not in a collection";
+}

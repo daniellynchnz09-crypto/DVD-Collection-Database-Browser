@@ -919,3 +919,8 @@ Full list is in rate-limits.md section 5. Hosting research: Vercel is fine with 
 - **Offline queue:** now removes an item automatically when the server answers 409 (already saved), both in the background sync and in the Offline Queue screen's Overwrite/New-entry buttons (new ScanApiError carries the status). Untested on device.
 - **Sign-ups:** the user turned off Supabase sign-ups themselves; marked done on the checklist.
 - **Darkness Falls (2003 DVD):** disc_condition set to Unplayable Scenes in Supabase and the Sheet, both verified.
+
+2026-10-11:
+- **Dev servers:** restarted apps/web (port 3001, LAN) and the Expo dev server together.
+- **Duplicate check now shows collection membership:** on the scanner's "Matches your collection" screen, each candidate row and the selected entry's detail panel now say "In collection: <name>", "Collection / box set entry", or "Standalone - not in a collection" (new `collectionPlacement()` in scanApi.ts). The user had two identical matches, one inside a collection and one not, and couldn't tell which was which. The data was already returned by find-existing; only the display changed.
+- **Real checkboxes:** replaced the text markers `(o)`/`( )` (existing-entry and existing-collection pickers) and `[x]`/`[ ]` (OMDB poster cards) in ConfirmScreen with the screen's existing square ✓ checkbox style. `tsc --noEmit` clean; not yet checked on a device.
