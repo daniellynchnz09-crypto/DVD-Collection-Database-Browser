@@ -597,7 +597,7 @@ export async function POST(request: Request) {
           const rtRating = detail.Ratings?.find((r) => r.Source === "Rotten Tomatoes");
           const percent = rtRating ? parseInt(rtRating.Value, 10) : NaN;
           if (!Number.isNaN(percent)) {
-            omdbFields.rotten_tomatoes_page = await lookupRottenTomatoesPage(detail.Title, percent);
+            omdbFields.rotten_tomatoes_page = await lookupRottenTomatoesPage(detail.Title, percent, parseInt(detail.Year, 10) || undefined);
           }
         }
       }

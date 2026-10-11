@@ -19,6 +19,11 @@
  * Writes the Sheet cells and the same rows' titles.rotten_tomatoes_page in Supabase (an API
  * write to the Sheet doesn't fire its edit webhook, so Supabase is updated directly).
  *
+ * Fallback (2026-10-11): a film MDBList has no RT link for, but whose title_metadata has a
+ * Tomatometer (OMDb), goes through rottenTomatoes.ts's verified slug guess with the film's year -
+ * which also tries "<slug>_<year>", the address RT gives a film whose plain slug an older
+ * same-named film already has (High Tension 2003 -> /m/high_tension_2003).
+ *
  * Dry run by default (spends the MDBList + RT page requests, writes nothing):
  *   npm run backfill-rotten-tomatoes-links -w scripts
  *   npm run backfill-rotten-tomatoes-links -w scripts -- --apply
@@ -31,7 +36,13 @@ import "dotenv/config";
 import { google } from "googleapis";
 import { createClient } from "@supabase/supabase-js";
 import { buildColumnIndexes, cleanCell, columnLetter, extractImdbIdFromPage, toBoolean } from "@danflix/shared";
-import { fetchMdblistAudienceScores, MDBLIST_BATCH_SIZE, type MdblistMediaType, type MdblistScores } from "@danflix/backend";
+import {
+  fetchMdblistAudienceScores,
+  lookupRottenTomatoesPage,
+  MDBLIST_BATCH_SIZE,
+  type MdblistMediaType,
+  type MdblistScores,
+} from "@danflix/backend";
 
 const TV_KINDS = /tv series|mini-series|miniseries/i;
 const PAGE_CHECK_GAP_MS = 400; // one RT page at a time, politely spaced
@@ -139,6 +150,51 @@ async function main() {
     await sleep(PAGE_CHECK_GAP_MS);
   }
 
+  // Fallback for films MDBList had no RT link for: the verified slug guess, with the year.
+  const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!);
+  const guessIds = [...new Set(candidates.filter((c) => c.mediaType === "movie" && !scores.get(c.imdbId)?.rottenTomatoesUrl).map((c) => c.imdbId))];
+  let guessed = 0;
+  for (let i = 0; i < guessIds.length; i += 200) {
+    const { data: metas } = await supabase
+      .from("title_metadata")
+      .select("imdb_id, title, release_date, rotten_tomatoes_score")
+      .in("imdb_id", guessIds.slice(i, i + 200))
+      .not("rotten_tomatoes_score", "is", null);
+    for (const m of (metas ?? []) as { imdb_id: string; title: string | null; release_date: string | null; rotten_tomatoes_score: number }[]) {
+      const sheetTitle = candidates.find((c) => c.imdbId === m.imdb_id)?.title;
+      const year = parseInt(m.release_date?.slice(0, 4) ?? "", 10) || undefined;
+      for (const title of [...new Set([m.title, sheetTitle].filter((t): t is string => !!t))]) {
+        const url = await lookupRottenTomatoesPage(title, m.rotten_tomatoes_score, year);
+        await sleep(PAGE_CHECK_GAP_MS);
+        if (url) {
+          linkFor.set(m.imdb_id, url);
+          guessed++;
+          break;
+        }
+      }
+    }
+  }
+  console.log(`Verified slug guesses for films MDBList had no link for: ${guessed} found`);
+
+  // A link the Sheet already uses for a different film is MDBList mapping a related title to
+  // the wrong page (2026-10-11: "The Matrix Reloaded Revisited", tt1830850, was given The Matrix
+  // Reloaded's page) - skipped, as is one link offered for two different films here.
+  const ownerOf = new Map<string, string>();
+  rows.forEach((row) => {
+    const link = cleanCell(row[col["rotten_tomatoes_page"]]);
+    const id = extractImdbIdFromPage(cleanCell(row[col["imdb_page"]]));
+    if (link && id && /rottentomatoes\.com/.test(link)) ownerOf.set(link.replace(/\/+$/, ""), id);
+  });
+  const offeredTo = new Map<string, string[]>();
+  for (const [id, url] of linkFor) offeredTo.set(url, [...(offeredTo.get(url) ?? []), id]);
+  for (const [id, url] of [...linkFor]) {
+    const owner = ownerOf.get(url.replace(/\/+$/, ""));
+    if ((owner && owner !== id) || (offeredTo.get(url)?.length ?? 0) > 1) {
+      console.log(`  skipped: ${id} -> ${url} (already the link for ${owner ?? offeredTo.get(url)!.filter((o) => o !== id).join(", ")})`);
+      linkFor.delete(id);
+    }
+  }
+
   const fills = candidates.filter((c) => linkFor.has(c.imdbId));
   console.log(`\nLinks found and checked: ${linkFor.size} films -> ${fills.length} Sheet rows`);
   console.log(`Skipped: ${noScore.length} with an RT page but no critics score; ${dead.length} links that didn't answer 200`);
@@ -161,7 +217,6 @@ async function main() {
   });
   console.log(`Wrote ${fills.length} Sheet cells.`);
 
-  const supabase = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!);
   let updated = 0;
   for (const f of fills) {
     if (!f.uniqueId) continue;

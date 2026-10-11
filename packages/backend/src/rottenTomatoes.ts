@@ -35,12 +35,24 @@ interface RottenTomatoesJsonLd {
 
 export async function lookupRottenTomatoesPage(
   title: string,
-  criticsScorePercent: number
+  criticsScorePercent: number,
+  year?: number
 ): Promise<string | null> {
   const slug = guessSlug(title);
   if (!slug) return null;
+  // When an older film already has the plain slug, RT files a newer one under "<slug>_<year>"
+  // without redirecting (2026-10-11: /m/high_tension is a 1936 film; the 2003 one is
+  // /m/high_tension_2003). The plain slug fails the name/score check below, so try that next.
+  const slugs = year ? [slug, `${slug}_${year}`] : [slug];
+  for (const candidate of slugs) {
+    const url = await verifiedPage(`https://www.rottentomatoes.com/m/${candidate}`, title, criticsScorePercent);
+    if (url) return url;
+  }
+  return null;
+}
 
-  const url = `https://www.rottentomatoes.com/m/${slug}`;
+/** The page's final URL when it names the same film with the same Tomatometer, else null. */
+async function verifiedPage(url: string, title: string, criticsScorePercent: number): Promise<string | null> {
   let html: string;
   let finalUrl: string;
   try {
