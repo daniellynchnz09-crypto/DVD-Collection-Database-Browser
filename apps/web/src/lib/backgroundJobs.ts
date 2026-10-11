@@ -55,17 +55,22 @@ export const ALL_JOBS = Object.keys(JOBS) as JobName[];
 /**
  * Starts the given jobs after the response is sent. `immediate` skips the minimum interval (a
  * claim still fails while another run is going) - for a new scan that should resolve right away.
+ * `minIntervalSeconds` uses a different gap than the job's own for this kick.
  */
-export function kickBackgroundJobs(jobs: readonly JobName[], options: { immediate?: boolean } = {}): void {
-  after(() => Promise.all(jobs.map((job) => runJob(job, options.immediate ?? false))));
+export function kickBackgroundJobs(
+  jobs: readonly JobName[],
+  options: { immediate?: boolean; minIntervalSeconds?: number } = {}
+): void {
+  const interval = options.immediate ? 0 : options.minIntervalSeconds;
+  after(() => Promise.all(jobs.map((job) => runJob(job, interval))));
 }
 
-async function runJob(job: JobName, immediate: boolean): Promise<void> {
+async function runJob(job: JobName, minIntervalOverride: number | undefined): Promise<void> {
   const spec = JOBS[job];
   const supabase = getSupabaseServerClient();
   const { data: claimed, error } = await supabase.rpc("claim_background_job", {
     p_job: job,
-    p_min_interval_seconds: immediate ? 0 : spec.minIntervalSeconds,
+    p_min_interval_seconds: minIntervalOverride ?? spec.minIntervalSeconds,
     p_lock_seconds: spec.lockSeconds,
   });
   if (error) {

@@ -37,5 +37,5 @@ The user asked to be reminded of these before publishing:
 1. **Rotate the scanner secret.** It's an `EXPO_PUBLIC_` value baked into the app bundle, which Expo Go serves to anyone on the LAN. Set the new value in `apps/web/.env.local`, the mobile env and Vercel's environment variables.
 2. ~~**Turn off Supabase sign-ups and anonymous sign-ins** in both projects (Authentication settings).~~ Done by the user 2026-10-09. Migrations 0053/0054 already removed the signed-in role's access, but switching these off stops the accounts being created at all.
 3. **Set up rate limiting** (Vercel Firewall). See the rate-limits report.
-4. **Set OWNER_PASSCODE, MDBLIST_API_KEY** and the other keys in Vercel.
+4. **Set OWNER_PASSCODE, MDBLIST_API_KEY** and the other keys in Vercel, including `LETTERBOXD_USERNAME` on the private project (added 2026-10-11 for the Letterboxd feed job; leave it unset on the public one).
 5. ~~**Replace the in-process background pollers** (`instrumentation.ts`), which won't run on serverless.~~ Done 2026-10-09: `instrumentation.ts` is gone. Background work (scan resolving, TMDb refresh, Estimated Value pricing queue, weekly staging clean-up) now runs in `after()` only while the site or scanner app is in use (`apps/web/src/lib/backgroundJobs.ts`, `/api/activity`, migrations 0055/0056). 0055 (both projects) and 0056 (private) applied 2026-10-09.
