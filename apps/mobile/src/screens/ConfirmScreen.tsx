@@ -36,6 +36,7 @@ import {
   resolveDiskRegionText,
   splitCutVariantTitle,
 } from "@danflix/shared";
+import { customBurnFormatControls } from "../lib/customBurnFormat";
 import {
   confirmScan,
   discardScan,
@@ -1290,6 +1291,18 @@ export default function ConfirmScreen({
   const mainCandidates = candidates.filter((c) => !looksLikeExtraContent(c.Title));
   const extraCandidates = candidates.filter((c) => looksLikeExtraContent(c.Title));
   const diskRegionOptions = getDiskRegionOptions(format) ?? fieldOptions?.diskRegion ?? [];
+  const formatControls = customBurnFormatControls(format, setFormat, fieldOptions?.format ?? []);
+  const customBurnCheckbox = (
+    <>
+      <TouchableOpacity style={[styles.checkboxRow, { marginTop: 10 }]} onPress={formatControls.toggleCustomBurn}>
+        <View style={[styles.checkbox, formatControls.customBurn && styles.checkboxChecked]}>
+          {formatControls.customBurn && <Text style={styles.checkboxMark}>✓</Text>}
+        </View>
+        <Text style={styles.checkboxLabel}>Custom burn (a home-made disc)</Text>
+      </TouchableOpacity>
+      {formatControls.customBurn && <Text style={styles.hint}>Saved as &quot;{format}&quot;</Text>}
+    </>
+  );
   const showSpecialFeaturesDiscFields = specialFeatures && (parseInt(discCount, 10) || 1) > 1;
   // Fills the bonus-disc format with the user's own default rule (defaultBonusDiscFormat) as
   // soon as the field appears blank, and keeps it following the primary Format while it's
@@ -2878,7 +2891,7 @@ export default function ConfirmScreen({
             <>
               <View style={styles.section}>
                 <Text style={styles.label}>Format (the box's own general format)</Text>
-                <BigChoice options={collectionCommonFormats} value={format} onChange={setFormat} />
+                <BigChoice options={collectionCommonFormats} value={formatControls.baseFormat} onChange={formatControls.chooseFormat} />
                 <Text style={styles.hint}>Something else (VHS, 3D, HD DVD...)? Pick it here:</Text>
                 <SearchableModalInput
                   value={format}
@@ -2886,6 +2899,7 @@ export default function ConfirmScreen({
                   options={fieldOptions?.format ?? []}
                   onFocusScroll={scrollFieldIntoView}
                 />
+                {customBurnCheckbox}
                 <Text style={styles.hint}>
                   Each title below also gets its own Format, in case any title's discs differ from
                   the rest.
@@ -3763,8 +3777,8 @@ export default function ConfirmScreen({
                   <Text style={styles.label}>Format</Text>
                   <BigChoice
                     options={(fieldOptions?.format ?? []).filter((f) => /^(dvd|blu-?ray|4k uhd blu-?ray)$/i.test(f.trim()))}
-                    value={format}
-                    onChange={setFormat}
+                    value={formatControls.baseFormat}
+                    onChange={formatControls.chooseFormat}
                   />
                   <Text style={styles.hint}>Something else (VHS, 3D, HD DVD...)? Pick it here:</Text>
         <SearchableModalInput
@@ -3773,6 +3787,7 @@ export default function ConfirmScreen({
           options={fieldOptions?.format ?? []}
           onFocusScroll={scrollFieldIntoView}
         />
+                  {customBurnCheckbox}
                 </View>
       <View style={styles.section}>
         <Text style={styles.label}>Disk Region</Text>

@@ -339,6 +339,30 @@ function normalizeFormatKey(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+// A custom burn (the user's own home-made disc) is "<format> (Custom Burn)". Only "DVD
+// (Custom Burn)" existed until 2026-10-22, when the scanner's Format section gained a
+// "Custom burn" checkbox that turns whatever format is picked into its custom-burn
+// equivalent - creating a new value (e.g. "Blu-Ray (Custom Burn)") when none exists yet.
+const CUSTOM_BURN_SUFFIX = /\s*\(\s*custom\s+burn\s*\)\s*$/i;
+
+export function isCustomBurnFormat(format: string | null | undefined): boolean {
+  return CUSTOM_BURN_SUFFIX.test(format ?? "");
+}
+
+export function stripCustomBurnFormat(format: string): string {
+  return format.replace(CUSTOM_BURN_SUFFIX, "").trim();
+}
+
+/** The custom-burn equivalent of `format`, using an existing value's own spelling when one
+ * of `knownFormats` already is that format's custom burn. */
+export function toCustomBurnFormat(format: string, knownFormats: readonly string[] = []): string {
+  const base = stripCustomBurnFormat(format);
+  if (!base) return format;
+  const key = normalizeFormatKey(base);
+  const existing = knownFormats.find((f) => isCustomBurnFormat(f) && normalizeFormatKey(stripCustomBurnFormat(f)) === key);
+  return existing ?? `${base} (Custom Burn)`;
+}
+
 export function normalizeFormat(value: string | undefined): string | null {
   const cleaned = cleanCell(value);
   if (cleaned == null) return null;

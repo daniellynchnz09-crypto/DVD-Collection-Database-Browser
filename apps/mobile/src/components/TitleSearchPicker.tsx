@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import { previewTmdbFields, searchTitleOnOmdb, type OmdbSearchCandidate } from "../lib/scanApi";
 import { loadFieldOptions, type FieldOptions } from "../lib/fieldOptions";
+import { customBurnFormatControls } from "../lib/customBurnFormat";
 import { createScrollIntoViewHandler } from "../lib/scrollIntoView";
 import SearchableModalInput from "./SearchableModalInput";
 import FranchiseEditor from "./FranchiseEditor";
@@ -395,6 +396,7 @@ export default function TitleSearchPicker({
   const resolvedTitle = selectedCandidate?.Title ?? manualTitle.trim();
   const showSeasonFields = SEASON_FIELDS_MOVIE_OR_TV_VALUES.has(movieOrTv);
   const commonFormats = (fieldOptions?.format ?? []).filter((f) => /^(dvd|blu-?ray|4k uhd blu-?ray)$/i.test(f.trim()));
+  const formatControls = customBurnFormatControls(format, setFormat, fieldOptions?.format ?? []);
 
   async function handleSearch() {
     const q = query.trim();
@@ -702,9 +704,16 @@ export default function TitleSearchPicker({
     <>
       <View style={styles.section}>
         <Text style={styles.label}>Format (this title's own disc)</Text>
-        <BigChoice options={commonFormats} value={format} onChange={setFormat} />
+        <BigChoice options={commonFormats} value={formatControls.baseFormat} onChange={formatControls.chooseFormat} />
         <Text style={styles.hint}>Something else? Pick or type it here:</Text>
         <SearchableModalInput value={format} onChangeText={setFormat} options={fieldOptions?.format ?? []} />
+        <TouchableOpacity style={[styles.checkboxRow, { marginTop: 10 }]} onPress={formatControls.toggleCustomBurn}>
+          <View style={[styles.checkbox, formatControls.customBurn && styles.checkboxChecked]}>
+            {formatControls.customBurn && <Text style={styles.checkboxMark}>✓</Text>}
+          </View>
+          <Text style={styles.checkboxLabel}>Custom burn (a home-made disc)</Text>
+        </TouchableOpacity>
+        {formatControls.customBurn && <Text style={styles.hint}>Saved as &quot;{format}&quot;</Text>}
       </View>
       <View style={styles.section}>
         <Text style={styles.label}>What disc(s) is this title on?</Text>
