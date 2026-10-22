@@ -1,3 +1,5 @@
+import type { CutInfo } from "@danflix/shared";
+
 const API_URL = process.env.EXPO_PUBLIC_SCAN_API_URL!;
 const API_SECRET = process.env.EXPO_PUBLIC_SCAN_API_SECRET!;
 
@@ -293,6 +295,12 @@ export interface TmdbPreview {
  * at all for this title, which must not be treated as a confirmed "Live Action". */
 export function previewTmdbFields(imdbId: string) {
   return post<TmdbPreview>("/api/scan/tmdb-preview", { imdbId });
+}
+
+/** Cut names TMDb mentions for a film, and the named cut's own release date/runtime when its
+ * notes have them (2026-10-22 - see packages/shared/src/movieCuts.ts). */
+export function fetchCutInfo(imdbId: string, cut = "") {
+  return post<{ suggestions: string[]; info: CutInfo | null }>("/api/scan/cut-info", { imdbId, cut });
 }
 
 export interface OmdbSearchCandidate {

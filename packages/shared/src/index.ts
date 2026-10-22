@@ -5,3 +5,4 @@ export * from "./titleParsing";
 export * from "./omdb";
 export * from "./upc";
 export * from "./formatHints";
+export * from "./movieCuts";

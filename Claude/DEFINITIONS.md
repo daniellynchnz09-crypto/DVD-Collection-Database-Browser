@@ -14,3 +14,6 @@ SQL Database:
 
 There is mention in a few of these documents about an SQL database, this mainly refers to a high performance data base that is not the Google sheets document that has the same information as the google sheets document that is used for all of the search queries done by the web app. This database may or may not be made with SQL depending on what is chosen, but for now in these planning documents it may be referred to as an SQL database, even though that may not be the case when this project is created. 
 
+
+Single-Movie Case (added 2026-10-22):
+A collection in an ordinary single-movie DVD/Blu-ray case that holds either several cuts of the same movie (e.g. a theatrical cut and an extended cut) or one movie plus a short film. Each cut or short is still logged as its own title in the collection, but the case is shelved with the rest of the movies in its genre, not in a collection section, because it is the same size as the other movies and doesn't hold different movies.

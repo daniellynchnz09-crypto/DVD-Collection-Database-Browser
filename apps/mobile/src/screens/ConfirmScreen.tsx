@@ -256,6 +256,23 @@ function filterGenreLocationOptions(options: string[], isCollectionEntry: boolea
   return [...options.filter(isTvShelf), ...filmShelves];
 }
 
+/** A collection that is really one film in an ordinary case (2026-10-22, the user's request):
+ * several cuts of the same film, or one film plus short(s). The user shelves these with the
+ * movies, not in a COLLECTION section, because the case is the same size as the rest of the
+ * films and it doesn't hold different movies. Used as the automatic answer to the "shelve with
+ * the movies" checkbox, which the user can always change. A TV set is never one (seasons of
+ * one show share an IMDb id too). */
+function looksLikeSingleMovieCase(members: CollectionMember[]): boolean {
+  if (members.length < 2) return false;
+  if (members.some((m) => SEASON_FIELDS_MOVIE_OR_TV_VALUES.has(m.movieOrTv))) return false;
+  const features = members.filter((m) => m.movieOrTv !== "Short");
+  if (features.length === 1) return true;
+  const films = new Set(features.map((m) => m.imdbId ?? `title:${(m.baseTitle ?? m.title).trim().toLowerCase()}`));
+  return films.size === 1;
+}
+
+const isCollectionShelf = (location: string) => /^(BOX )?COLLECTION /.test(location.trim());
+
 // Hand-mapped synonyms between this collection's own genre_location words and TMDb's genre
 // vocabulary (TMDb doesn't use OMDB's exact wording for everything - e.g. "Science Fiction"
 // rather than "Sci-Fi") - only needed for the words where a direct case-insensitive match
@@ -1029,6 +1046,10 @@ export default function ConfirmScreen({
   const [collectionMembers, setCollectionMembers] = useState<CollectionMember[]>(() =>
     (draft?.collectionMembers ?? []).map(sanitizeSpecialFeaturesDiscOverlap)
   );
+  // "Single-movie case - shelve with the movies" (2026-10-22): null follows the automatic guess
+  // (looksLikeSingleMovieCase), true/false is the user's own answer.
+  const [shelveWithMoviesChoice, setShelveWithMoviesChoice] = useState<boolean | null>(draft?.shelveWithMovies ?? null);
+  const shelveWithMovies = shelveWithMoviesChoice ?? looksLikeSingleMovieCase(collectionMembers);
   // The box set's own member titles, when a cover photo actually listed them (added
   // 2026-09-30, per the user's own observation - see scanResolver.ts's coverMemberTitles for
   // the full read). Filters out anything matching a title already added, so a suggestion chip
@@ -1208,6 +1229,7 @@ export default function ConfirmScreen({
       collectionMembers,
       collectionDiscCount,
       bonusDiscs,
+      shelveWithMovies: shelveWithMoviesChoice,
     });
   }, [
     scan.id,
@@ -1256,6 +1278,7 @@ export default function ConfirmScreen({
     collectionMembers,
     collectionDiscCount,
     bonusDiscs,
+    shelveWithMoviesChoice,
   ]);
 
   /** Runs the typed title through the same OMDB search the automatic resolver uses,
@@ -2031,6 +2054,9 @@ export default function ConfirmScreen({
     if (collectionMembers.length < 2) missing.push("At least two titles in this collection");
     if (!format.trim()) missing.push("Format");
     if (!genreLocation.trim()) missing.push("Genre Location");
+    // A single-movie case still sitting on a COLLECTION shelf (e.g. the shelf was picked before
+    // the titles that ticked "shelve with the movies" were added) - flagged rather than cleared.
+    else if (shelveWithMovies && isCollectionShelf(genreLocation)) missing.push("Genre Location");
     if (diskRegions.size === 0) missing.push("Disk Region");
     if (!discCondition.trim()) missing.push("Disc Condition");
     if (totalDiscCountNumber < 1) missing.push("Total Disc Count");
@@ -2400,7 +2426,13 @@ export default function ConfirmScreen({
         overwriteUniqueId: overwriteDecisions[m.key],
         manualFields: {
           ...shared,
-          title: m.title,
+          // A cut is sent the same way a single-title scan's is: the film's own name plus
+          // cut_suffix, which the confirm route joins as "<film>: <cut>" (2026-10-22). Its own
+          // release date/runtime override the film's OMDb values only when known.
+          title: m.cut ? m.baseTitle ?? m.title : m.title,
+          cut_suffix: m.cut ?? null,
+          ...(m.cutReleaseDate ? { release_date: m.cutReleaseDate } : {}),
+          ...(m.cutRuntimeMins ? { running_time_mins: parseInt(m.cutRuntimeMins, 10) || null } : {}),
           movie_or_tv: m.movieOrTv || null,
           season_no: m.seasonNo || null,
           part_of_season_no: m.partOfSeasonNo || null,
@@ -3001,10 +3033,28 @@ export default function ConfirmScreen({
           const collectionLocationNode = (
             <>
               <View style={styles.section}>
+                <TouchableOpacity style={styles.checkboxRow} onPress={() => setShelveWithMoviesChoice(!shelveWithMovies)}>
+                  <View style={[styles.checkbox, shelveWithMovies && styles.checkboxChecked]}>
+                    {shelveWithMovies && <Text style={styles.checkboxMark}>✓</Text>}
+                  </View>
+                  <Text style={styles.checkboxLabel}>Single-movie case - shelve with the movies</Text>
+                </TouchableOpacity>
+                <Text style={styles.hint}>
+                  {shelveWithMoviesChoice === null && shelveWithMovies
+                    ? "Ticked automatically: every title here is the same film, or one film plus shorts. Untick it if this set lives in a collection section."
+                    : "For an ordinary case holding cuts of one film, or one film plus a short - it goes on the normal movie shelves instead of a COLLECTION section."}
+                </Text>
+                {shelveWithMovies && isCollectionShelf(genreLocation) && (
+                  <Text style={styles.error}>
+                    &quot;{genreLocation}&quot; is a collection shelf - pick a movie shelf, or untick the box above.
+                  </Text>
+                )}
+              </View>
+              <View style={styles.section}>
                 <Text style={styles.label}>Genre Location (shelf section)</Text>
                 <BigChoice
                   options={rankGenreLocationOptions(
-                    filterGenreLocationOptions(fieldOptions?.genreLocation ?? [], true, movieOrTv),
+                    filterGenreLocationOptions(fieldOptions?.genreLocation ?? [], !shelveWithMovies, movieOrTv),
                     genreSignalForLocationRanking,
                     4
                   )}
@@ -3015,8 +3065,8 @@ export default function ConfirmScreen({
                 <SearchableModalInput
                   value={genreLocation}
                   onChangeText={setGenreLocation}
-                  options={filterGenreLocationOptions(fieldOptions?.genreLocation ?? [], true, movieOrTv)}
-                  placeholder="e.g. COLLECTION Person"
+                  options={filterGenreLocationOptions(fieldOptions?.genreLocation ?? [], !shelveWithMovies, movieOrTv)}
+                  placeholder={shelveWithMovies ? "e.g. Horror" : "e.g. COLLECTION Person"}
                   onFocusScroll={scrollFieldIntoView}
                 />
               </View>

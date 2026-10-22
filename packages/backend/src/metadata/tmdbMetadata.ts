@@ -1,3 +1,4 @@
+import type { TmdbAltTitle, TmdbReleaseNote } from "@danflix/shared";
 import type { TmdbMediaType } from "../tmdb";
 import { createRateLimiter, sleep } from "./rateLimit";
 import type { CreditRow, PersonRow, TitleMetadataTmdbFields } from "./types";
@@ -266,4 +267,34 @@ function validDate(value: string | null | undefined): string | null {
 
 function positiveOrNull(value: number | null | undefined): number | null {
   return typeof value === "number" && value > 0 ? value : null;
+}
+
+interface ReleaseDatesResponse {
+  results?: { iso_3166_1: string; release_dates?: { release_date?: string; note?: string }[] }[];
+}
+interface AlternativeTitlesResponse {
+  titles?: { title?: string; type?: string }[];
+}
+
+/** A film's dated release notes and alternative titles from TMDb - the raw text the scanner's
+ * cut lookup (packages/shared/src/movieCuts.ts) reads a cut's release date and runtime from.
+ * Null when TMDb has no film for this IMDb id (a TV show has no cuts to look up). */
+export async function fetchTmdbCutNotes(
+  imdbId: string
+): Promise<{ notes: TmdbReleaseNote[]; altTitles: TmdbAltTitle[] } | null> {
+  const found = await findTmdbByImdbId(imdbId);
+  if (!found || found.mediaType !== "movie") return null;
+  const [releaseDates, alternativeTitles] = await Promise.all([
+    tmdbGet<ReleaseDatesResponse>(`/movie/${found.tmdbId}/release_dates`),
+    tmdbGet<AlternativeTitlesResponse>(`/movie/${found.tmdbId}/alternative_titles`),
+  ]);
+  const notes = (releaseDates?.results ?? []).flatMap((country) =>
+    (country.release_dates ?? [])
+      .filter((d) => d.note?.trim() && d.release_date)
+      .map((d) => ({ date: d.release_date!.slice(0, 10), note: d.note!.trim() }))
+  );
+  const altTitles = (alternativeTitles?.titles ?? [])
+    .filter((t) => t.title)
+    .map((t) => ({ title: t.title!, type: t.type ?? "" }));
+  return { notes, altTitles };
 }

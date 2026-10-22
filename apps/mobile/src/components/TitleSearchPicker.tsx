@@ -15,7 +15,8 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { previewTmdbFields, searchTitleOnOmdb, type OmdbSearchCandidate } from "../lib/scanApi";
+import { COMMON_CUT_NAMES, isTheatricalCut, titleWithCut } from "@danflix/shared";
+import { fetchCutInfo, previewTmdbFields, searchTitleOnOmdb, type OmdbSearchCandidate } from "../lib/scanApi";
 import { loadFieldOptions, type FieldOptions } from "../lib/fieldOptions";
 import { customBurnFormatControls } from "../lib/customBurnFormat";
 import { createScrollIntoViewHandler } from "../lib/scrollIntoView";
@@ -110,6 +111,16 @@ export interface CollectionMember {
    * header or member) already supported this per-member; nothing was ever wired up
    * client-side to actually populate it for a collection member until now. */
   rating?: string;
+  /** Which cut of the film this title is ("The Argento Cut"), for a set holding several cuts of
+   * one film (2026-10-22, the user's request). OMDb/TMDb list a film once, never per cut, so the
+   * film is matched as usual and the cut is named here; `title` is then "<film>: <cut>" (the
+   * confirm route's own `cut_suffix` shape) and `baseTitle` keeps the film's own name. The cut's
+   * release date and runtime come from TMDb's release notes when they name it, else typed from
+   * the case; blank means the film's own values (always the case for a theatrical cut). */
+  cut?: string;
+  baseTitle?: string;
+  cutReleaseDate?: string;
+  cutRuntimeMins?: string;
   /** Whether TMDb genuinely had a rating for this member the last time it was checked - null/
    * undefined means "no, or never checked" (a fully-manual entry). Lets ConfirmScreen.tsx's
    * own required-field check tell "TMDb covered this one" apart from "still needs a manual
@@ -131,7 +142,11 @@ function guessMovieOrTvFromType(type: string | undefined): string {
 }
 
 const SEASON_FIELDS_MOVIE_OR_TV_VALUES = new Set(["TV Series", "TV Mini-Series", "TV Special", "TV Episode", "Serial"]);
-const MOVIE_OR_TV_OPTIONS = ["Movie", "TV Series", "TV Movie", "TV Mini-Series", "TV Special", "Documentary", "Serial"];
+// "Short" added 2026-10-22 for a short film bundled with a feature (e.g. Made For Each Other's
+// 40-minute "James Stewart and Film") - it also lets the collection's shelf choice tell a
+// "one film plus shorts" case apart from a real multi-film set.
+const MOVIE_OR_TV_OPTIONS = ["Movie", "Short", "TV Series", "TV Movie", "TV Mini-Series", "TV Special", "Documentary", "Serial"];
+const CUT_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Small standalone "add one title to a collection" search UI - deliberately NOT a reuse of
@@ -226,7 +241,7 @@ export default function TitleSearchPicker({
   // user had just picked it from a real search - no OMDB call needed to re-open an edit.
   const [candidates, setCandidates] = useState<OmdbSearchCandidate[]>(
     editingMember?.imdbId
-      ? [{ Title: editingMember.title, Year: "", imdbID: editingMember.imdbId, Type: "", Poster: editingMember.poster ?? "N/A" }]
+      ? [{ Title: editingMember.baseTitle ?? editingMember.title, Year: "", imdbID: editingMember.imdbId, Type: "", Poster: editingMember.poster ?? "N/A" }]
       : []
   );
   const [selectedImdbId, setSelectedImdbId] = useState<string | null>(editingMember?.imdbId ?? null);
@@ -274,6 +289,11 @@ export default function TitleSearchPicker({
   // format is ticked, which is more accurate than guessing from the previous title's value
   // regardless of which disc it was actually about.
   const [specialFeaturesDiscFormat, setSpecialFeaturesDiscFormat] = useState(editingMember?.specialFeaturesDiscFormat ?? "");
+  const [cut, setCut] = useState(editingMember?.cut ?? "");
+  const [cutReleaseDate, setCutReleaseDate] = useState(editingMember?.cutReleaseDate ?? "");
+  const [cutRuntimeMins, setCutRuntimeMins] = useState(editingMember?.cutRuntimeMins ?? "");
+  const [cutSuggestions, setCutSuggestions] = useState<string[]>([]);
+  const [cutLookupLoading, setCutLookupLoading] = useState(false);
   const [fieldOptions, setFieldOptions] = useState<FieldOptions | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeSlide, setActiveSlide] = useState(editingMember ? "summary" : "title");
@@ -319,6 +339,9 @@ export default function TitleSearchPicker({
   const partOfSeasonNoInputRef = useRef<TextInput>(null);
   const episodeCountInputRef = useRef<TextInput>(null);
   const releaseNameInputRef = useRef<TextInput>(null);
+  const cutInputRef = useRef<TextInput>(null);
+  const cutReleaseDateInputRef = useRef<TextInput>(null);
+  const cutRuntimeInputRef = useRef<TextInput>(null);
 
   // Defaults the special-features disc to the LAST (highest-numbered) disc this title's own
   // movie occupies - added 2026-09-24, per the user's own direct instruction after backfilling
@@ -393,7 +416,13 @@ export default function TitleSearchPicker({
   })();
 
   const selectedCandidate = selectedImdbId ? candidates.find((c) => c.imdbID === selectedImdbId) ?? null : null;
-  const resolvedTitle = selectedCandidate?.Title ?? manualTitle.trim();
+  const baseTitle = selectedCandidate?.Title ?? manualTitle.trim();
+  // Cuts only apply to a matched film - a manual entry already types its whole title.
+  const cutApplies = !!selectedCandidate && !SEASON_FIELDS_MOVIE_OR_TV_VALUES.has(movieOrTv);
+  const activeCut = cutApplies ? cut.trim() : "";
+  const cutHasOwnDetails = !!activeCut && !isTheatricalCut(activeCut);
+  const resolvedTitle = titleWithCut(baseTitle, activeCut);
+  const cutOptions = [...new Set([...COMMON_CUT_NAMES, ...cutSuggestions])];
   const showSeasonFields = SEASON_FIELDS_MOVIE_OR_TV_VALUES.has(movieOrTv);
   const commonFormats = (fieldOptions?.format ?? []).filter((f) => /^(dvd|blu-?ray|4k uhd blu-?ray)$/i.test(f.trim()));
   const formatControls = customBurnFormatControls(format, setFormat, fieldOptions?.format ?? []);
@@ -436,12 +465,73 @@ export default function TitleSearchPicker({
   // rating and family/animated flags with A's values, and end B's loading state early.
   const previewForImdbIdRef = useRef<string | null>(null);
 
+  // The film whose cut lookup still counts - same stale-answer guard as previewForImdbIdRef.
+  const cutLookupKeyRef = useRef<string | null>(null);
+
+  function loadCutSuggestions(imdbId: string) {
+    setCutSuggestions([]);
+    fetchCutInfo(imdbId)
+      .then((result) => {
+        if (previewForImdbIdRef.current === imdbId || selectedImdbIdRef.current === imdbId) setCutSuggestions(result.suggestions);
+      })
+      .catch(() => {
+        // Suggestions are a convenience - the common cut names and the typed field still work.
+      });
+  }
+
+  /** Fills the cut's release date and runtime from TMDb's notes when they name it. A theatrical
+   * cut (or none) clears them - the film's own values apply. Only ever replaces what was there
+   * because a different cut was just chosen. */
+  function lookUpCut(name: string) {
+    const trimmed = name.trim();
+    const key = `${selectedImdbId}|${trimmed}`;
+    cutLookupKeyRef.current = key;
+    setCutReleaseDate("");
+    setCutRuntimeMins("");
+    if (!selectedImdbId || !trimmed || isTheatricalCut(trimmed)) {
+      setCutLookupLoading(false);
+      return;
+    }
+    setCutLookupLoading(true);
+    fetchCutInfo(selectedImdbId, trimmed)
+      .then((result) => {
+        if (cutLookupKeyRef.current !== key) return;
+        setCutReleaseDate(result.info?.releaseDate ?? "");
+        setCutRuntimeMins(result.info?.runtimeMins != null ? String(result.info.runtimeMins) : "");
+      })
+      .catch(() => {
+        // Left blank for the user to type in from the case.
+      })
+      .finally(() => {
+        if (cutLookupKeyRef.current === key) setCutLookupLoading(false);
+      });
+  }
+
+  function chooseCut(name: string) {
+    const next = name === cut ? "" : name;
+    setCut(next);
+    lookUpCut(next);
+  }
+
+  const selectedImdbIdRef = useRef(selectedImdbId);
+  selectedImdbIdRef.current = selectedImdbId;
+  useEffect(() => {
+    if (editingMember?.imdbId) loadCutSuggestions(editingMember.imdbId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function selectCandidate(c: OmdbSearchCandidate) {
     setSelectedImdbId(c.imdbID);
+    setCut("");
+    setCutReleaseDate("");
+    setCutRuntimeMins("");
+    cutLookupKeyRef.current = null;
+    setCutLookupLoading(false);
     setMovieOrTv(guessMovieOrTvFromType(c.Type));
     setTmdbRating(null);
     setTmdbPreviewLoading(true);
     previewForImdbIdRef.current = c.imdbID;
+    loadCutSuggestions(c.imdbID);
     previewTmdbFields(c.imdbID)
       .then((preview) => {
         if (previewForImdbIdRef.current !== c.imdbID) return;
@@ -474,6 +564,10 @@ export default function TitleSearchPicker({
    * `duplicateQueue`), rather than interrupting the add-a-title flow for each one. */
   function handleAddPressed() {
     if (!resolvedTitle) return;
+    if (cutHasOwnDetails && cutReleaseDate.trim() && !CUT_DATE_PATTERN.test(cutReleaseDate.trim())) {
+      setError("The cut's release date needs to be YYYY-MM-DD (e.g. 1978-09-01), or left blank.");
+      return;
+    }
     setError(null);
     const sortedDiscs = [...selectedDiscs].sort((a, b) => a - b);
     // A "special features disc" that's also one of this title's OWN movie discs isn't a
@@ -494,6 +588,10 @@ export default function TitleSearchPicker({
       key: editingMember?.key ?? generateMemberKey(),
       imdbId: selectedImdbId ?? undefined,
       title: resolvedTitle,
+      cut: activeCut || undefined,
+      baseTitle: activeCut ? baseTitle : undefined,
+      cutReleaseDate: cutHasOwnDetails ? cutReleaseDate.trim() || undefined : undefined,
+      cutRuntimeMins: cutHasOwnDetails ? cutRuntimeMins.trim() || undefined : undefined,
       poster: selectedCandidate?.Poster !== "N/A" ? selectedCandidate?.Poster : undefined,
       movieOrTv,
       seasonNo: showSeasonFields ? seasonNo.trim() || undefined : undefined,
@@ -534,6 +632,68 @@ export default function TitleSearchPicker({
       isAnimatedStyle,
     });
   }
+
+  const cutNode = (
+    <>
+      <View style={styles.section}>
+        <Text style={styles.label}>Which cut is this? (optional)</Text>
+        <Text style={styles.hint}>
+          For a set holding more than one cut of the same film. Leave blank for an ordinary copy.
+        </Text>
+        <SingleSelectChips options={cutOptions} value={cut} onChange={chooseCut} />
+        <TextInput
+          ref={cutInputRef}
+          style={styles.input}
+          value={cut}
+          onChangeText={setCut}
+          onFocus={() => scrollInputRefIntoView(cutInputRef)}
+          onEndEditing={() => lookUpCut(cut)}
+          returnKeyType="done"
+          placeholder="Or type the cut's name, e.g. The Argento Cut"
+          placeholderTextColor="#8193ab"
+        />
+        {activeCut ? <Text style={styles.hint}>Saved as &quot;{resolvedTitle}&quot;</Text> : null}
+      </View>
+      {cutHasOwnDetails && (
+        <>
+          {cutLookupLoading && <Text style={styles.hint}>Checking TMDb for this cut&apos;s release date and runtime...</Text>}
+          <View style={styles.section}>
+            <Text style={styles.label}>This cut&apos;s release date (optional)</Text>
+            <TextInput
+              ref={cutReleaseDateInputRef}
+              style={styles.input}
+              value={cutReleaseDate}
+              onChangeText={setCutReleaseDate}
+              onFocus={() => scrollInputRefIntoView(cutReleaseDateInputRef)}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor="#8193ab"
+            />
+            {!cutLookupLoading && !cutReleaseDate.trim() && (
+              <Text style={styles.hint}>TMDb doesn&apos;t date this cut - type it if you know it, or leave blank to use the film&apos;s.</Text>
+            )}
+          </View>
+          <View style={styles.section}>
+            <Text style={[styles.label, !cutLookupLoading && !cutRuntimeMins.trim() && styles.labelNeeded]}>
+              This cut&apos;s runtime (minutes)
+            </Text>
+            <TextInput
+              ref={cutRuntimeInputRef}
+              style={[styles.input, !cutLookupLoading && !cutRuntimeMins.trim() && styles.inputNeeded]}
+              value={cutRuntimeMins}
+              onChangeText={setCutRuntimeMins}
+              onFocus={() => scrollInputRefIntoView(cutRuntimeInputRef)}
+              keyboardType="number-pad"
+              placeholder="e.g. 139"
+              placeholderTextColor="#8193ab"
+            />
+            {!cutLookupLoading && !cutRuntimeMins.trim() && (
+              <Text style={styles.hintNeeded}>Not in TMDb&apos;s notes - type it from the back of the case.</Text>
+            )}
+          </View>
+        </>
+      )}
+    </>
+  );
 
   const titleNode = (
     <>
@@ -610,18 +770,29 @@ export default function TitleSearchPicker({
           {selectedCandidate.Poster && selectedCandidate.Poster !== "N/A" && (
             <Image source={{ uri: selectedCandidate.Poster }} style={styles.posterLarge} resizeMode="cover" />
           )}
-          <Text style={styles.label}>{selectedCandidate.Title} ({selectedCandidate.Year})</Text>
+          <Text style={styles.label}>
+            {selectedCandidate.Title}
+            {selectedCandidate.Year ? ` (${selectedCandidate.Year})` : ""}
+          </Text>
           <TouchableOpacity
             onPress={() => {
               previewForImdbIdRef.current = null;
               setSelectedImdbId(null);
               setTmdbPreviewLoading(false);
+              setCut("");
+              setCutReleaseDate("");
+              setCutRuntimeMins("");
+              setCutSuggestions([]);
+              cutLookupKeyRef.current = null;
+              setCutLookupLoading(false);
             }}
           >
             <Text style={styles.link}>Not this one - pick again</Text>
           </TouchableOpacity>
         </View>
       )}
+
+      {cutApplies && cutNode}
 
       {(selectedCandidate || (hasSearched && candidates.length === 0)) && (
         <TouchableOpacity
@@ -903,6 +1074,24 @@ export default function TitleSearchPicker({
           setActiveSlide("title");
         }}
       />
+      {cutApplies && (
+        <SummaryRow
+          label="Cut"
+          value={
+            activeCut
+              ? [activeCut, cutHasOwnDetails ? cutReleaseDate.trim() : "", cutHasOwnDetails && cutRuntimeMins.trim() ? `${cutRuntimeMins.trim()} min` : ""]
+                  .filter(Boolean)
+                  .join(", ")
+              : "-"
+          }
+          // Amber while a named cut still has no runtime - the one detail that has to come from the case.
+          notable={cutHasOwnDetails && !cutRuntimeMins.trim()}
+          expanded={openRow === "cut"}
+          onPress={() => toggleRow("cut")}
+        >
+          {cutNode}
+        </SummaryRow>
+      )}
       <SummaryRow
         label="Type"
         value={movieOrTv || "?"}
@@ -1014,6 +1203,9 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 },
   label: { color: "#d7e2ee", fontFamily: FONTS.displaySemiBold, flexShrink: 1 },
   hint: { fontFamily: FONTS.body, color: "#a9b8cc", fontStyle: "italic" },
+  hintNeeded: { fontFamily: FONTS.body, color: "#eab308", fontStyle: "italic" },
+  labelNeeded: { color: "#eab308" },
+  inputNeeded: { borderColor: "#eab308" },
   link: { fontFamily: FONTS.body, color: "#5cc8ff" },
   error: { fontFamily: FONTS.body, color: "#f87171" },
   input: {

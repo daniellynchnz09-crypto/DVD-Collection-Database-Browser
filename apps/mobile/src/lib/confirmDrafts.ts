@@ -68,6 +68,11 @@ export interface ConfirmDraftCollectionMember {
   isAnimatedStyle?: boolean;
   rating?: string;
   tmdbRating?: string | null;
+  // Cuts of one film (2026-10-22) - see TitleSearchPicker.tsx's CollectionMember.cut.
+  cut?: string;
+  baseTitle?: string;
+  cutReleaseDate?: string;
+  cutRuntimeMins?: string;
 }
 
 export interface ConfirmDraft {
@@ -122,6 +127,9 @@ export interface ConfirmDraft {
   // Collection scanning flow (added 2026-09-20) - see barcode-scanning-pipeline.md.
   isCollectionOverride?: boolean;
   collectionMembers?: ConfirmDraftCollectionMember[];
+  /** The user's own answer to "Single-movie case - shelve with the movies" (2026-10-22); null/
+   * undefined means it still follows the automatic guess. */
+  shelveWithMovies?: boolean | null;
 }
 
 const STORAGE_KEY = "confirmDrafts";

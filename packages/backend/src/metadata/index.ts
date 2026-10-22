@@ -4,7 +4,7 @@ import { fetchOmdbScores, omdbRefreshAgeMs, omdbScoresFromResponse, type OmdbSco
 import { saveOmdbScores, savePersonDetails, saveTmdbMetadata } from "./storage";
 import { fetchTmdbMetadata, fetchTmdbPerson } from "./tmdbMetadata";
 
-export { fetchTmdbMetadata, fetchTmdbPerson, findTmdbByImdbId, type TmdbMetadataResult } from "./tmdbMetadata";
+export { fetchTmdbCutNotes, fetchTmdbMetadata, fetchTmdbPerson, findTmdbByImdbId, type TmdbMetadataResult } from "./tmdbMetadata";
 export {
   fetchOmdbScores,
   omdbRefreshAgeMs,
