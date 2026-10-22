@@ -59,3 +59,6 @@ supabase/.temp/
 # Playwright MCP's own scratch output (browser snapshots/console logs from live-verification
 # sessions, e.g. the eBay developer-console walkthrough) - tool scratch, not app code.
 .playwright-mcp/
+
+# Local Claude Code tooling (usage-guard logs prompts, which can include pasted secrets)
+/.claude/
