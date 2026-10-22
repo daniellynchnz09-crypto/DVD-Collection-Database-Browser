@@ -198,6 +198,10 @@ const TMDB_GENRE_ALIASES: Record<string, string> = { "Science Fiction": "Sci-Fi"
 // prefill, never a forced value) - see guessMovieOrTvFromType in ConfirmScreen.tsx.
 const TMDB_NON_GENRE_TAGS = new Set(["TV Movie"]);
 
+// Title types that are part of a show (seasons, episodes, serials) - their rows share the show's
+// IMDb id, so sharing one doesn't make a set "one film".
+const TV_SEASON_TYPES = new Set(["TV Series", "TV Mini-Series", "TV Special", "TV Episode", "Serial"]);
+
 /** Merges OMDb's own (often narrower) Genre field with TMDb's genre list, added 2026-09-19
  * after the user noticed OMDb's classic Doctor Who entry was missing "Sci-Fi" entirely while
  * TMDb's own genre list for the same title has it. TMDb's compound TV tags ("Sci-Fi & Fantasy",
@@ -933,6 +937,22 @@ export async function POST(request: Request) {
               ? "Live Action/Animation Hybrid"
               : "Live Action";
       }
+      // One film in several cuts (2026-10-22, the user's request): when every title in the set is
+      // the same film, the header carries that film's IMDb and Rotten Tomatoes links too. Each
+      // cut already resolved both from the film itself (OMDb lists a film once, never per cut).
+      // Never for a TV set - its seasons share the show's IMDb id without being one film.
+      const memberImdbIds = new Set(memberBuilts.map((b) => extractImdbIdFromPage(b.title.imdb_page as string | null)));
+      const isOneFilm =
+        memberBuilts.length >= 2 &&
+        memberImdbIds.size === 1 &&
+        [...memberImdbIds][0] != null &&
+        memberBuilts.every((b) => !TV_SEASON_TYPES.has(b.title.movie_or_tv as string));
+      if (isOneFilm) {
+        headerBuilt.title.imdb_page ??= memberBuilts[0].title.imdb_page;
+        headerBuilt.title.rotten_tomatoes_page ??=
+          memberBuilts.map((b) => b.title.rotten_tomatoes_page as string | null).find(Boolean) ?? null;
+      }
+
       const anyMemberSpecialFeatures = memberBuilts.some((b) => b.title.special_features === true);
       headerBuilt.title.special_features = headerBuilt.title.special_features === true || anyMemberSpecialFeatures;
 
