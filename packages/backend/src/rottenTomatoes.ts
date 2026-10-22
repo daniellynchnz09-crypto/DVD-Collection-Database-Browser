@@ -43,7 +43,9 @@ export async function lookupRottenTomatoesPage(
   // When an older film already has the plain slug, RT files a newer one under "<slug>_<year>"
   // without redirecting (2026-10-11: /m/high_tension is a 1936 film; the 2003 one is
   // /m/high_tension_2003). The plain slug fails the name/score check below, so try that next.
-  const slugs = year ? [slug, `${slug}_${year}`] : [slug];
+  // One year either side too (2026-10-22): OMDb dates The Wicker Man 1974 (its US release) while
+  // RT files it as /m/the_wicker_man_1973. Every guess still has to pass the name/score check.
+  const slugs = year ? [slug, `${slug}_${year}`, `${slug}_${year - 1}`, `${slug}_${year + 1}`] : [slug];
   for (const candidate of slugs) {
     const url = await verifiedPage(`https://www.rottentomatoes.com/m/${candidate}`, title, criticsScorePercent);
     if (url) return url;
