@@ -1,5 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { BROWSE_TABS } from "@/lib/catalog/browse";
+import { BrowseTabs } from "./BrowseTabs";
 import { SearchBox } from "./SearchBox";
 import { SettingsMenu } from "./SettingsMenu";
 
@@ -32,6 +34,7 @@ export function Header({ search }: { search?: ReactNode }) {
           <SettingsMenu />
         </div>
       </div>
+      <BrowseTabs tabs={BROWSE_TABS} />
     </header>
   );
 }

@@ -408,6 +408,13 @@ async function buildIndex(): Promise<SearchIndex | null> {
   };
 }
 
+/** Every film/show the site lists (IMDb ids of scanned titles) - for the People tab
+ * (browse.ts), whose cast and crew come from these films' credits. */
+export async function listIndexedFilmIds(): Promise<string[]> {
+  const idx = await getIndex();
+  return idx ? idx.films.map((f) => f.imdbId) : [];
+}
+
 /** Drops the index so the next search rebuilds it - after a scan confirm (cacheRefresh.ts). */
 export function invalidateSearchIndex(): void {
   index = null;
@@ -748,7 +755,8 @@ export async function searchCatalog(rawQuery: string, opts: SearchOptions = {}):
   const empty: SearchResults = { query, groups: [], total: 0, sort };
   if (browsing && !titleFilters && filters.types.length === 0 && !filters.sort) return empty;
   const qWords = q.split(" ");
-  const perGroup = Math.min(Math.max(opts.perGroup ?? 5, 1), 500);
+  // Up to 2,000 so the Browse tabs (browse.ts) can list a whole format or every franchise.
+  const perGroup = Math.min(Math.max(opts.perGroup ?? 5, 1), 2000);
 
   // Which groups to show: the ones picked, else every group - or just titles once a title
   // filter is on (a "Horror" filter says nothing about which people to list).

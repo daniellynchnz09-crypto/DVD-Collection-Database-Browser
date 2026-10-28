@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Section } from "@/components/Panel";
 import { PosterCard } from "@/components/PosterCard";
-import { PosterImage } from "@/components/PosterImage";
+import { EntityRow } from "@/components/search/EntityRow";
 import { FilterPanel } from "@/components/search/FilterPanel";
 import { cleanSearchQuery, getSearchFacetOptions, searchCatalog, SEARCH_MIN_LENGTH, type SearchGroup, type SearchHit } from "@/lib/catalog/search";
 import { activeFilterCount, filtersToParams, parseFiltersFromRecord, type RangeKey, type SortKey } from "@/lib/catalog/searchFilters";
@@ -141,7 +141,7 @@ function ResultGroup({
       ) : (
         <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {group.hits.map((hit) => (
-            <li key={hit.key}>
+            <li key={hit.key} className="min-w-0">
               <EntityRow hit={hit} />
             </li>
           ))}
@@ -170,45 +170,6 @@ function captionFor(hit: SearchHit): string | null {
   // Items: "4K UHD Blu-Ray // In: <set>" -> just the set, since the badge already shows format.
   const inSet = hit.subtitle?.split(" // In: ")[1];
   return inSet ? `In: ${inSet}` : null;
-}
-
-/** Franchise / director / person row: small image + name + subtitle, angular panel. */
-function EntityRow({ hit }: { hit: SearchHit }) {
-  return (
-    <Link
-      href={hit.href}
-      className="panel clip-corner-sm flow-ring group flex items-center gap-3 p-2 outline-none hover:border-accent-dim focus-visible:shadow-glow"
-    >
-      <span className="clip-corner-sm relative h-16 w-11 shrink-0 overflow-hidden bg-panel ring-1 ring-rule ring-inset">
-        {hit.image ? (
-          <PosterImage image={hit.image} title={hit.title} sizes="44px" />
-        ) : (
-          <span aria-hidden className="absolute inset-0 flex items-center justify-center font-display text-lg font-bold text-accent-dim">
-            {initials(hit.title)}
-          </span>
-        )}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate font-medium text-chrome group-hover:text-accent-hi">{hit.title}</span>
-        <span className="label-tech block truncate">
-          {hit.subtitle}
-          {hit.related ? " // related" : ""}
-        </span>
-      </span>
-      <svg aria-hidden viewBox="0 0 8 10" className="mr-1 h-2.5 w-2 shrink-0 fill-accent">
-        <polygon points="0,0 8,5 0,10" />
-      </svg>
-    </Link>
-  );
-}
-
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]!.toUpperCase())
-    .join("");
 }
 
 function EmptyState({ title, body }: { title: string; body: string }) {
