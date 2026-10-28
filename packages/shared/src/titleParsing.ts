@@ -657,6 +657,8 @@ export const FRANCHISE_ALIASES: Record<string, string> = {
   wizardofoz: "Wizard of Oz",
   thewizardofoz: "Wizard of Oz",
   xmen: "X-Men",
+  // "Fox X-Men" is the same series (2026-10-28, the user's request).
+  foxxmen: "X-Men",
 };
 
 function franchiseKey(value: string): string {

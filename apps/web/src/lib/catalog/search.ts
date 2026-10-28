@@ -159,7 +159,7 @@ type IndexRow = TitleCardRow & {
 
 type IndexMeta = Pick<
   TitleMetadata,
-  "imdb_id" | "title" | "poster_path" | "release_date" | "runtime_mins" | "imdb_rating" | "imdb_votes" | "rotten_tomatoes_score" | "rt_audience_score" | "metacritic_score"
+  "imdb_id" | "title" | "poster_path" | "backdrop_path" | "release_date" | "runtime_mins" | "imdb_rating" | "imdb_votes" | "rotten_tomatoes_score" | "rt_audience_score" | "metacritic_score"
 >;
 
 /** What the filters and sorts look at, worked out once per row when the index is built. */
@@ -253,7 +253,7 @@ async function fetchAllMetadata(): Promise<Map<string, IndexMeta>> {
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data, error } = await supabase
       .from("title_metadata")
-      .select("imdb_id,title,poster_path,release_date,runtime_mins,imdb_rating,imdb_votes,rotten_tomatoes_score,rt_audience_score,metacritic_score")
+      .select("imdb_id,title,poster_path,backdrop_path,release_date,runtime_mins,imdb_rating,imdb_votes,rotten_tomatoes_score,rt_audience_score,metacritic_score")
       .order("imdb_id")
       .range(from, from + PAGE_SIZE - 1);
     if (error) {
@@ -425,25 +425,49 @@ export interface FranchiseTile {
 }
 
 /**
- * Every franchise for the Browse tab (2026-10-28), most titles first. The picture is the oldest
- * film's TMDb poster - the same art the franchise page's own circle shows (people.ts leadImage:
- * the first film card, oldest first, posters before case photos) - falling back to a copy's
- * own art only when none of its films has a poster.
+ * Every franchise for the Browse tab (2026-10-28), most titles first. The picture is a TMDb
+ * poster (or backdrop) of one of its films, unique to the tile where possible - see below -
+ * falling back to a copy's own art only when none of its films has TMDb art.
  */
 export async function listFranchiseTiles(): Promise<FranchiseTile[]> {
   const idx = await getIndex();
   if (!idx) return [];
-  const prepared = idx.franchises.map((f) => {
-    const works = new Set<string>();
-    for (const r of f.rows) {
-      if (r.imdbId) works.add(r.imdbId);
-      else if (!r.row.is_collection) works.add(`row:${r.row.unique_id}`);
-    }
-    const oldestWithPoster = f.rows
-      .filter((r) => r.imdbId && idx.metadata.get(r.imdbId)?.poster_path)
-      .sort((a, b) => (a.facts.date ?? a.row.release_date ?? "9999").localeCompare(b.facts.date ?? b.row.release_date ?? "9999"))[0];
-    const poster = oldestWithPoster ? tmdbImage(idx.metadata.get(oldestWithPoster.imdbId!)!.poster_path, "w342") : null;
-    return { f, titles: works.size, poster, fallbackRow: poster ? null : representativeRow(f.rows, idx.metadata) };
+  const counted = idx.franchises
+    .map((f) => {
+      const works = new Set<string>();
+      for (const r of f.rows) {
+        if (r.imdbId) works.add(r.imdbId);
+        else if (!r.row.is_collection) works.add(`row:${r.row.unique_id}`);
+      }
+      return { f, titles: works.size };
+    })
+    .sort((a, b) => b.titles - a.titles || a.f.name.localeCompare(b.f.name));
+  // Each tile gets its own picture (2026-10-28, the user's request: MCU, The Infinity Saga and
+  // MCU Phase One all showed Iron Man). A franchise's choices are its films' posters, oldest
+  // first, then their backdrops. The franchises with the fewest choices pick first (a one-film
+  // tag like "The Hulk" has only one poster), each taking the first picture no tile has used;
+  // only when all of its choices are taken does a tile repeat one.
+  const used = new Set<string>();
+  const choicesOf = (f: (typeof counted)[number]["f"]) => {
+    const films = [...new Map(f.rows.filter((r) => r.imdbId).map((r) => [r.imdbId!, r])).values()]
+      .map((r) => ({ meta: idx.metadata.get(r.imdbId!), date: r.facts.date ?? r.row.release_date ?? "9999" }))
+      .filter((x) => x.meta)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    return [
+      ...films.filter((x) => x.meta!.poster_path).map((x) => ({ path: x.meta!.poster_path!, size: "w342" as const })),
+      ...films.filter((x) => x.meta!.backdrop_path).map((x) => ({ path: x.meta!.backdrop_path!, size: "w780" as const })),
+    ];
+  };
+  const withChoices = counted.map((c) => ({ ...c, choices: choicesOf(c.f) }));
+  const picked = new Map<string, CatalogImage | null>();
+  for (const c of [...withChoices].sort((a, b) => a.choices.length - b.choices.length || b.titles - a.titles)) {
+    const choice = c.choices.find((x) => !used.has(x.path)) ?? c.choices[0];
+    if (choice) used.add(choice.path);
+    picked.set(c.f.norm, choice ? tmdbImage(choice.path, choice.size) : null);
+  }
+  const prepared = withChoices.map(({ f, titles }) => {
+    const poster = picked.get(f.norm) ?? null;
+    return { f, titles, poster, fallbackRow: poster ? null : representativeRow(f.rows, idx.metadata) };
   });
   const fallbackRows = prepared.map((p) => p.fallbackRow).filter((r): r is IndexedRow => !!r);
   const fallbacks = await resolveImages(
