@@ -624,6 +624,10 @@ export const FRANCHISE_ALIASES: Record<string, string> = {
   sherlockholmes: "Sherlock Holmes",
   spiderman: "Spider-Man",
   spiderrman: "Spider-Man",
+  // The "Spiderman" spelling inside longer tags too (2026-10-28, the user's request) - the tags
+  // themselves stay separate sub-franchises.
+  ramispiderman: "Rami Spider-Man",
+  sonysspidermanwithoutspidermanfranchise: "Sony's Spider-Man Without Spider-Man Franchise",
   spiderverse: "Spider-Verse",
   supermariobros: "Super Mario Bros.",
   sweenytodd: "Sweeney Todd",
