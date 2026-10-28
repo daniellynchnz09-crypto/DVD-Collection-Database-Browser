@@ -2,7 +2,10 @@ import "server-only";
 import { getCatalogClient, isMissingTableError, reportQueryError } from "./client";
 import { personHref } from "./display";
 import { tmdbImageUrl } from "./images";
-import { listIndexedFilmIds, searchCatalog, type SearchHit, type SearchKind } from "./search";
+import { listFranchiseTiles, listIndexedFilmIds, searchCatalog, type FranchiseTile, type SearchHit, type SearchKind } from "./search";
+import { PEOPLE_ROLES, roleOfCredit, roleSingular, type PeopleRole } from "./roles";
+
+export { PEOPLE_ROLES, type PeopleRole, type FranchiseTile };
 import { EMPTY_FILTERS, type SearchFilters } from "./searchFilters";
 
 /**
@@ -10,13 +13,16 @@ import { EMPTY_FILTERS, type SearchFilters } from "./searchFilters";
  * site's nav menu, open to more tabs later. The grids reuse the search index's browse mode
  * (search.ts), so a tab lists exactly what the matching Advanced Search filters would.
  *
- * - On 4K UHD / On HD: every Film/TV page with a disc of that format, newest scan first. A film
+ * - On 4K UHD / In HD (renamed from "On HD", the user's call): every Film/TV page with a disc of that format, newest scan first. A film
  *   owned on both formats appears in both (the user's choice: each tab answers "do I have it on
  *   this format?"). "HD" is any Blu-ray that isn't 4K (search's "Blu-ray" format label, which
  *   covers Blu-Ray, Blu-Ray 3D and a Blu-ray custom burn).
  * - Collections: every box set's own page (not the titles inside), newest first.
- * - Franchises: every franchise, A-Z.
- * - People: everyone credited on the site's films (TMDb cast + key crew), most titles first.
+ * - Franchises: every franchise as a large circle (the oldest film's poster crop, like the
+ *   franchise page's own circle), most titles first.
+ * - People: everyone credited on the site's films (TMDb cast + key crew), most titles first; a
+ *   role tag sorts by how many titles they had in THAT role (the user, 2026-10-28: Patrick
+ *   Wilson ranked #2 director on 7 titles overall, though he directed just 1).
  */
 
 export interface BrowseTab {
@@ -27,7 +33,7 @@ export interface BrowseTab {
 
 export const BROWSE_TABS: BrowseTab[] = [
   { slug: "4k", label: "On 4K UHD", href: "/browse/4k" },
-  { slug: "hd", label: "On HD", href: "/browse/hd" },
+  { slug: "hd", label: "In HD", href: "/browse/hd" },
   { slug: "franchises", label: "Franchises", href: "/browse/franchises" },
   { slug: "collections", label: "Collections", href: "/browse/collections" },
   { slug: "people", label: "People", href: "/browse/people" },
@@ -45,10 +51,14 @@ const GRID_SPECS = {
   "4k": { kind: "film", filters: { ...EMPTY_FILTERS, types: ["film"], facets: { fmt: { "4K UHD": "include" } }, sort: "added", dir: "desc" } },
   hd: { kind: "film", filters: { ...EMPTY_FILTERS, types: ["film"], facets: { fmt: { "Blu-ray": "include" } }, sort: "added", dir: "desc" } },
   collections: { kind: "collection", filters: { ...EMPTY_FILTERS, types: ["collection"], sort: "added", dir: "desc" } },
-  franchises: { kind: "franchise", filters: { ...EMPTY_FILTERS, types: ["franchise"], sort: "title", dir: "asc" } },
 } satisfies Record<string, GridSpec>;
 
 export type BrowseGridSlug = keyof typeof GRID_SPECS;
+
+/** Every franchise, most titles first - see listFranchiseTiles in search.ts. */
+export async function loadBrowseFranchises(): Promise<FranchiseTile[]> {
+  return listFranchiseTiles();
+}
 
 /** The hits for one grid tab, in the tab's own order. */
 export async function loadBrowseGrid(slug: BrowseGridSlug): Promise<SearchHit[]> {
@@ -61,40 +71,6 @@ export async function loadBrowseGrid(slug: BrowseGridSlug): Promise<SearchHit[]>
 // People
 // ---------------------------------------------------------------------------------------------
 
-/** The role tags at the top of the People tab, and which credits count for each. */
-export const PEOPLE_ROLES = [
-  { key: "actor", label: "Actors" },
-  { key: "director", label: "Directors" },
-  { key: "writer", label: "Writers" },
-  { key: "producer", label: "Producers" },
-  { key: "composer", label: "Composers" },
-  { key: "cinematographer", label: "Cinematographers" },
-] as const;
-
-export type PeopleRole = (typeof PEOPLE_ROLES)[number]["key"];
-
-const ROLE_LABEL: Record<PeopleRole, string> = {
-  actor: "Actor",
-  director: "Director",
-  writer: "Writer",
-  producer: "Producer",
-  composer: "Composer",
-  cinematographer: "Cinematographer",
-};
-
-/** title_credits keeps cast plus these crew jobs (0043): Director, Writer/Screenplay, Producer,
- * Original Music Composer and Director of Photography. */
-function roleOf(creditType: string, job: string | null): PeopleRole | null {
-  if (creditType === "cast") return "actor";
-  const j = (job ?? "").toLowerCase();
-  if (j === "director") return "director";
-  if (j === "writer" || j === "screenplay") return "writer";
-  if (j.includes("producer")) return "producer";
-  if (j.includes("composer") || j === "music") return "composer";
-  if (j === "director of photography") return "cinematographer";
-  return null;
-}
-
 export interface BrowsePerson {
   id: number;
   name: string;
@@ -102,6 +78,8 @@ export interface BrowsePerson {
   imageSrc: string | null;
   /** How many of the site's films/shows they're credited on. */
   titles: number;
+  /** How many of those in each role, for sorting and labelling under a role tag. */
+  roleTitles: Partial<Record<PeopleRole, number>>;
   roles: PeopleRole[];
   /** "Actor, Director" - their roles in display form. */
   roleLabel: string;
@@ -132,7 +110,7 @@ async function buildPeople(): Promise<BrowsePerson[]> {
   if (!supabase || filmIds.length === 0) return [];
 
   const titlesByPerson = new Map<number, Set<string>>();
-  const rolesByPerson = new Map<number, Set<PeopleRole>>();
+  const roleTitlesByPerson = new Map<number, Map<PeopleRole, Set<string>>>();
   const chunks = <T,>(list: T[]) => Array.from({ length: Math.ceil(list.length / ID_CHUNK) }, (_, i) => list.slice(i * ID_CHUNK, (i + 1) * ID_CHUNK));
 
   // Batches run side by side - one after another took ~10s for a few thousand credits.
@@ -157,11 +135,12 @@ async function buildPeople(): Promise<BrowsePerson[]> {
   if (creditPages.some((page) => page === null)) return [];
   for (const c of creditPages.flat()) {
     if (!c) continue;
-    const role = roleOf(c.credit_type, c.job);
+    const role = roleOfCredit(c.credit_type, c.job);
     if (!role) continue;
     const id = c.tmdb_person_id;
     (titlesByPerson.get(id) ?? titlesByPerson.set(id, new Set()).get(id)!).add(c.imdb_id);
-    (rolesByPerson.get(id) ?? rolesByPerson.set(id, new Set()).get(id)!).add(role);
+    const byRole = roleTitlesByPerson.get(id) ?? roleTitlesByPerson.set(id, new Map()).get(id)!;
+    (byRole.get(role) ?? byRole.set(role, new Set()).get(role)!).add(c.imdb_id);
   }
 
   const details = new Map<number, { name: string; profile_path: string | null }>();
@@ -186,16 +165,27 @@ async function buildPeople(): Promise<BrowsePerson[]> {
     .filter((id) => details.get(id)?.name)
     .map((id) => {
       const d = details.get(id)!;
-      const roles = [...rolesByPerson.get(id)!].sort((a, b) => order.indexOf(a) - order.indexOf(b));
+      const byRole = roleTitlesByPerson.get(id)!;
+      const roles = [...byRole.keys()].sort((a, b) => order.indexOf(a) - order.indexOf(b));
       return {
         id,
         name: d.name,
         href: personHref(id),
         imageSrc: d.profile_path ? tmdbImageUrl(d.profile_path, "w185") : null,
         titles: titlesByPerson.get(id)!.size,
+        roleTitles: Object.fromEntries([...byRole].map(([role, set]) => [role, set.size])),
         roles,
-        roleLabel: roles.map((r) => ROLE_LABEL[r]).join(", "),
+        roleLabel: roles.map(roleSingular).join(", "),
       };
     })
     .sort((a, b) => b.titles - a.titles || a.name.localeCompare(b.name));
+}
+
+/** Everyone in `role` (or everyone), ordered for that tag: by titles in that role, then total
+ * titles, then A-Z. */
+export function peopleForRole(people: BrowsePerson[], role: PeopleRole | null): BrowsePerson[] {
+  if (!role) return people;
+  return people
+    .filter((p) => p.roleTitles[role])
+    .sort((a, b) => b.roleTitles[role]! - a.roleTitles[role]! || b.titles - a.titles || a.name.localeCompare(b.name));
 }

@@ -13,11 +13,15 @@ export function PosterCard({
   card,
   size = "md",
   preload = false,
+  stackedCaption = false,
 }: {
   card: PosterCardData;
   /** sm = dense grids/search, md = browse rows, lg = featured. */
   size?: "sm" | "md" | "lg";
   preload?: boolean;
+  /** Year on one line and the caption in full on the lines below (person pages, 2026-10-28:
+   * "as <character> / Director" was cut off on one truncated line). */
+  stackedCaption?: boolean;
 }) {
   const widths = { sm: "w-28 sm:w-32", md: "w-32 sm:w-40", lg: "w-40 sm:w-52" } as const;
   const sizes = { sm: "128px", md: "(max-width: 640px) 128px, 160px", lg: "(max-width: 640px) 160px, 208px" } as const;
@@ -47,9 +51,16 @@ export function PosterCard({
       </div>
       <div className="mt-2 px-0.5">
         <p className="line-clamp-2 text-sm leading-tight font-medium text-chrome group-hover:text-accent-hi">{card.title}</p>
-        <p className="label-tech mt-0.5 truncate">
-          {[card.year, card.caption].filter(Boolean).join(" // ") || " "}
-        </p>
+        {stackedCaption ? (
+          <>
+            <p className="label-tech mt-0.5">{card.year || " "}</p>
+            {card.caption ? <p className="label-tech mt-0.5 break-words normal-case tracking-wide text-mist">{card.caption}</p> : null}
+          </>
+        ) : (
+          <p className="label-tech mt-0.5 truncate">
+            {[card.year, card.caption].filter(Boolean).join(" // ") || " "}
+          </p>
+        )}
       </div>
     </Link>
   );

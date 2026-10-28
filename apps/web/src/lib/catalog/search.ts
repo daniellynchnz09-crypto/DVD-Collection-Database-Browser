@@ -415,6 +415,55 @@ export async function listIndexedFilmIds(): Promise<string[]> {
   return idx ? idx.films.map((f) => f.imdbId) : [];
 }
 
+export interface FranchiseTile {
+  key: string;
+  name: string;
+  href: string;
+  /** Distinct films/shows (plus titles with no IMDb page) - what the tile is ordered by. */
+  titles: number;
+  image: CatalogImage | null;
+}
+
+/**
+ * Every franchise for the Browse tab (2026-10-28), most titles first. The picture is the oldest
+ * film's TMDb poster - the same art the franchise page's own circle shows (people.ts leadImage:
+ * the first film card, oldest first, posters before case photos) - falling back to a copy's
+ * own art only when none of its films has a poster.
+ */
+export async function listFranchiseTiles(): Promise<FranchiseTile[]> {
+  const idx = await getIndex();
+  if (!idx) return [];
+  const prepared = idx.franchises.map((f) => {
+    const works = new Set<string>();
+    for (const r of f.rows) {
+      if (r.imdbId) works.add(r.imdbId);
+      else if (!r.row.is_collection) works.add(`row:${r.row.unique_id}`);
+    }
+    const oldestWithPoster = f.rows
+      .filter((r) => r.imdbId && idx.metadata.get(r.imdbId)?.poster_path)
+      .sort((a, b) => (a.facts.date ?? a.row.release_date ?? "9999").localeCompare(b.facts.date ?? b.row.release_date ?? "9999"))[0];
+    const poster = oldestWithPoster ? tmdbImage(idx.metadata.get(oldestWithPoster.imdbId!)!.poster_path, "w342") : null;
+    return { f, titles: works.size, poster, fallbackRow: poster ? null : representativeRow(f.rows, idx.metadata) };
+  });
+  const fallbackRows = prepared.map((p) => p.fallbackRow).filter((r): r is IndexedRow => !!r);
+  const fallbacks = await resolveImages(
+    [...new Map(fallbackRows.map((r) => [r.row.unique_id, r.row])).values()],
+    (row) => {
+      const id = extractImdbIdFromPage(row.imdb_page);
+      return id ? (idx.metadata.get(id) as TitleMetadata | undefined) : undefined;
+    },
+  );
+  return prepared
+    .map(({ f, titles, poster, fallbackRow }) => ({
+      key: f.norm,
+      name: f.name,
+      href: franchiseHref(f.name),
+      titles,
+      image: poster ?? (fallbackRow ? (fallbacks.get(fallbackRow.row.unique_id)?.poster ?? null) : null),
+    }))
+    .sort((a, b) => b.titles - a.titles || a.name.localeCompare(b.name));
+}
+
 /** Drops the index so the next search rebuilds it - after a scan confirm (cacheRefresh.ts). */
 export function invalidateSearchIndex(): void {
   index = null;
@@ -677,6 +726,11 @@ function plural(n: number, word: string) {
 }
 
 /** Earliest-released row with any image source, to stand in for a franchise or director. */
+/** Whether a row has any picture of its own (case photo, listing photo, stored or TMDb poster). */
+function hasOwnArt(r: IndexedRow, metadata: SearchIndex["metadata"]): boolean {
+  return !!(r.row.movie_poster_path || r.row.case_image_path || r.row.case_image_url || (r.imdbId && metadata.get(r.imdbId)?.poster_path));
+}
+
 function representativeRow(rows: IndexedRow[], metadata: SearchIndex["metadata"]): IndexedRow | null {
   const withImage = rows.filter(
     (r) => r.row.movie_poster_path || r.row.case_image_path || r.row.case_image_url || (r.imdbId && metadata.get(r.imdbId)?.poster_path),
@@ -826,6 +880,14 @@ export async function searchCatalog(rawQuery: string, opts: SearchOptions = {}):
   function addRow(r: IndexedRow, score: number, related: boolean) {
     const row = r.row;
     const isSet = row.is_collection;
+    // A box set with no art of its own borrows a title's from inside it, like its own page does
+    // (2026-10-28: Resident Evil: Retribution, the Spider-Man trilogy set and the Bud and Lou
+    // Costello set showed blank on the Collections tab but had art when opened).
+    const setImageRow = (): IndexedRow => {
+      if (hasOwnArt(r, idx!.metadata) || !r.row.name_of_collection) return r;
+      const members = idx!.membersByCollection.get(normalizeSearchText(r.row.name_of_collection)) ?? [];
+      return members.find((m) => hasOwnArt(m, idx!.metadata)) ?? r;
+    };
     const header = !isSet && r.collectionName ? idx!.headerByCollection.get(r.collectionName) : undefined;
     add({
       kind: isSet ? "collection" : "item",
@@ -833,7 +895,7 @@ export async function searchCatalog(rawQuery: string, opts: SearchOptions = {}):
       score: score + FORMAT_RANK(row.format) * 0.1,
       sortName: displayTitle(row),
       related,
-      imageRow: r,
+      imageRow: isSet ? setImageRow() : r,
       sortValues: rowSortValues(r),
       build: () => ({
         href: isSet ? collectionHref(row.unique_id) : discHref(row.unique_id),

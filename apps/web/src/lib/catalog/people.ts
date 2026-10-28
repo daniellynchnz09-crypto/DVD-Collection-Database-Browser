@@ -7,6 +7,7 @@ import { discHref, shortFormatLabel, slugify, workHref } from "./display";
 import { tmdbImage } from "./images";
 import { listFranchises, toPosterCards } from "./queries";
 import type { CatalogImage, FacetValue, Person, PosterCardData, TitleCardRow } from "./types";
+import { roleOfCredit, type PeopleRole } from "./roles";
 
 /**
  * Queries for the Cast/Crew/Franchise pages (WEB APP DESIGN.md "Cast/Crew/Franchise Pages"):
@@ -127,6 +128,8 @@ function formatBadge(rows: TitleCardRow[]): string | null {
 async function buildConnections(
   inputRows: TitleCardRow[],
   workCaption?: (imdbId: string) => string | null,
+  /** Films to list first in the Films & TV tab (a person page opened from a role tag). */
+  firstImdbIds?: Set<string>,
 ): Promise<Connections> {
   const rows = [...inputRows].sort(compareRows);
   // Disc cards (case photo first) for the DVD tab; film-mode cards (TMDb poster first) for the
@@ -163,6 +166,13 @@ async function buildConnections(
       aspect: filmCardById.get(rep.unique_id)?.aspect ?? repCard.aspect,
       caption: (group.imdbId && workCaption?.(group.imdbId)) || (copies > 1 ? `${copies} copies` : null),
     });
+  }
+
+  // Opened from a People role tag (e.g. Directors): those credits first, each part keeping its
+  // usual oldest-first order (2026-10-28, the user's request).
+  if (firstImdbIds?.size) {
+    const isFirst = (card: PosterCardData) => card.key.startsWith("w:tt") && firstImdbIds.has(card.key.slice(2));
+    workCards.sort((a, b) => Number(isFirst(b)) - Number(isFirst(a)));
   }
 
   const discCards: PosterCardData[] = rows.map((row) => ({
@@ -388,7 +398,8 @@ export interface PersonPage extends Connections {
 
 export type PersonPageResult = { status: "ok"; page: PersonPage } | { status: "not_found" } | { status: "unavailable" };
 
-export const getPersonPage = cache(async (tmdbPersonId: number): Promise<PersonPageResult> => {
+/** `firstRole`: the People tag the page was opened from - that role's credits are listed first. */
+export const getPersonPage = cache(async (tmdbPersonId: number, firstRole: PeopleRole | null = null): Promise<PersonPageResult> => {
   const supabase = getCatalogClient();
   if (!supabase) return { status: "unavailable" };
   if (!Number.isSafeInteger(tmdbPersonId) || tmdbPersonId <= 0) return { status: "not_found" };
@@ -431,7 +442,9 @@ export const getPersonPage = cache(async (tmdbPersonId: number): Promise<PersonP
   const credits = (creditsRes.data ?? []) as unknown as PersonCreditRow[];
   const captions = new Map<string, string[]>();
   const roles = new Set<string>();
+  const firstImdbIds = new Set<string>();
   for (const c of credits) {
+    if (firstRole && roleOfCredit(c.credit_type, c.job) === firstRole) firstImdbIds.add(c.imdb_id);
     const list = captions.get(c.imdb_id) ?? [];
     const label = c.credit_type === "cast" ? (c.character ? `as ${c.character}` : "Cast") : c.job;
     if (label && !list.includes(label)) list.push(label);
@@ -440,7 +453,7 @@ export const getPersonPage = cache(async (tmdbPersonId: number): Promise<PersonP
   }
 
   const rows = await withCollectionHeaders(await listRowsByImdbIds([...captions.keys()]));
-  const connections = await buildConnections(rows, (imdbId) => captions.get(imdbId)?.join(" / ") ?? null);
+  const connections = await buildConnections(rows, (imdbId) => captions.get(imdbId)?.join(" / ") ?? null, firstImdbIds);
   return {
     status: "ok",
     page: { person, profile: tmdbImage(person.profile_path, "h632"), roles: [...roles], ...connections },

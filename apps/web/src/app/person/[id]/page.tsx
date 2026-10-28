@@ -5,6 +5,7 @@ import { Panel } from "@/components/Panel";
 import { ConnectedTabs } from "@/components/people/ConnectedTabs";
 import { ProfileHero } from "@/components/people/ProfileHero";
 import { describeConnections, getPersonPage, isTmdbPersonId } from "@/lib/catalog/people";
+import { isPeopleRole } from "@/lib/catalog/roles";
 
 /**
  * Cast/Crew page keyed by TMDb person id, listing every owned title the person is credited on
@@ -14,10 +15,11 @@ import { describeConnections, getPersonPage, isTmdbPersonId } from "@/lib/catalo
  */
 export const revalidate = 60;
 
-async function load(params: PageProps<"/person/[id]">["params"]) {
+async function load(params: PageProps<"/person/[id]">["params"], role: unknown = null) {
   const { id } = await params;
   if (!isTmdbPersonId(id)) notFound();
-  return getPersonPage(Number(id));
+  // ?role=director (from a People tag) lists those credits first.
+  return getPersonPage(Number(id), isPeopleRole(role) ? role : null);
 }
 
 export async function generateMetadata(props: PageProps<"/person/[id]">): Promise<Metadata> {
@@ -26,7 +28,8 @@ export async function generateMetadata(props: PageProps<"/person/[id]">): Promis
 }
 
 export default async function PersonPage(props: PageProps<"/person/[id]">) {
-  const result = await load(props.params);
+  const role = (await props.searchParams).role;
+  const result = await load(props.params, Array.isArray(role) ? role[0] : role);
   if (result.status === "not_found") notFound();
 
   if (result.status === "unavailable") {
@@ -63,7 +66,7 @@ export default async function PersonPage(props: PageProps<"/person/[id]">) {
         descriptionLabel={person.biography ? "Biography" : "In the collection"}
       />
       <div className="mx-auto max-w-screen-2xl px-4 py-6 sm:px-6 sm:py-8">
-        <ConnectedTabs tabs={tabs} />
+        <ConnectedTabs tabs={tabs} stackedCaptions />
       </div>
     </div>
   );

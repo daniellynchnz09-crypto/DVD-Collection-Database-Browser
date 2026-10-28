@@ -19,7 +19,16 @@ export interface ConnectedTabData {
  * DVD/DVD Collection pages on the other. Filtering is client-side over the already-loaded
  * cards (title, year, caption, format) - no advanced search features by design.
  */
-export function ConnectedTabs({ tabs, emptyText = "Nothing in the collection yet." }: { tabs: ConnectedTabData[]; emptyText?: string }) {
+export function ConnectedTabs({
+  tabs,
+  emptyText = "Nothing in the collection yet.",
+  stackedCaptions = false,
+}: {
+  tabs: ConnectedTabData[];
+  emptyText?: string;
+  /** Year and role on their own lines under each poster (person pages). */
+  stackedCaptions?: boolean;
+}) {
   const baseId = useId();
   const [active, setActive] = useState(() => tabs.find((t) => t.cards.length > 0)?.id ?? tabs[0]?.id);
   // Each tab keeps its own query, so switching tabs doesn't carry a filter across.
@@ -106,7 +115,7 @@ export function ConnectedTabs({ tabs, emptyText = "Nothing in the collection yet
         {visible.length > 0 ? (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-x-3 gap-y-5 sm:grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] sm:gap-x-4">
             {visible.map((card) => (
-              <PosterCard key={card.key} card={card} size="sm" />
+              <PosterCard key={card.key} card={card} size="sm" stackedCaption={stackedCaptions} />
             ))}
           </div>
         ) : (

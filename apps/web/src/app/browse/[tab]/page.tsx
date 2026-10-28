@@ -2,28 +2,34 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PosterCard } from "@/components/PosterCard";
-import { EntityRow } from "@/components/search/EntityRow";
 import { PersonCircle } from "@/components/title/PersonCircle";
-import { BROWSE_TABS, loadBrowseGrid, loadBrowsePeople, PEOPLE_ROLES, type BrowseGridSlug, type PeopleRole } from "@/lib/catalog/browse";
+import {
+  BROWSE_TABS,
+  loadBrowseFranchises,
+  loadBrowseGrid,
+  loadBrowsePeople,
+  PEOPLE_ROLES,
+  peopleForRole,
+  type BrowseGridSlug,
+  type PeopleRole,
+} from "@/lib/catalog/browse";
+import { isPeopleRole, roleSingular } from "@/lib/catalog/roles";
 import type { SearchHit } from "@/lib/catalog/search";
 
 /**
  * One Browse tab (lib/catalog/browse.ts): /browse/4k, /browse/hd, /browse/collections,
  * /browse/franchises, /browse/people. The grids are like the home page's posters, but in one
- * wrapping grid with no scrolling rows or row headings (the user's spec).
+ * wrapping grid with no scrolling rows or row headings (the user's spec). Each page shows just
+ * its title and count - no description line (the user, 2026-10-28).
  */
 export const revalidate = 300;
 
 /** People shown per "Load more" step. */
-const PEOPLE_STEP = 60;
+const PEOPLE_STEP = 48;
 
-const INTROS: Record<string, string> = {
-  "4k": "Every film and show with a 4K UHD disc in the collection - newest scans first.",
-  hd: "Every film and show with a Blu-ray disc (not 4K) in the collection - newest scans first.",
-  collections: "Every box set and collection, newest scans first.",
-  franchises: "Every franchise in the collection, A-Z.",
-  people: "Everyone credited on a film or show in the collection - most titles first.",
-};
+/** Large circles that fill their column: Franchises and People. */
+const CIRCLE_GRID =
+  "grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] lg:grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] sm:gap-x-6";
 
 export async function generateMetadata(props: PageProps<"/browse/[tab]">): Promise<Metadata> {
   const { tab } = await props.params;
@@ -41,6 +47,8 @@ export default async function BrowsePage(props: PageProps<"/browse/[tab]">) {
     <div className="mx-auto max-w-screen-2xl px-4 py-6 sm:px-6">
       {tab === "people" ? (
         <PeopleTab label={found.label} params={searchParams} />
+      ) : tab === "franchises" ? (
+        <FranchisesTab label={found.label} />
       ) : (
         <GridTab slug={tab as BrowseGridSlug} label={found.label} />
       )}
@@ -48,33 +56,25 @@ export default async function BrowsePage(props: PageProps<"/browse/[tab]">) {
   );
 }
 
-function TabHeading({ label, intro, count }: { label: string; intro: string; count: string }) {
+function TabHeading({ label, count }: { label: string; count: string }) {
   return (
     <div className="mb-6 border-b border-rule pb-3">
       <p className="label-tech text-accent">Browse // Collection</p>
       <h1 className="mt-1 font-display text-xl font-semibold tracking-wide text-chrome-hi uppercase sm:text-2xl">{label}</h1>
-      <p className="mt-1 text-sm text-mist">{intro}</p>
       <p className="label-tech mt-1">{count}</p>
     </div>
   );
 }
 
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
 async function GridTab({ slug, label }: { slug: BrowseGridSlug; label: string }) {
   const hits = await loadBrowseGrid(slug);
-  const noun = slug === "franchises" ? "franchise" : slug === "collections" ? "box set" : "title";
   return (
     <>
-      <TabHeading label={label} intro={INTROS[slug]} count={`${hits.length} ${noun}${hits.length === 1 ? "" : "s"}`} />
+      <TabHeading label={label} count={plural(hits.length, slug === "collections" ? "box set" : "title")} />
       {hits.length === 0 ? (
         <p className="text-sm text-mist">Nothing here yet.</p>
-      ) : slug === "franchises" ? (
-        <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {hits.map((hit) => (
-            <li key={hit.key} className="min-w-0">
-              <EntityRow hit={hit} />
-            </li>
-          ))}
-        </ul>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] justify-items-center gap-x-3 gap-y-6 sm:grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] sm:gap-x-4">
           {hits.map((hit, i) => (
@@ -105,19 +105,32 @@ function captionFor(hit: SearchHit): string | null {
   return null;
 }
 
+async function FranchisesTab({ label }: { label: string }) {
+  const franchises = await loadBrowseFranchises();
+  return (
+    <>
+      <TabHeading label={label} count={plural(franchises.length, "franchise")} />
+      <div className={CIRCLE_GRID}>
+        {franchises.map((f) => (
+          <PersonCircle key={f.key} name={f.name} role={plural(f.titles, "title")} imageSrc={f.image?.src ?? null} href={f.href} size="fill" />
+        ))}
+      </div>
+    </>
+  );
+}
+
 function single(value: string | string[] | undefined): string {
   return (Array.isArray(value) ? value[0] : value) ?? "";
 }
 
 async function PeopleTab({ label, params }: { label: string; params: Record<string, string | string[] | undefined> }) {
   const roleParam = single(params.role);
-  const role = PEOPLE_ROLES.some((r) => r.key === roleParam) ? (roleParam as PeopleRole) : null;
+  const role: PeopleRole | null = isPeopleRole(roleParam) ? roleParam : null;
   const nameFilter = single(params.q).trim().slice(0, 80);
   const show = Math.min(Math.max(parseInt(single(params.show), 10) || PEOPLE_STEP, PEOPLE_STEP), 5000);
 
-  const everyone = await loadBrowsePeople();
   const needle = nameFilter.toLowerCase();
-  const matching = everyone.filter((p) => (!role || p.roles.includes(role)) && (!needle || p.name.toLowerCase().includes(needle)));
+  const matching = peopleForRole(await loadBrowsePeople(), role).filter((p) => !needle || p.name.toLowerCase().includes(needle));
   const shown = matching.slice(0, show);
 
   const hrefWith = (next: { role?: PeopleRole | null; show?: number }) => {
@@ -132,13 +145,9 @@ async function PeopleTab({ label, params }: { label: string; params: Record<stri
 
   return (
     <>
-      <TabHeading
-        label={label}
-        intro={INTROS.people}
-        count={`${matching.length} ${matching.length === 1 ? "person" : "people"}${role || nameFilter ? " matching" : ""}`}
-      />
+      <TabHeading label={label} count={`${matching.length} ${matching.length === 1 ? "person" : "people"}${role || nameFilter ? " matching" : ""}`} />
 
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <ul className="flex flex-wrap gap-2" aria-label="Filter by role">
           {[{ key: null, label: "Everyone" }, ...PEOPLE_ROLES].map((r) => {
             const active = role === r.key;
@@ -176,21 +185,24 @@ async function PeopleTab({ label, params }: { label: string; params: Record<stri
       {shown.length === 0 ? (
         <p className="text-sm text-mist">No one matches.</p>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(6.5rem,1fr))] justify-items-center gap-x-2 gap-y-6 sm:grid-cols-[repeat(auto-fill,minmax(7.5rem,1fr))]">
+        <div className={CIRCLE_GRID}>
           {shown.map((person) => (
             <PersonCircle
               key={person.id}
               name={person.name}
-              role={`${person.roleLabel} // ${person.titles} title${person.titles === 1 ? "" : "s"}`}
+              // Under a role tag: their count in that role (e.g. "Director // 1 title"), and the
+              // person page opens with those credits first.
+              role={role ? `${roleSingular(role)} // ${plural(person.roleTitles[role] ?? 0, "title")}` : `${person.roleLabel} // ${plural(person.titles, "title")}`}
               imageSrc={person.imageSrc}
-              href={person.href}
+              href={role ? `${person.href}?role=${role}` : person.href}
+              size="fill"
             />
           ))}
         </div>
       )}
 
       {matching.length > shown.length ? (
-        <div className="mt-8 flex justify-center">
+        <div className="mt-10 flex justify-center">
           <Link
             href={hrefWith({ show: show + PEOPLE_STEP })}
             scroll={false}

@@ -17,11 +17,12 @@ export function PersonCircle({
   role?: string | null;
   imageSrc: string | null;
   href: string;
-  size?: "md" | "lg";
+  /** fill = as wide as its grid cell (the Browse tabs' large circles, 2026-10-28). */
+  size?: "md" | "lg" | "fill";
 }) {
   const box =
-    size === "lg" ? "h-28 w-28 sm:h-32 sm:w-32" : "h-20 w-20 sm:h-24 sm:w-24";
-  const width = size === "lg" ? "w-32 sm:w-36" : "w-24 sm:w-28";
+    size === "fill" ? "aspect-square w-full" : size === "lg" ? "h-28 w-28 sm:h-32 sm:w-32" : "h-20 w-20 sm:h-24 sm:w-24";
+  const width = size === "fill" ? "w-full" : size === "lg" ? "w-32 sm:w-36" : "w-24 sm:w-28";
   return (
     <Link
       href={href}
@@ -42,7 +43,7 @@ export function PersonCircle({
               src={imageSrc}
               alt={name}
               fill
-              sizes="128px"
+              sizes={size === "fill" ? "(max-width: 640px) 45vw, 220px" : "128px"}
               unoptimized
               className="object-cover object-top"
             />
