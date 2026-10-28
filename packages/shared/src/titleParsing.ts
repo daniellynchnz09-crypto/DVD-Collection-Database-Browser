@@ -625,8 +625,11 @@ export const FRANCHISE_ALIASES: Record<string, string> = {
   spiderman: "Spider-Man",
   spiderrman: "Spider-Man",
   // The "Spiderman" spelling inside longer tags too (2026-10-28, the user's request) - the tags
-  // themselves stay separate sub-franchises.
-  ramispiderman: "Rami Spider-Man",
+  // themselves stay separate sub-franchises. "Rami" was a typo for Sam Raimi. "Raimi Spider-Man"
+  // is deliberately NOT merged with "Spider-Man trilogy": it also covers No Way Home, where
+  // Raimi's Spider-Man appears, which isn't part of the trilogy.
+  ramispiderman: "Raimi Spider-Man",
+  raimispiderman: "Raimi Spider-Man",
   sonysspidermanwithoutspidermanfranchise: "Sony's Spider-Man Without Spider-Man Franchise",
   spiderverse: "Spider-Verse",
   supermariobros: "Super Mario Bros.",
