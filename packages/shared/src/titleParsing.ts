@@ -548,6 +548,10 @@ function normalizeStudioKey(value: string): string {
 export const FRANCHISE_ALIASES: Record<string, string> = {
   "2001aspaceodyssey": "2001: A Space Odyssey",
   anightmareonelmstreet: "Nightmare on Elm Street",
+  // "DC Comics" merged into "DC" (2026-10-28, the user's request; 44 titles used
+  // "DC", 10 "DC Comics"). "DC Extended Universe" stays its own franchise, like the MCU.
+  dc: "DC",
+  dccomics: "DC",
   nightmareonelmstreet: "Nightmare on Elm Street",
   abbotandcostello: "Abbott and Costello",
   abbottandcostello: "Abbott and Costello",
