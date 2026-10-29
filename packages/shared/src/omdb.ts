@@ -26,6 +26,22 @@ export interface OmdbSearchCandidate {
   classicWhoSerial?: { season: number; episodeCount: number; missingEpisodeCount: number };
 }
 
+/**
+ * A stand-in for imdbID on a candidate TMDb has but IMDb doesn't link to (2026-10-29: the
+ * user's "Power Rangers Dino Thunder: White Thunder" DVD is TMDb movie 1096236, a compilation
+ * with no IMDb page, and the scanner used to throw such matches away). It travels through the
+ * review screen and the confirm request exactly like a real IMDb id; the server recognises it
+ * and fills the title from TMDb instead of OMDb, saving tmdb_page with no imdb_page.
+ */
+export function tmdbPseudoImdbId(mediaType: "movie" | "tv", tmdbId: number): string {
+  return `tmdb-${mediaType}-${tmdbId}`;
+}
+
+export function parseTmdbPseudoImdbId(id: string | null | undefined): { mediaType: "movie" | "tv"; tmdbId: number } | null {
+  const m = /^tmdb-(movie|tv)-(\d+)$/.exec(id ?? "");
+  return m ? { mediaType: m[1] as "movie" | "tv", tmdbId: Number(m[2]) } : null;
+}
+
 export interface OmdbDetail {
   Title: string;
   Year: string;
@@ -106,6 +122,8 @@ const detailCache = new Map<string, { at: number; detail: OmdbDetail }>();
 
 /** Fetches full OMDB detail for a chosen imdbID. */
 export async function omdbGetById(imdbId: string): Promise<OmdbDetail | null> {
+  // A TMDb-only stand-in id (tmdbPseudoImdbId) - OMDb only knows real IMDb ids.
+  if (!/^tt\d+$/.test(imdbId)) return null;
   const cached = detailCache.get(imdbId);
   if (cached && Date.now() - cached.at < DETAIL_CACHE_MS) return cached.detail;
   const url = `https://www.omdbapi.com/?i=${encodeURIComponent(imdbId)}&apikey=${getApiKey()}`;

@@ -31,11 +31,13 @@ import {
   removeNonGenreTags,
   omdbGetById,
   parseOmdbReleaseDate,
+  parseTmdbPseudoImdbId,
   parseOmdbRuntimeMins,
 } from "@danflix/shared";
 import {
   CLASSIC_WHO_SERIES_IMDB_ID,
   deleteStagedCoverPhotos,
+  fetchTmdbBasicsById,
   fetchTmdbFieldsById,
   lookupClassicWhoSerialByImdbId,
   lookupRottenTomatoesPage,
@@ -517,7 +519,26 @@ export async function POST(request: Request) {
     // Only ever set for a classic (1963-1989) Doctor Who serial - see computeShelfLocation's
     // own "BOX TV Sci-Fi" branch below and 0041_add_who_shelf_order.sql.
     let whoShelfOrder: number | null = null;
-    if (entry.imdbId) {
+    // A TMDb-only candidate (no IMDb page - tmdbPseudoImdbId, 2026-10-29): what OMDb would
+    // have supplied comes from TMDb instead, and the title saves with tmdb_page only.
+    const tmdbOnly = parseTmdbPseudoImdbId(entry.imdbId);
+    if (tmdbOnly) {
+      const basics = await fetchTmdbBasicsById(tmdbOnly.tmdbId, tmdbOnly.mediaType);
+      if (basics) {
+        synopsis = basics.overview;
+        omdbFields = {
+          title: basics.title,
+          movie_or_tv: tmdbOnly.mediaType === "tv" ? "TV Series" : "Movie",
+          release_date: basics.releaseDate,
+          running_time_mins: basics.runtimeMins,
+          genre: mergeOmdbAndTmdbGenres([], tmdbFields.genres),
+          director: basics.directors,
+          rating: null,
+          imdb_page: null,
+          posterUrl: basics.posterUrl,
+        };
+      }
+    } else if (entry.imdbId) {
       const detail = await omdbGetById(entry.imdbId);
       if (detail) {
         omdbDetailById.set(entry.imdbId, detail);

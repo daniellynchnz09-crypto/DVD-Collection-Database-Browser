@@ -1,4 +1,4 @@
-import type { TmdbAltTitle, TmdbReleaseNote } from "@danflix/shared";
+import { parseTmdbPseudoImdbId, type TmdbAltTitle, type TmdbReleaseNote } from "@danflix/shared";
 import type { TmdbMediaType } from "../tmdb";
 import { createRateLimiter, sleep } from "./rateLimit";
 import type { CreditRow, PersonRow, TitleMetadataTmdbFields } from "./types";
@@ -282,7 +282,7 @@ interface AlternativeTitlesResponse {
 export async function fetchTmdbCutNotes(
   imdbId: string
 ): Promise<{ notes: TmdbReleaseNote[]; altTitles: TmdbAltTitle[] } | null> {
-  const found = await findTmdbByImdbId(imdbId);
+  const found = parseTmdbPseudoImdbId(imdbId) ?? (await findTmdbByImdbId(imdbId));
   if (!found || found.mediaType !== "movie") return null;
   const [releaseDates, alternativeTitles] = await Promise.all([
     tmdbGet<ReleaseDatesResponse>(`/movie/${found.tmdbId}/release_dates`),

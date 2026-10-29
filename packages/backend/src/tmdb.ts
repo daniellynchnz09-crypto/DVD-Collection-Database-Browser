@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isValidNzRating } from "@danflix/shared";
+import { isValidNzRating, parseTmdbPseudoImdbId, tmdbPseudoImdbId } from "@danflix/shared";
 import { isoCodeToLanguageName } from "./iso639";
 
 /**
@@ -250,23 +250,23 @@ async function resolveTmdbCandidateById(
 ): Promise<TmdbSearchCandidate | null> {
   if (mediaType === "tv") {
     const detail = await tmdbFetch<TmdbTvDetailFull>(`/tv/${tmdbId}?append_to_response=external_ids`);
-    const imdbId = detail?.external_ids?.imdb_id;
-    if (!imdbId || !detail?.name) return null;
+    if (!detail?.name) return null;
     return {
       Title: detail.name,
       Year: detail.first_air_date ? detail.first_air_date.slice(0, 4) : "",
-      imdbID: imdbId,
+      // No IMDb link: kept under a stand-in id rather than dropped (tmdbPseudoImdbId).
+      imdbID: detail.external_ids?.imdb_id || tmdbPseudoImdbId("tv", tmdbId),
       Type: "series",
       Poster: detail.poster_path ? `${TMDB_IMAGE_BASE}${detail.poster_path}` : "N/A",
     };
   }
 
   const detail = await tmdbFetch<TmdbMovieDetailFull>(`/movie/${tmdbId}`);
-  if (!detail?.imdb_id || !detail.title) return null;
+  if (!detail?.title) return null;
   return {
     Title: detail.title,
     Year: detail.release_date ? detail.release_date.slice(0, 4) : "",
-    imdbID: detail.imdb_id,
+    imdbID: detail.imdb_id || tmdbPseudoImdbId("movie", tmdbId),
     Type: "movie",
     Poster: detail.poster_path ? `${TMDB_IMAGE_BASE}${detail.poster_path}` : "N/A",
   };
@@ -305,6 +305,52 @@ export async function resolveTmdbCandidatesByIds(
 ): Promise<TmdbSearchCandidate[]> {
   const candidates = await Promise.all(tmdbIds.map((id) => resolveTmdbCandidateById(id, mediaType)));
   return candidates.filter((c): c is TmdbSearchCandidate => c !== null);
+}
+
+export interface TmdbBasics {
+  title: string;
+  releaseDate: string | null;
+  runtimeMins: number | null;
+  directors: string[];
+  overview: string | null;
+  posterUrl: string | null;
+}
+
+interface TmdbBasicsResponse {
+  title?: string;
+  name?: string;
+  release_date?: string;
+  first_air_date?: string;
+  runtime?: number | null;
+  episode_run_time?: number[];
+  overview?: string;
+  poster_path?: string | null;
+  created_by?: { name?: string }[];
+  credits?: { crew?: { job?: string; name?: string }[] };
+}
+
+/**
+ * What OMDb's detail normally supplies at confirm time (title, release date, runtime,
+ * director, synopsis, poster), from TMDb instead - for a TMDb-only candidate with no IMDb page
+ * (tmdbPseudoImdbId, 2026-10-29). A show's "director" is its creators, matching how the
+ * confirm route uses OMDb's Writer for a series. Null when TMDb has nothing.
+ */
+export async function fetchTmdbBasicsById(tmdbId: number, mediaType: TmdbMediaType = "movie"): Promise<TmdbBasics | null> {
+  const d = await tmdbFetch<TmdbBasicsResponse>(`/${mediaType}/${tmdbId}?append_to_response=credits`);
+  const title = d?.title ?? d?.name;
+  if (!d || !title) return null;
+  const directors =
+    mediaType === "tv"
+      ? (d.created_by ?? []).map((c) => c.name).filter((n): n is string => !!n)
+      : (d.credits?.crew ?? []).filter((c) => c.job === "Director").map((c) => c.name).filter((n): n is string => !!n);
+  return {
+    title,
+    releaseDate: (d.release_date ?? d.first_air_date) || null,
+    runtimeMins: mediaType === "tv" ? null : d.runtime || null,
+    directors: [...new Set(directors)],
+    overview: d.overview || null,
+    posterUrl: d.poster_path ? `${TMDB_IMAGE_BASE}${d.poster_path}` : null,
+  };
 }
 
 export interface FuzzyTitleMatch {
@@ -366,7 +412,8 @@ export interface TmdbFields {
 export async function lookupTmdbFields(imdbId: string): Promise<TmdbFields> {
   const cached = lookupCache.get(imdbId);
   if (cached && Date.now() - cached.at < LOOKUP_CACHE_MS) return cached.fields;
-  const found = await findTmdbIdByImdbId(imdbId);
+  // A TMDb-only candidate already carries its TMDb id - no IMDb lookup to do.
+  const found = parseTmdbPseudoImdbId(imdbId) ?? (await findTmdbIdByImdbId(imdbId));
   if (found == null) {
     return { tmdbId: null, tmdbMediaType: null, rating: null, studio: null, isAnimated: null, originalLanguage: null, genres: [] };
   }
