@@ -325,7 +325,7 @@ export default function PendingScansScreen({
               </Text>
             </TouchableOpacity>
           ) : (
-            <View style={styles.headerActions}>
+            <>
               {scans.length > 0 && (
                 <TouchableOpacity style={styles.textButton} onPress={() => setSelectionMode(true)}>
                   <Text style={styles.textButtonText}>Select</Text>
@@ -344,7 +344,7 @@ export default function PendingScansScreen({
               >
                 <Text style={styles.addButtonText}>{creating ? "..." : "+"}</Text>
               </TouchableOpacity>
-            </View>
+            </>
           )}
         </View>
         <Text style={styles.title}>
@@ -418,8 +418,9 @@ const styles = StyleSheet.create({
     borderBottomColor: "#16294a",
     gap: 8,
   },
-  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  // Every header button is a direct child, so the gaps between them are all equal across the
+  // bar (2026-10-29, the user's pick) - the back button no longer stands apart from a group.
+  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
   textButton: TEXT_BUTTON,
   textButtonText: TEXT_BUTTON_TEXT,
   textButtonDanger: TEXT_BUTTON_DANGER,
