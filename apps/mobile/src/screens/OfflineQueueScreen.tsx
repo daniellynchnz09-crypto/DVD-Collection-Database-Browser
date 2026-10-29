@@ -9,6 +9,7 @@ import {
   type QueuedSubmission,
 } from "../lib/offlineQueue";
 import { CHROME_BAR, FONTS, GLOSS, SCREEN } from "../theme";
+import { BackButton } from "../components/BackButton";
 
 /**
  * Lists every Confirm submission saved on-device while offline (offlineQueue.ts) - added
@@ -128,9 +129,7 @@ export default function OfflineQueueScreen({ onBack }: { onBack: () => void }) {
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: 16 + insets.top }]}>
-        <TouchableOpacity style={styles.backButton} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} onPress={onBack}>
-          <Text style={styles.backButtonText}>{"< Pending Scans"}</Text>
-        </TouchableOpacity>
+        <BackButton label="Pending Scans" onPress={onBack} />
         <Text style={styles.title}>Offline Queue ({items.length})</Text>
         <TouchableOpacity style={[styles.syncButton, syncing && styles.syncButtonDisabled]} onPress={handleSyncNow} disabled={syncing}>
           {syncing ? <ActivityIndicator color="#fff" /> : <Text style={styles.syncButtonText}>Sync Now</Text>}
@@ -193,8 +192,6 @@ export default function OfflineQueueScreen({ onBack }: { onBack: () => void }) {
 const styles = StyleSheet.create({
   container: { ...SCREEN, flex: 1, backgroundColor: "#070d17" },
   header: { ...CHROME_BAR, padding: 16, borderBottomWidth: 1, borderBottomColor: "#16294a", gap: 8 },
-  backButton: { ...GLOSS, backgroundColor: "#1d6c9a", paddingVertical: 10, paddingHorizontal: 16, borderRadius: 0, alignSelf: "flex-start" },
-  backButtonText: { letterSpacing: 1, color: "#fff", fontSize: 15, fontFamily: FONTS.displayBold },
   title: { color: "#e9f1f9", fontSize: 18, fontFamily: FONTS.displayBold },
   syncButton: { ...GLOSS, backgroundColor: "#78350f", paddingVertical: 10, borderRadius: 0, alignItems: "center" },
   syncButtonDisabled: { opacity: 0.6 },

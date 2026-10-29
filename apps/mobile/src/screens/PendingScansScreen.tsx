@@ -14,7 +14,8 @@ import { createManualPendingScan, discardScan, fetchPendingScans, fetchUpcQuotaS
 import { clearConfirmDraft } from "../lib/confirmDrafts";
 import { getHiddenPendingScanIds, useSubmissionsVersion } from "../lib/backgroundSubmissions";
 import { getQueuedPendingScanIds } from "../lib/offlineQueue";
-import { CARD, CHROME_BAR, COLORS, FONTS, GLOSS, SCREEN, TEXT_BUTTON, TEXT_BUTTON_DANGER, TEXT_BUTTON_DANGER_TEXT, TEXT_BUTTON_TEXT, WELL } from "../theme";
+import { BUTTON_HEIGHT, CARD, CHROME_BAR, COLORS, FONTS, GLOSS, SCREEN, TEXT_BUTTON, TEXT_BUTTON_DANGER, TEXT_BUTTON_DANGER_TEXT, TEXT_BUTTON_TEXT, WELL } from "../theme";
+import { BackButton } from "../components/BackButton";
 
 export interface PendingScan {
   id: string;
@@ -306,13 +307,13 @@ export default function PendingScansScreen({
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: 16 + insets.top }]}>
         <View style={styles.headerRow}>
-          <TouchableOpacity
-            style={styles.backButton}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            onPress={selectionMode ? cancelSelecting : onBack}
-          >
-            <Text style={styles.backButtonText}>{selectionMode ? "Cancel" : "< Scanner"}</Text>
-          </TouchableOpacity>
+          {selectionMode ? (
+            <TouchableOpacity style={styles.textButton} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} onPress={cancelSelecting}>
+              <Text style={styles.textButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          ) : (
+            <BackButton label="Scanner" onPress={onBack} />
+          )}
           {selectionMode ? (
             <TouchableOpacity
               style={[styles.textButtonDanger, (selectedIds.size === 0 || deleting) && styles.textButtonDisabled]}
@@ -418,31 +419,21 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  headerActions: { flexDirection: "row", alignItems: "center", gap: 14 },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
   textButton: TEXT_BUTTON,
   textButtonText: TEXT_BUTTON_TEXT,
   textButtonDanger: TEXT_BUTTON_DANGER,
   textButtonDangerText: TEXT_BUTTON_DANGER_TEXT,
-  headerButton: { ...GLOSS, backgroundColor: COLORS.accentDeep, borderWidth: 1, borderColor: COLORS.accentDim, paddingVertical: 6, paddingHorizontal: 10 },
-  headerButtonText: { fontFamily: FONTS.displaySemiBold, color: COLORS.accentHi, fontSize: 12, letterSpacing: 1, textTransform: "uppercase" },
+  // Square and the same height as the buttons beside it (2026-10-29: it was a smaller circle).
   addButton: {
     ...GLOSS,
     backgroundColor: "#1d6c9a",
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: BUTTON_HEIGHT,
+    height: BUTTON_HEIGHT,
     alignItems: "center",
     justifyContent: "center",
   },
   addButtonText: { letterSpacing: 1, color: "#fff", fontSize: 20, fontFamily: FONTS.displayBold, lineHeight: 22 },
-  backButton: {
-    ...GLOSS,
-    backgroundColor: "#1d6c9a",
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 0,
-  },
-  backButtonText: { letterSpacing: 1, color: "#fff", fontSize: 15, fontFamily: FONTS.displayBold },
   textButtonDisabled: { opacity: 0.4 },
   title: { color: "#e9f1f9", fontSize: 18, fontFamily: FONTS.displayBold },
   quotaRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 },

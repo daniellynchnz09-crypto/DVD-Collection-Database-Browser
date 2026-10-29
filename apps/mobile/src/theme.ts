@@ -120,6 +120,9 @@ export const LABEL_TECH = {
   color: COLORS.mist,
 } as const;
 
+/** One height for the small header and text buttons, the back button and the "+" button. */
+export const BUTTON_HEIGHT = 38;
+
 /** A secondary action ("Skip", "Search again", "Select", "Cancel"): a small glossy button, the
  * same face as Pending Scans' Pending Value button (2026-10-29, the user: these used to be plain
  * blue text, inconsistent with the app's raised buttons). Sized to its label. */
@@ -128,12 +131,15 @@ export const TEXT_BUTTON = {
   backgroundColor: COLORS.accentDeep,
   borderWidth: 1,
   borderColor: COLORS.accentDim,
-  paddingVertical: 8,
+  minHeight: BUTTON_HEIGHT,
+  paddingVertical: 6,
   paddingHorizontal: 12,
+  justifyContent: "center",
   alignSelf: "flex-start",
 } as const;
 
-export const TEXT_BUTTON_TEXT = { fontFamily: FONTS.displaySemiBold, color: COLORS.accentHi, fontSize: 13, letterSpacing: 1 } as const;
+/** Title Case labels, never forced uppercase, so every small button reads the same. */
+export const TEXT_BUTTON_TEXT = { fontFamily: FONTS.displaySemiBold, color: COLORS.accentHi, fontSize: 14, letterSpacing: 1 } as const;
 
 /** TEXT_BUTTON for a destructive action (discard, remove, delete). */
 export const TEXT_BUTTON_DANGER = { ...TEXT_BUTTON, backgroundColor: "#4a1418", borderColor: "#9b2c2c" } as const;
