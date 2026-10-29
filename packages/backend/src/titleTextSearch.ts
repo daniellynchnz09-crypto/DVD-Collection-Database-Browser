@@ -91,5 +91,39 @@ export async function searchTitleCandidates(
     merged = mergeByImdbId([fuzzyCandidates]);
   }
 
-  return merged;
+  return exactTitleMatchesFirst(merged, queries);
+}
+
+/** Lowercase words only, "&" as "and", and a standalone roman numeral II-X as its number -
+ * so "X-MEN 2", "X-Men II" and "X Men 2" all compare equal. */
+function comparableTitle(text: string): string {
+  const roman: Record<string, string> = { ii: "2", iii: "3", iv: "4", v: "5", vi: "6", vii: "7", viii: "8", ix: "9", x: "10" };
+  return text
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(" ")
+    .map((word, i) => (i > 0 && roman[word] ? roman[word] : word))
+    .join(" ");
+}
+
+/**
+ * Moves every candidate whose title - or, for a TMDb result, any of its alternative titles - is
+ * exactly the searched text (ignoring punctuation and case) to the front, keeping the existing
+ * order otherwise (2026-10-29: an "X-Men 2" cover listed X2 last, behind games and spin-offs
+ * that merely contain the words; X2's alternative titles include "X-Men II"). The roman-numeral
+ * rule skips the first word so a title like "X" itself isn't read as 10.
+ */
+function exactTitleMatchesFirst(candidates: OmdbSearchCandidate[], queries: string[]): OmdbSearchCandidate[] {
+  const wanted = new Set(queries.map(comparableTitle).filter(Boolean));
+  const isExact = (c: OmdbSearchCandidate & { altTitles?: string[] }) =>
+    [c.Title, ...(c.altTitles ?? [])].some((t) => wanted.has(comparableTitle(t)));
+  const exact = candidates.filter(isExact);
+  const rest = candidates.filter((c) => !isExact(c));
+  // altTitles is only for this ranking - not sent on to the scanner app or stored.
+  return [...exact, ...rest].map((c) => {
+    const { altTitles: _unused, ...candidate } = c as OmdbSearchCandidate & { altTitles?: string[] };
+    return candidate;
+  });
 }

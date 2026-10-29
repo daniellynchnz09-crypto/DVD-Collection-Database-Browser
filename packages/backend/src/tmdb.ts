@@ -212,8 +212,10 @@ interface TmdbSearchResponse {
 interface TmdbMovieDetailFull {
   imdb_id?: string | null;
   title?: string;
+  original_title?: string;
   release_date?: string;
   poster_path?: string | null;
+  alternative_titles?: { titles?: { title?: string }[] };
 }
 
 // TV has no top-level imdb_id on `/tv/{id}` the way a movie does - append_to_response pulls
@@ -231,6 +233,9 @@ export interface TmdbSearchCandidate {
   imdbID: string;
   Type: "movie" | "series";
   Poster: string;
+  /** The film's other titles (original and per-country) - used only to rank search results,
+   * then removed (titleTextSearch.ts). */
+  altTitles?: string[];
 }
 
 /** Fetches full `/movie/{id}` or `/tv/{id}` details and shapes them into the same candidate
@@ -261,14 +266,20 @@ async function resolveTmdbCandidateById(
     };
   }
 
-  const detail = await tmdbFetch<TmdbMovieDetailFull>(`/movie/${tmdbId}`);
+  // Alternative titles ride along on the same request (2026-10-29): X2's include "X-Men II"
+  // and "X-Men 2: United", which is how an "X-Men 2" cover finds it (titleTextSearch.ts).
+  const detail = await tmdbFetch<TmdbMovieDetailFull>(`/movie/${tmdbId}?append_to_response=alternative_titles`);
   if (!detail?.title) return null;
+  const altTitles = [detail.original_title, ...(detail.alternative_titles?.titles ?? []).map((t) => t.title)].filter(
+    (t): t is string => !!t
+  );
   return {
     Title: detail.title,
     Year: detail.release_date ? detail.release_date.slice(0, 4) : "",
     imdbID: detail.imdb_id || tmdbPseudoImdbId("movie", tmdbId),
     Type: "movie",
     Poster: detail.poster_path ? `${TMDB_IMAGE_BASE}${detail.poster_path}` : "N/A",
+    altTitles,
   };
 }
 

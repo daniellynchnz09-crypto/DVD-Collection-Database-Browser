@@ -103,7 +103,9 @@ export async function omdbSearch(query: string): Promise<OmdbSearchCandidate[]> 
   const res = await fetch(url);
   const data = (await res.json()) as { Response: string; Search?: OmdbSearchCandidate[] };
   if (data.Response === "False") return [];
-  const results = data.Search ?? [];
+  // OMDb's search also returns video games, which are never a disc in this collection - an
+  // "X-Men 2" cover's list led with two X-Men games and buried X2 itself (2026-10-29).
+  const results = (data.Search ?? []).filter((c) => c.Type !== "game");
   if (searchCache.size >= SEARCH_CACHE_MAX) {
     const oldest = searchCache.keys().next().value;
     if (oldest !== undefined) searchCache.delete(oldest);
