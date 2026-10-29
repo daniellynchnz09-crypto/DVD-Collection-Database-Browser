@@ -41,6 +41,9 @@ export interface PendingScan {
     // ConfirmScreen surfaces these as tappable suggestion chips in the Collection flow, never
     // auto-added. Null/undefined whenever no staged cover photo's analysis carried a list.
     coverMemberTitles?: string[] | null;
+    // TMDb's season for a TV cover that names its season by subtitle, not number (scanResolver.ts,
+    // 2026-10-29: "Power Rangers Dino Thunder" is season 12 of Power Rangers).
+    tmdbSeasonGuess?: { tmdbTvId: number; showName: string; seasonName: string; seasonNumber: number } | null;
     // Best-effort vision-model format guess (packages/backend/src/formatVision.ts) - only
     // ever populated when the barcode listing's own text didn't already name the format, and
     // only ever a pre-fill suggestion on ConfirmScreen, never presented as confirmed fact.
@@ -87,6 +90,12 @@ export interface PendingScan {
         // A packaging/marketing edition name distinct from the base title (e.g. "Night Shift
         // Edition") - never a content-different cut, which stays merged into `title` instead.
         releaseName: string | null;
+        // TV releases only (2026-10-29) - the printed season number, this case's volume/part
+        // number, and its episode count (stated, or counted from the listed episodes). Absent
+        // on scans read before these existed.
+        seasonNumber?: number | null;
+        partNumber?: number | null;
+        episodeCount?: number | null;
       };
     }[];
   };

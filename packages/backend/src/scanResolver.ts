@@ -23,6 +23,7 @@ import { getUpcQuotaStatus, recordUpcRateLimit } from "./upcQuota";
 import { geminiUnavailableUntil } from "./geminiRequest";
 import { getSignedPosterImageUrl } from "./posterImageStorage";
 import { downloadStagedCoverPhoto, replaceStagedCoverPhoto } from "./coverStagingStorage";
+import { findTmdbSeasonByTitle } from "./tmdb";
 import { detectCoverFromImage, detectCoverOrientationAndBoxFromPreviews, type StagedCoverAnalysis } from "./coverVision";
 import { straightenAndCropCoverPhoto } from "./imageCrop";
 import { searchTitleCandidates } from "./titleTextSearch";
@@ -330,6 +331,16 @@ export async function resolvePendingScansBatch(
       const coverLooksLikeCollection =
         (coverDerivedTitle ? looksLikeCollection(coverDerivedTitle) : false) ||
         (coverDerivedMemberTitles?.length ?? 0) >= 2;
+      // A TV release whose cover names its season by subtitle rather than number ("Power
+      // Rangers Dino Thunder Vol. 3" is season 12 of Power Rangers, 2026-10-29) - looked up on
+      // TMDb's TV index so ConfirmScreen.tsx can pre-fill Season No. It's preferred over the
+      // cover read's own seasonNumber when found: it only ever matches a season by its name, and
+      // the vision read once reported "season 1" for a cover that prints no season at all.
+      const coverSaysTv = coverAnalysis.some((a) => a.analysis.mediaType === "TV Series");
+      const tmdbSeasonGuess =
+        coverSaysTv && coverDerivedTitle && !coverLooksLikeCollection
+          ? await findTmdbSeasonByTitle(coverDerivedTitle).catch(() => null)
+          : null;
 
       // Cover-only session (no barcode at all - decision 6 in the plan this implements): none
       // of the UPC/existing-title lookup below applies, since there's no barcode to look either
@@ -357,6 +368,7 @@ export async function resolvePendingScansBatch(
             status,
             resolved_candidates: {
               coverAnalysis,
+              tmdbSeasonGuess,
               omdbCandidates,
               existingMatch: null,
               isCollection: coverLooksLikeCollection,
@@ -424,6 +436,7 @@ export async function resolvePendingScansBatch(
             resolved_candidates: {
               upcLookupFailed: true,
               coverAnalysis,
+              tmdbSeasonGuess,
               omdbCandidates,
               isCollection: coverLooksLikeCollection,
               coverMemberTitles: coverDerivedMemberTitles,
@@ -539,6 +552,7 @@ export async function resolvePendingScansBatch(
             visionFormatGuess,
             listingTextExtraction,
             coverAnalysis,
+            tmdbSeasonGuess,
             existingMatch: await withResolvedPoster(supabase, existing),
           },
         })

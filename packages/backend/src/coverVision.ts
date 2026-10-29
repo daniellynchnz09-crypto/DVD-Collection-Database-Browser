@@ -89,6 +89,9 @@ Then, regardless of which side it is, read whatever of the following you can act
 - "region": the disc region coding printed anywhere on this side - a small logo or line of text (e.g. "Region 4", "Region A", "Region Free", "All Regions", "Region 0"). Also include a video-standard mark if one is printed - "PAL" or "NTSC", often in the spec block or beside the region mark (e.g. report "PAL Region 0", or just "PAL" if that's all there is). On a BACK cover specifically, look just above the rating logo (that logo itself usually sits in the bottom-right corner - see "rating" above) - the region mark is commonly a small icon/text directly above it, easy to miss if you only scan the main spec block. It can also appear near the format banner, or on the front cover instead of the back, so check whichever side this actually is rather than assuming it's back-cover-only or spec-block-only. IMPORTANT - a Blu-ray region-free disc is very often marked with a COMBINED badge: three small hexagons joined together in a honeycomb/triangle cluster, each with one letter inside ("A", "B", "C" - typically A on top, B and C below it) - this single combined icon means the disc plays in ALL THREE Blu-ray regions, not just whichever one letter happens to be most visible or centred. If you see this three-hexagon cluster badge (regardless of which single letter you can read most clearly within it), report "Region Free" - never report just one of its three letters, since that would wrongly describe a disc as single-region-locked when it's actually region-free. A genuinely single-region disc shows only ONE hexagon/letter on its own, with no honeycomb cluster of three. Likewise, a DVD region-free disc is often marked with a small region badge (usually a globe, or a disc/circle shape, sometimes with a DVD logo) that has the word "ALL" printed inside or right beside it where a region number would normally be - that badge means the disc plays in every region. If you see it, report "Region ALL" (add PAL/NTSC if printed, e.g. "Region ALL PAL") - never null just because the badge has a word instead of a number. The same kind of badge showing "0" means region 0, also every region - report "Region 0". Report exactly what's printed, verbatim - do not translate/resolve a country name yourself, just report it as printed if that's genuinely all that's shown (e.g. "UK"). Null if no region information is printed anywhere on this side at all.
 - "releaseName": a distinct packaging/marketing EDITION name printed on the case, separate from the film's own base title - e.g. "Night Shift Edition", "Special Edition", "Collector's Edition", "Ultimate Edition", "Steelbook Edition". This is different from a specific CUT of the film (e.g. "The Final Cut", "Director's Cut", "Theatrical Cut") - a cut name belongs in "title" instead, per the rule above, not here. Report the edition name only, exactly as printed (e.g. "Night Shift Edition", not "Five Nights at Freddy's Night Shift Edition"). Null if no such edition/release name is printed anywhere on this side, or if the only relevant wording found is a cut name already reported in "title".
 - "artStyle": the main cover art's style - "drawn" if it's an illustrated/painted/animated-style image (flat colours, visible linework, a cel/comic-book look - not a photo of real actors, even if stylized), "photographic" if it's a real photo or photorealistic render of the actors/scene (the ordinary case for almost every live-action release), or "unclear" if you can't tell (too blurry/cropped) or this side has no real cover art to judge at all (e.g. a back cover that's just text).
+- "seasonNumber": ONLY for a TV release - the season/series number as a plain integer, and only when the word "Season" or "Series" is printed with a number or ordinal next to it (e.g. "Season 2", "Series 3", "The Complete First Season" -> 1). A volume/part number is NOT a season number. Null if no such wording is printed - never assume season 1 just because nothing says otherwise - or if this is a film.
+- "partNumber": ONLY for a TV release split across several separate cases - the volume/part number of THIS case as a plain integer if printed (e.g. "Volume 3", "Vol. 3", "Part 2", "Season 1 Part 2" -> 2). Not a disc number inside one case, and not a numbered episode's own "Part 1" within an episode title. Null if none is printed.
+- "episodeCount": ONLY for a TV release - how many episodes this case holds, as a plain integer: the count if it's stated (e.g. "13 Episodes"), otherwise the number of distinct episodes listed by name on this side (a credit/listing line naming "Parts 2 & 3" of a story is TWO episodes; a numbered list of episode titles counts each entry). Null if neither is shown on this side.
 - "collectionMemberTitles": if this case is a box set/collection holding MULTIPLE distinct films or TV seasons (the case's own "title" reads like a collection name - "Collection", "Box Set", "Trilogy", a franchise/person's name, etc. - rather than one film's title), list the individual member titles it actually names, e.g. ["Rear Window", "Psycho", "The Birds", "Vertigo"]. These are usually laid out with real visual separation on the cover - separate lines, a column/grid, or one small poster thumbnail per title - not run together in one sentence, so read each title as its own distinct block of text rather than guessing where one title's words end and the next begins from a comma or "and". Skip any non-title text mixed into that layout (a tagline, year, "Digitally Remastered", a bonus-disc mention). Only include a title here if it's independently legible as a real, complete film/show name - if the list is only partially readable (some thumbnails too small/blurry to read), still report whichever ones genuinely are legible rather than skipping the whole field. Null (not an empty array) if this case isn't a multi-title collection at all, or if it is but no member titles are actually legible anywhere on this side.
 
 Only report what is actually legible in the image - never guess a value that isn't genuinely readable. If almost nothing is legible, answer "unclear" for side and null/"Unclear"/"NONE" for the rest rather than inventing an answer.`;
@@ -168,6 +171,14 @@ export interface CoverVisionResult {
    * this screen rather than silently trusted. Null if this case isn't a multi-title collection
    * at all, or is but no member titles are actually legible on this side. */
   collectionMemberTitles: string[] | null;
+  /** TV releases only (2026-10-29, the user: a "Power Rangers Dino Thunder Vol. 3" scan left
+   * Season No./Part of a Season No./Episode Count blank though the case shows the volume and
+   * lists its episodes). Printed season number, this case's volume/part number, and the
+   * episode count (stated, or counted from the episodes listed). ConfirmScreen.tsx pre-fills
+   * the three fields from them. Null when not shown. */
+  seasonNumber: number | null;
+  partNumber: number | null;
+  episodeCount: number | null;
 }
 
 /** A cover-vision read paired with the staged path it came from - the resolver needs this
@@ -230,6 +241,9 @@ export async function detectCoverFromImage(
               artStyle: { type: "STRING", enum: [...ART_STYLE_OPTIONS] },
               releaseName: { type: "STRING", nullable: true },
               collectionMemberTitles: { type: "ARRAY", items: { type: "STRING" }, nullable: true },
+              seasonNumber: { type: "INTEGER", nullable: true },
+              partNumber: { type: "INTEGER", nullable: true },
+              episodeCount: { type: "INTEGER", nullable: true },
             },
             required: ["side", "mediaType", "format", "rating", "artStyle"],
           },
@@ -250,7 +264,11 @@ export async function detectCoverFromImage(
       artStyle?: string;
       releaseName?: string | null;
       collectionMemberTitles?: string[] | null;
+      seasonNumber?: number | null;
+      partNumber?: number | null;
+      episodeCount?: number | null;
     };
+    const positiveInt = (n: unknown) => (typeof n === "number" && Number.isInteger(n) && n > 0 && n < 1000 ? n : null);
 
     if (!parsed.side || !(SIDE_OPTIONS as readonly string[]).includes(parsed.side)) return null;
 
@@ -291,6 +309,9 @@ export async function detectCoverFromImage(
             return cleaned.length > 0 ? cleaned : null;
           })()
         : null,
+      seasonNumber: positiveInt(parsed.seasonNumber),
+      partNumber: positiveInt(parsed.partNumber),
+      episodeCount: positiveInt(parsed.episodeCount),
     };
   } catch {
     return null;

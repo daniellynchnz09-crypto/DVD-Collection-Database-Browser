@@ -734,6 +734,18 @@ export default function ConfirmScreen({
   // near singleSelectedImdbId - not a general "drawn cover = animated film" rule, since an
   // ordinary animated film's own TMDb genre already covers that case.
   const coverLooksDrawn = coverAnalysis.some((a) => a.analysis.artStyle === "drawn");
+  // TV details off the cover (2026-10-29, the user: a "Power Rangers Dino Thunder Vol. 3" scan
+  // left Season No./Part of a Season No./Episode Count blank though the case shows the volume
+  // and lists its episodes). Season: TMDb's season whose name is in the cover title
+  // (scanResolver.ts's tmdbSeasonGuess), else the number printed on the cover. Pre-fills only,
+  // applied when the cover reads as a TV release.
+  const coverSaysTv = coverAnalysis.some((a) => a.analysis.mediaType === "TV Series");
+  const coverSeasonGuess =
+    scan.resolved_candidates?.tmdbSeasonGuess?.seasonNumber ??
+    coverAnalysis.map((a) => a.analysis.seasonNumber).find((n) => n != null) ??
+    null;
+  const coverPartGuess = coverAnalysis.map((a) => a.analysis.partNumber).find((n) => n != null) ?? null;
+  const coverEpisodeCountGuess = coverAnalysis.map((a) => a.analysis.episodeCount).find((n) => n != null) ?? null;
   // Banner-implied extra discs read directly off the user's own cover photo (added
   // 2026-09-29, alongside coverVision.ts's own extraDiscs/specialFeaturesListed fields) -
   // same derivation as visionDiscConfig below, just from a second possible source, since a
@@ -1496,6 +1508,27 @@ export default function ConfirmScreen({
     setMovieOrTv(guessed);
   }, [singleSelectedImdbId]);
 
+  // A cover that reads as a TV release turns a matched film's "Movie" guess into "TV Series"
+  // (2026-10-29): TMDb sometimes files a TV volume as a movie (Power Rangers Dino Thunder:
+  // White Thunder is TMDb movie 1096236), and its season fields would stay hidden otherwise.
+  // Same "only while the field holds the tool's own guess" rule as the effect above, which runs
+  // first and sets lastAutoMovieOrTvRef. Then Season No., Part of a Season No. and Episode
+  // Count are filled from the cover when still blank.
+  useEffect(() => {
+    if (!coverSaysTv || draft?.movieOrTv) return;
+    if (lastAutoMovieOrTvRef.current === "Movie") {
+      lastAutoMovieOrTvRef.current = "TV Series";
+      setMovieOrTv("TV Series");
+    }
+  }, [singleSelectedImdbId]);
+  useEffect(() => {
+    if (!coverSaysTv) return;
+    if (coverSeasonGuess != null && !draft?.seasonNo && !seasonNo.trim()) setSeasonNo(String(coverSeasonGuess));
+    if (coverPartGuess != null && !draft?.partOfSeasonNo && !partOfSeasonNo.trim()) setPartOfSeasonNo(String(coverPartGuess));
+    if (coverEpisodeCountGuess != null && !draft?.episodeCount && !episodeCount.trim()) setEpisodeCount(String(coverEpisodeCountGuess));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Season No./Episode Count prefill for a classic Doctor Who serial (added 2026-09-30) -
   // the matched serial's own season/episode-count is already known locally (the cached
   // classic_who_serial_index, see classicWhoSerials.ts), so there's no need to make the user
@@ -1599,6 +1632,10 @@ export default function ConfirmScreen({
   // Menace Season 4" the moment that auto-filled Season No. lands - found live 2026-09-30.
   function composeSeasonTitle(baseTitle: string): string {
     if (selectedCandidate?.classicWhoSerial) return baseTitle;
+    // A film-type match's title already names this exact release (a TV volume TMDb files as a
+    // movie, e.g. "Power Rangers Dino Thunder: White Thunder") - "Season N" is only appended
+    // to a whole-show match, where the title is just the show's name (2026-10-29).
+    if (selectedCandidate?.Type === "movie") return baseTitle;
     // A mini-series is one complete set, not one season of many (2026-10-04) - "Hindenburg:
     // The Last Flight", not "Hindenburg: The Last Flight Season 1".
     if (movieOrTv === "TV Mini-Series") return baseTitle;

@@ -353,6 +353,66 @@ export async function fetchTmdbBasicsById(tmdbId: number, mediaType: TmdbMediaTy
   };
 }
 
+export interface TmdbSeasonGuess {
+  tmdbTvId: number;
+  showName: string;
+  seasonName: string;
+  seasonNumber: number;
+}
+
+interface TmdbTvSeasonsResponse {
+  name?: string;
+  seasons?: { name?: string; season_number?: number }[];
+}
+
+const looseWords = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+/**
+ * Which season of a long-running show a TV release is, when its cover names the season by its
+ * subtitle rather than a number (2026-10-29: "Power Rangers Dino Thunder Vol. 3" is season 12,
+ * "Dino Thunder", of TMDb's "Power Rangers"). Searches TMDb's TV index with the cover title
+ * (the part before any colon, then shorter word prefixes), and returns the season whose own
+ * name appears in the title. Generic names ("Season 1", "Specials") never match, so a show
+ * whose seasons are only numbered gives null rather than a guess.
+ */
+export async function findTmdbSeasonByTitle(coverTitle: string): Promise<TmdbSeasonGuess | null> {
+  const base = coverTitle.split(":")[0].replace(/\b(vol(ume)?\.?|part)\s*\d+\b/gi, " ").trim();
+  const title = ` ${looseWords(coverTitle)} `;
+  const words = looseWords(base).split(" ").filter(Boolean);
+  const queries = [...new Set([words.join(" "), words.slice(0, -1).join(" "), words.slice(0, 2).join(" ")])].filter((q) => q.split(" ").length >= 2);
+  const triedShows = new Set<number>();
+  for (const query of queries) {
+    const data = await tmdbFetch<TmdbTvSearchResponse>(`/search/tv?query=${encodeURIComponent(query)}`);
+    for (const show of (data?.results ?? []).slice(0, 3)) {
+      if (triedShows.has(show.id)) continue;
+      triedShows.add(show.id);
+      const detail = await tmdbFetch<TmdbTvSeasonsResponse>(`/tv/${show.id}`);
+      const showName = looseWords(detail?.name ?? "");
+      // The show's own name must be in the title too, so a stray search hit can't match.
+      if (!showName || !title.includes(` ${showName} `)) continue;
+      const match = (detail?.seasons ?? [])
+        .filter((season) => season.name && season.season_number && season.season_number > 0)
+        .filter((season) => !/^(season|series|specials?)\b/i.test(season.name!.trim()))
+        // A season named "<Show> <Subtitle>" is matched on its subtitle alone.
+        .map((season) => {
+          const name = looseWords(season.name!);
+          return { season, name: name.startsWith(`${showName} `) ? name.slice(showName.length + 1) : name };
+        })
+        .filter(({ name }) => name && title.includes(` ${name} `))
+        .sort((a, b) => b.name.length - a.name.length)[0];
+      if (match) {
+        return { tmdbTvId: show.id, showName: detail!.name!, seasonName: match.season.name!, seasonNumber: match.season.season_number! };
+      }
+    }
+  }
+  return null;
+}
+
 export interface FuzzyTitleMatch {
   tmdbId: number;
   title: string;
