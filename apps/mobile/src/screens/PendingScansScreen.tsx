@@ -325,7 +325,7 @@ export default function PendingScansScreen({
               </Text>
             </TouchableOpacity>
           ) : (
-            <>
+            <View style={styles.headerActions}>
               {onGoToOfflineQueue && !!offlineQueueCount && (
                 <TouchableOpacity style={styles.textButton} onPress={onGoToOfflineQueue}>
                   <Text style={styles.textButtonText}>Offline Queue ({offlineQueueCount})</Text>
@@ -339,7 +339,7 @@ export default function PendingScansScreen({
               >
                 <Text style={styles.addButtonText}>{creating ? "..." : "+"}</Text>
               </TouchableOpacity>
-            </>
+            </View>
           )}
         </View>
         <Text style={styles.title}>
@@ -422,9 +422,13 @@ const styles = StyleSheet.create({
     borderBottomColor: "#16294a",
     gap: 8,
   },
-  // Every header button is a direct child, so the gaps between them are all equal across the
-  // bar (2026-10-29, the user's pick) - the back button no longer stands apart from a group.
+  // Back button on the left, the rest grouped tight on the right beside "+" (2026-10-29, the
+  // user: once Select left the bar, Pending Value sat stranded mid-bar).
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  // Pending Value is a smaller button than the bar's others (the user's request).
+  smallButton: { minHeight: 30, paddingVertical: 4, paddingHorizontal: 9, alignSelf: "center" },
+  smallButtonText: { fontSize: 12 },
   textButton: TEXT_BUTTON,
   textButtonText: TEXT_BUTTON_TEXT,
   textButtonDanger: TEXT_BUTTON_DANGER,
