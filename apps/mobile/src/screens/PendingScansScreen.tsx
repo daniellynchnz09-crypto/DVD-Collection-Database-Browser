@@ -446,7 +446,7 @@ const styles = StyleSheet.create({
   textButtonDisabled: { opacity: 0.4 },
   selectLink: { alignSelf: "flex-end", paddingHorizontal: 16, paddingTop: 12 },
   selectLinkText: { fontFamily: FONTS.displaySemiBold, color: COLORS.accent, fontSize: 14, letterSpacing: 1 },
-  title: { color: "#e9f1f9", fontSize: 18, fontFamily: FONTS.displayBold },
+  title: { color: "#e9f1f9", fontSize: 18, fontFamily: FONTS.displayBold, textAlign: "center" },
   quotaRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 },
   quotaBarTrack: { ...WELL, flex: 1, height: 6, borderRadius: 3, backgroundColor: "#16294a", overflow: "hidden" },
   quotaBarFill: { height: "100%", backgroundColor: "#eab308", borderRadius: 0 },
