@@ -2818,8 +2818,8 @@ export default function ConfirmScreen({
           </Text>
         </View>
       )}
-      <TouchableOpacity onPress={onBack}>
-        <Text style={styles.link}>{"< Pending Scans"}</Text>
+      <TouchableOpacity style={styles.backButton} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} onPress={onBack}>
+        <Text style={styles.backButtonText}>{"< Pending Scans"}</Text>
       </TouchableOpacity>
       <Text style={styles.title}>{scan.barcode ? `Barcode ${scan.barcode}` : "New Entry"}</Text>
 
@@ -4433,6 +4433,10 @@ const styles = StyleSheet.create({
   body: { fontFamily: FONTS.body, color: "#d7e2ee", flexShrink: 1 },
   hint: { fontFamily: FONTS.body, color: "#a9b8cc", fontStyle: "italic" },
   link: { fontFamily: FONTS.body, color: "#5cc8ff" },
+  // The same glossy back button as Pending Value and the offline queue (2026-10-29, the user's
+  // request - this one was a plain text link).
+  backButton: { ...GLOSS, backgroundColor: "#1d6c9a", paddingVertical: 10, paddingHorizontal: 16, borderRadius: 0, alignSelf: "flex-start" },
+  backButtonText: { letterSpacing: 1, color: "#fff", fontSize: 15, fontFamily: FONTS.displayBold },
   // Same amber warning family as OfflineBanner.tsx, for consistency between the two banners
   // that can appear on this screen.
   // Same amber family as SummaryRow's rowNotable - marks a value the app assumed for the user to
