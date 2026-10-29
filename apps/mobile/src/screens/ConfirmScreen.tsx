@@ -564,7 +564,16 @@ export default function ConfirmScreen({
     // worth preserving, so non-empty fresh server data always wins over it; a draft that does
     // hold real candidates (from a manual search, or a resolved list seen on an earlier open)
     // is left alone, same as before.
-    const base = draft?.candidates && draft.candidates.length > 0 ? draft.candidates : freshCandidates;
+    //
+    // And a draft's list is only kept when it came from the user's own title search
+    // (2026-10-29): one that just mirrored the resolver's list went stale when the server
+    // re-resolved the scan (the Power Rangers Dino Thunder scan kept showing its old best match
+    // after a re-run found the right TMDb entry). The server's current list wins then.
+    const draftFromOwnSearch = !!draft?.titleSearchQuery?.trim();
+    const base =
+      draft?.candidates && draft.candidates.length > 0 && (draftFromOwnSearch || freshCandidates.length === 0)
+        ? draft.candidates
+        : freshCandidates;
     // An exact-barcode match already tells us the real film with certainty - if the fresh
     // OMDB search this scan ran (or the UPC lookup that feeds it) didn't happen to surface
     // that same imdb_id as a candidate, synthesize one from the entry's own stored data so
@@ -668,7 +677,9 @@ export default function ConfirmScreen({
     if (existingMatchImdbId && candidates.some((c) => c.imdbID === existingMatchImdbId)) {
       return new Set([existingMatchImdbId]);
     }
-    if (draft?.selected) return new Set(draft.selected);
+    // Only picks that are still in the list (a re-resolved scan can drop the old candidates).
+    const stillListed = (draft?.selected ?? []).filter((id) => candidates.some((c) => c.imdbID === id));
+    if (stillListed.length > 0) return new Set(stillListed);
     if (autoMatchedCandidate) return new Set([autoMatchedCandidate.imdbID]);
     if (candidates.length === 1) return new Set([candidates[0].imdbID]);
     return new Set();
