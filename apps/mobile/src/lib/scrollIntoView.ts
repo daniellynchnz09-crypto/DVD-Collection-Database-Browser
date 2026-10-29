@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { Dimensions, type ScrollView, UIManager } from "react-native";
+import { Dimensions, type ScrollViewInstance, UIManager } from "react-native";
 
 /**
  * Manual scroll-to-focused-field, built directly on RN's own public `UIManager.measureInWindow`
@@ -14,11 +14,11 @@ import { Dimensions, type ScrollView, UIManager } from "react-native";
  * keyboard-height or scroll-position change.
  */
 export function createScrollIntoViewHandler(
-  scrollRef: RefObject<ScrollView | null>,
+  scrollRef: RefObject<ScrollViewInstance | null>,
   getKeyboardHeight: () => number,
   getScrollY: () => number
 ) {
-  return function scrollNodeIntoView(nodeHandle: number | null, delayMs = 0) {
+  return function scrollNodeIntoView(nodeHandle: number | null | undefined, delayMs = 0) {
     if (!nodeHandle) return;
     const measureAndScroll = () => {
       UIManager.measureInWindow(nodeHandle, (x, y, width, height) => {

@@ -15,6 +15,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import type { ScrollViewInstance, TextInputInstance } from "react-native";
 import { COMMON_CUT_NAMES, isTheatricalCut, titleWithCut } from "@danflix/shared";
 import { fetchCutInfo, previewTmdbFields, searchTitleOnOmdb, type OmdbSearchCandidate } from "../lib/scanApi";
 import { loadFieldOptions, type FieldOptions } from "../lib/fieldOptions";
@@ -307,7 +308,7 @@ export default function TitleSearchPicker({
   // rather than a third-party keyboard-aware scroll view, which proved inconsistent there in
   // real testing - see that screen's own comment) - this component just never had it at all,
   // unlike ConfirmScreen where every field was wired for it from the start.
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   const scrollYRef = useRef(0);
   const keyboardHeightRef = useRef(0);
   useEffect(() => {
@@ -327,21 +328,21 @@ export default function TitleSearchPicker({
   const scrollFieldIntoView = useRef(
     createScrollIntoViewHandler(scrollRef, () => keyboardHeightRef.current, () => scrollYRef.current)
   ).current;
-  function scrollInputRefIntoView(ref: React.RefObject<TextInput | null>) {
-    scrollFieldIntoView(findNodeHandle(ref.current));
+  function scrollInputRefIntoView(ref: React.RefObject<TextInputInstance | null>) {
+    scrollFieldIntoView(findNodeHandle(ref.current) ?? null);
   }
   function handleScroll(event: NativeSyntheticEvent<NativeScrollEvent>) {
     scrollYRef.current = event.nativeEvent.contentOffset.y;
   }
-  const queryInputRef = useRef<TextInput>(null);
-  const manualTitleInputRef = useRef<TextInput>(null);
-  const seasonNoInputRef = useRef<TextInput>(null);
-  const partOfSeasonNoInputRef = useRef<TextInput>(null);
-  const episodeCountInputRef = useRef<TextInput>(null);
-  const releaseNameInputRef = useRef<TextInput>(null);
-  const cutInputRef = useRef<TextInput>(null);
-  const cutReleaseDateInputRef = useRef<TextInput>(null);
-  const cutRuntimeInputRef = useRef<TextInput>(null);
+  const queryInputRef = useRef<TextInputInstance>(null);
+  const manualTitleInputRef = useRef<TextInputInstance>(null);
+  const seasonNoInputRef = useRef<TextInputInstance>(null);
+  const partOfSeasonNoInputRef = useRef<TextInputInstance>(null);
+  const episodeCountInputRef = useRef<TextInputInstance>(null);
+  const releaseNameInputRef = useRef<TextInputInstance>(null);
+  const cutInputRef = useRef<TextInputInstance>(null);
+  const cutReleaseDateInputRef = useRef<TextInputInstance>(null);
+  const cutRuntimeInputRef = useRef<TextInputInstance>(null);
 
   // Defaults the special-features disc to the LAST (highest-numbered) disc this title's own
   // movie occupies - added 2026-09-24, per the user's own direct instruction after backfilling

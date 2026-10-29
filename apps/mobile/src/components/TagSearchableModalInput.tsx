@@ -10,6 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import type { TextInputInstance } from "react-native";
 import { FONTS, GLOSS, PANEL, WELL } from "../theme";
 
 /**
@@ -37,7 +38,7 @@ export default function TagSearchableModalInput({
   numberOfLines?: number;
 }) {
   const [open, setOpen] = useState(false);
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<TextInputInstance>(null);
 
   function close() {
     Keyboard.dismiss();

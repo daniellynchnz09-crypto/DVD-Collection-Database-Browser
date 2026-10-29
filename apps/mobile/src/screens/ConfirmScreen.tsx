@@ -19,6 +19,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import type { ScrollViewInstance, TextInputInstance } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import {
@@ -361,7 +362,7 @@ export default function ConfirmScreen({
   // directly on RN's own UIManager.measureInWindow rather than a third-party keyboard-
   // aware scroll view, which was tried on this exact screen before and proved inconsistent
   // in real testing (see Claude/TECH STACK AND ARCHITECTURE.md's keyboard-avoidance history).
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
   const scrollYRef = useRef(0);
   const keyboardHeightRef = useRef(0);
   // How much of the window the Android keyboard actually covers (2026-10-04, user-reported:
@@ -408,23 +409,23 @@ export default function ConfirmScreen({
   /** Plain TextInputs scroll themselves into view via their own ref (not the focus event's
    * target - findNodeHandle wants a component ref, and a component ref is all a single
    * TextInput needs measuring anyway, unlike SearchableModalInput which opens its own modal). */
-  function scrollInputRefIntoView(ref: React.RefObject<TextInput | null>) {
+  function scrollInputRefIntoView(ref: React.RefObject<TextInputInstance | null>) {
     scrollFieldIntoView(findNodeHandle(ref.current));
   }
   function handleScroll(event: NativeSyntheticEvent<NativeScrollEvent>) {
     scrollYRef.current = event.nativeEvent.contentOffset.y;
   }
-  const titleSearchInputRef = useRef<TextInput>(null);
-  const manualTitleInputRef = useRef<TextInput>(null);
-  const releaseNameInputRef = useRef<TextInput>(null);
-  const discCountInputRef = useRef<TextInput>(null);
-  const collectionDiscCountInputRef = useRef<TextInput>(null);
-  const specialFeaturesDiscCountInputRef = useRef<TextInput>(null);
-  const releaseVariantNoteInputRef = useRef<TextInput>(null);
-  const caseNotesInputRef = useRef<TextInput>(null);
-  const depictedEraLabelInputRef = useRef<TextInput>(null);
-  const runningTimeMinsInputRef = useRef<TextInput>(null);
-  const directorInputRef = useRef<TextInput>(null);
+  const titleSearchInputRef = useRef<TextInputInstance>(null);
+  const manualTitleInputRef = useRef<TextInputInstance>(null);
+  const releaseNameInputRef = useRef<TextInputInstance>(null);
+  const discCountInputRef = useRef<TextInputInstance>(null);
+  const collectionDiscCountInputRef = useRef<TextInputInstance>(null);
+  const specialFeaturesDiscCountInputRef = useRef<TextInputInstance>(null);
+  const releaseVariantNoteInputRef = useRef<TextInputInstance>(null);
+  const caseNotesInputRef = useRef<TextInputInstance>(null);
+  const depictedEraLabelInputRef = useRef<TextInputInstance>(null);
+  const runningTimeMinsInputRef = useRef<TextInputInstance>(null);
+  const directorInputRef = useRef<TextInputInstance>(null);
 
   // Auto-detected from either the UPC listing's own title text OR a scanned cover photo's own
   // printed title (packages/shared/src/omdb.ts's looksLikeCollection, packages/backend/src/
