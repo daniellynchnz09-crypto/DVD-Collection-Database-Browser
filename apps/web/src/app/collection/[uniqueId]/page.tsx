@@ -35,6 +35,13 @@ import {
 
 export const revalidate = 300;
 
+// No pages are built ahead of time; an empty list lets each one be cached on its first visit
+// for the revalidate window above. Without it Next renders this dynamic route on every
+// request (found 2026-10-30: every click re-ran all the Supabase queries, ~1s a page).
+export function generateStaticParams() {
+  return [];
+}
+
 export async function generateMetadata(props: PageProps<"/collection/[uniqueId]">): Promise<Metadata> {
   const { uniqueId } = await props.params;
   const collection = await getCollection(uniqueId);
