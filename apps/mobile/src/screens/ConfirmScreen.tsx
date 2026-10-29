@@ -74,7 +74,7 @@ import SelectDropdown from "../components/SelectDropdown";
 import OfflineBanner from "../components/OfflineBanner";
 import TitleSearchPicker, { type CollectionMember } from "../components/TitleSearchPicker";
 import type { PendingScan } from "./PendingScansScreen";
-import { FONTS, GLOSS, PLATE, SCREEN, WELL } from "../theme";
+import { FONTS, GLOSS, PLATE, SCREEN, TEXT_BUTTON, TEXT_BUTTON_DANGER, TEXT_BUTTON_DANGER_TEXT, TEXT_BUTTON_TEXT, WELL } from "../theme";
 
 interface OmdbCandidate {
   Title: string;
@@ -3213,8 +3213,8 @@ export default function ConfirmScreen({
                       />
                     )}
                     {Platform.OS === "ios" && showDateRentedPicker && (
-                      <TouchableOpacity onPress={() => setShowDateRentedPicker(false)}>
-                        <Text style={styles.link}>Done</Text>
+                      <TouchableOpacity style={styles.textButton} onPress={() => setShowDateRentedPicker(false)}>
+                        <Text style={styles.textButtonText}>Done</Text>
                       </TouchableOpacity>
                     )}
                   </View>
@@ -3266,16 +3266,16 @@ export default function ConfirmScreen({
                     </TouchableOpacity>
                   </View>
                   <View style={styles.row}>
-                    <TouchableOpacity
+                    <TouchableOpacity style={styles.textButton}
                       onPress={() => {
                         setEditingMemberKey(m.key);
                         setShowTitleSearchPicker(true);
                       }}
                     >
-                      <Text style={styles.link}>Edit</Text>
+                      <Text style={styles.textButtonText}>Edit</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={() => removeCollectionMember(m.key)}>
-                      <Text style={styles.link}>Remove</Text>
+                    <TouchableOpacity style={styles.textButtonDanger} onPress={() => removeCollectionMember(m.key)}>
+                      <Text style={styles.textButtonDangerText}>Remove</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -3474,8 +3474,8 @@ export default function ConfirmScreen({
                   indeterminate for the duplicate check just before it - a single, short,
                   unknown-duration request with no meaningful "how much is left" figure. */}
               {submitting ? <ProgressBar progress={submitProgress} /> : checkingCollectionDuplicates && <IndeterminateBar />}
-              <TouchableOpacity onPress={handleDiscard} disabled={submitting || checkingCollectionDuplicates}>
-                <Text style={styles.link}>This was a stray scan - discard it</Text>
+              <TouchableOpacity style={styles.textButtonDanger} onPress={handleDiscard} disabled={submitting || checkingCollectionDuplicates}>
+                <Text style={styles.textButtonDangerText}>This was a stray scan - discard it</Text>
               </TouchableOpacity>
             </>
           );
@@ -3536,11 +3536,11 @@ export default function ConfirmScreen({
           >
             <Text style={styles.buttonText}>{titleSearching ? "Searching..." : "Search"}</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleSkipTitleSearch} disabled={titleSearching}>
-            <Text style={styles.link}>Skip - enter manually instead</Text>
+          <TouchableOpacity style={styles.textButton} onPress={handleSkipTitleSearch} disabled={titleSearching}>
+            <Text style={styles.textButtonText}>Skip - enter manually instead</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleDiscard} disabled={submitting || titleSearching}>
-            <Text style={styles.link}>
+          <TouchableOpacity style={styles.textButtonDanger} onPress={handleDiscard} disabled={submitting || titleSearching}>
+            <Text style={styles.textButtonDangerText}>
               {scan.barcode ? "This was a stray scan - discard it" : "Discard this entry"}
             </Text>
           </TouchableOpacity>
@@ -3608,8 +3608,8 @@ export default function ConfirmScreen({
             The scanned item's own photo was compared against every candidate's poster - this one
             matched clearly. Still worth a glance before confirming.
           </Text>
-          <TouchableOpacity onPress={handleNotThisItem}>
-            <Text style={styles.link}>Not this item - show what it was compared against</Text>
+          <TouchableOpacity style={styles.textButton} onPress={handleNotThisItem}>
+            <Text style={styles.textButtonText}>Not this item - show what it was compared against</Text>
           </TouchableOpacity>
         </View>
       ) : candidates.length > 0 ? (
@@ -3638,8 +3638,8 @@ export default function ConfirmScreen({
           )}
           {extraCandidates.length > 0 && (
             <View style={styles.section}>
-              <TouchableOpacity onPress={() => setShowExtras((prev) => !prev)}>
-                <Text style={styles.link}>
+              <TouchableOpacity style={styles.textButton} onPress={() => setShowExtras((prev) => !prev)}>
+                <Text style={styles.textButtonText}>
                   {showExtras ? "Hide" : "Show"} Extras ({extraCandidates.length}) - making-of/behind-the-scenes/special-screening results that share this title
                 </Text>
               </TouchableOpacity>
@@ -3816,8 +3816,8 @@ export default function ConfirmScreen({
               <Text style={styles.buttonText}>{selected.size > 0 ? "This is the one - review" : "Continue to review"}</Text>
             </TouchableOpacity>
             {candidates.length > 0 && selected.size > 0 && (
-              <TouchableOpacity onPress={() => setSelected(new Set())}>
-                <Text style={styles.link}>None of these - enter it manually instead</Text>
+              <TouchableOpacity style={styles.textButton} onPress={() => setSelected(new Set())}>
+                <Text style={styles.textButtonText}>None of these - enter it manually instead</Text>
               </TouchableOpacity>
             )}
           </>
@@ -4117,8 +4117,8 @@ export default function ConfirmScreen({
               />
             )}
             {Platform.OS === "ios" && showDateRentedPicker && (
-              <TouchableOpacity onPress={() => setShowDateRentedPicker(false)}>
-                <Text style={styles.link}>Done</Text>
+              <TouchableOpacity style={styles.textButton} onPress={() => setShowDateRentedPicker(false)}>
+                <Text style={styles.textButtonText}>Done</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -4372,8 +4372,8 @@ export default function ConfirmScreen({
           {checkingExisting ? "Checking your collection..." : submitting ? "Saving..." : "Confirm"}
         </Text>
       </TouchableOpacity>
-      <TouchableOpacity onPress={handleDiscard} disabled={submitting || checkingExisting}>
-        <Text style={styles.link}>This was a stray scan - discard it</Text>
+      <TouchableOpacity style={styles.textButtonDanger} onPress={handleDiscard} disabled={submitting || checkingExisting}>
+        <Text style={styles.textButtonDangerText}>This was a stray scan - discard it</Text>
       </TouchableOpacity>
           </>
         );
@@ -4432,7 +4432,10 @@ const styles = StyleSheet.create({
   // visible screen" discipline applied horizontally instead, which nothing had covered before.
   body: { fontFamily: FONTS.body, color: "#d7e2ee", flexShrink: 1 },
   hint: { fontFamily: FONTS.body, color: "#a9b8cc", fontStyle: "italic" },
-  link: { fontFamily: FONTS.body, color: "#5cc8ff" },
+  textButton: TEXT_BUTTON,
+  textButtonText: TEXT_BUTTON_TEXT,
+  textButtonDanger: TEXT_BUTTON_DANGER,
+  textButtonDangerText: TEXT_BUTTON_DANGER_TEXT,
   // The same glossy back button as Pending Value and the offline queue (2026-10-29, the user's
   // request - this one was a plain text link).
   backButton: { ...GLOSS, backgroundColor: "#1d6c9a", paddingVertical: 10, paddingHorizontal: 16, borderRadius: 0, alignSelf: "flex-start" },

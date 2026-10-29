@@ -119,3 +119,23 @@ export const LABEL_TECH = {
   textTransform: "uppercase",
   color: COLORS.mist,
 } as const;
+
+/** A secondary action ("Skip", "Search again", "Select", "Cancel"): a small glossy button, the
+ * same face as Pending Scans' Pending Value button (2026-10-29, the user: these used to be plain
+ * blue text, inconsistent with the app's raised buttons). Sized to its label. */
+export const TEXT_BUTTON = {
+  ...GLOSS,
+  backgroundColor: COLORS.accentDeep,
+  borderWidth: 1,
+  borderColor: COLORS.accentDim,
+  paddingVertical: 8,
+  paddingHorizontal: 12,
+  alignSelf: "flex-start",
+} as const;
+
+export const TEXT_BUTTON_TEXT = { fontFamily: FONTS.displaySemiBold, color: COLORS.accentHi, fontSize: 13, letterSpacing: 1 } as const;
+
+/** TEXT_BUTTON for a destructive action (discard, remove, delete). */
+export const TEXT_BUTTON_DANGER = { ...TEXT_BUTTON, backgroundColor: "#4a1418", borderColor: "#9b2c2c" } as const;
+
+export const TEXT_BUTTON_DANGER_TEXT = { ...TEXT_BUTTON_TEXT, color: "#fecaca" } as const;

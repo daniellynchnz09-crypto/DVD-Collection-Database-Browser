@@ -14,7 +14,7 @@ import { createManualPendingScan, discardScan, fetchPendingScans, fetchUpcQuotaS
 import { clearConfirmDraft } from "../lib/confirmDrafts";
 import { getHiddenPendingScanIds, useSubmissionsVersion } from "../lib/backgroundSubmissions";
 import { getQueuedPendingScanIds } from "../lib/offlineQueue";
-import { CARD, CHROME_BAR, COLORS, FONTS, GLOSS, SCREEN, WELL } from "../theme";
+import { CARD, CHROME_BAR, COLORS, FONTS, GLOSS, SCREEN, TEXT_BUTTON, TEXT_BUTTON_DANGER, TEXT_BUTTON_DANGER_TEXT, TEXT_BUTTON_TEXT, WELL } from "../theme";
 
 export interface PendingScan {
   id: string;
@@ -314,27 +314,25 @@ export default function PendingScansScreen({
             <Text style={styles.backButtonText}>{selectionMode ? "Cancel" : "< Scanner"}</Text>
           </TouchableOpacity>
           {selectionMode ? (
-            <TouchableOpacity onPress={confirmDelete} disabled={selectedIds.size === 0 || deleting}>
-              <Text
-                style={[
-                  styles.link,
-                  styles.deleteLink,
-                  (selectedIds.size === 0 || deleting) && styles.deleteLinkDisabled,
-                ]}
-              >
+            <TouchableOpacity
+              style={[styles.textButtonDanger, (selectedIds.size === 0 || deleting) && styles.textButtonDisabled]}
+              onPress={confirmDelete}
+              disabled={selectedIds.size === 0 || deleting}
+            >
+              <Text style={styles.textButtonDangerText}>
                 {deleting ? "Deleting..." : `Delete (${selectedIds.size})`}
               </Text>
             </TouchableOpacity>
           ) : (
             <View style={styles.headerActions}>
               {scans.length > 0 && (
-                <TouchableOpacity onPress={() => setSelectionMode(true)}>
-                  <Text style={styles.link}>Select</Text>
+                <TouchableOpacity style={styles.textButton} onPress={() => setSelectionMode(true)}>
+                  <Text style={styles.textButtonText}>Select</Text>
                 </TouchableOpacity>
               )}
               {onGoToOfflineQueue && !!offlineQueueCount && (
-                <TouchableOpacity onPress={onGoToOfflineQueue}>
-                  <Text style={styles.link}>Offline Queue ({offlineQueueCount})</Text>
+                <TouchableOpacity style={styles.textButton} onPress={onGoToOfflineQueue}>
+                  <Text style={styles.textButtonText}>Offline Queue ({offlineQueueCount})</Text>
                 </TouchableOpacity>
               )}
               <TouchableOpacity
@@ -421,7 +419,10 @@ const styles = StyleSheet.create({
   },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   headerActions: { flexDirection: "row", alignItems: "center", gap: 14 },
-  link: { fontFamily: FONTS.body, color: "#5cc8ff" },
+  textButton: TEXT_BUTTON,
+  textButtonText: TEXT_BUTTON_TEXT,
+  textButtonDanger: TEXT_BUTTON_DANGER,
+  textButtonDangerText: TEXT_BUTTON_DANGER_TEXT,
   headerButton: { ...GLOSS, backgroundColor: COLORS.accentDeep, borderWidth: 1, borderColor: COLORS.accentDim, paddingVertical: 6, paddingHorizontal: 10 },
   headerButtonText: { fontFamily: FONTS.displaySemiBold, color: COLORS.accentHi, fontSize: 12, letterSpacing: 1, textTransform: "uppercase" },
   addButton: {
@@ -442,8 +443,7 @@ const styles = StyleSheet.create({
     borderRadius: 0,
   },
   backButtonText: { letterSpacing: 1, color: "#fff", fontSize: 15, fontFamily: FONTS.displayBold },
-  deleteLink: { fontFamily: FONTS.body, color: "#f87171" },
-  deleteLinkDisabled: { fontFamily: FONTS.body, color: "#52171a" },
+  textButtonDisabled: { opacity: 0.4 },
   title: { color: "#e9f1f9", fontSize: 18, fontFamily: FONTS.displayBold },
   quotaRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 },
   quotaBarTrack: { ...WELL, flex: 1, height: 6, borderRadius: 3, backgroundColor: "#16294a", overflow: "hidden" },

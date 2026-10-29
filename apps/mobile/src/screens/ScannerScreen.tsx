@@ -8,7 +8,7 @@ import { useScannerSettings } from "../lib/scannerSettings";
 import { clearConfirmDraft } from "../lib/confirmDrafts";
 import { createScanSessionId } from "../lib/scanSession";
 import OfflineBanner from "../components/OfflineBanner";
-import { CHROME_BAR, COLORS, FONTS, GLOSS, PANEL } from "../theme";
+import { CHROME_BAR, COLORS, FONTS, GLOSS, PANEL, TEXT_BUTTON, TEXT_BUTTON_DANGER, TEXT_BUTTON_DANGER_TEXT, TEXT_BUTTON_TEXT } from "../theme";
 
 interface ScanSession {
   sessionId: string;
@@ -356,13 +356,13 @@ export default function ScannerScreen({
           {!session.barcode && autoBarcode && autoBarcodeEnabled && (
             <View style={styles.autoBarcodeRow}>
               <Text style={styles.captured}>Barcode found on the case: {autoBarcode} - added when you tap Done</Text>
-              <TouchableOpacity
+              <TouchableOpacity style={styles.textButtonDanger}
                 onPress={() => {
                   setDismissedAutoBarcode(autoBarcode);
                   setAutoBarcode(null);
                 }}
               >
-                <Text style={styles.link}>Don&apos;t add it</Text>
+                <Text style={styles.textButtonDangerText}>Don&apos;t add it</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -475,7 +475,10 @@ const styles = StyleSheet.create({
   settingLabel: { fontFamily: FONTS.body, color: "#e9f1f9", fontSize: 16, flexShrink: 1 },
   settingHint: { fontFamily: FONTS.body, color: "#a9b8cc", fontSize: 13 },
   autoBarcodeRow: { alignItems: "center", gap: 4 },
-  link: { fontFamily: FONTS.body, color: "#5cc8ff", textDecorationLine: "underline" },
+  textButton: TEXT_BUTTON,
+  textButtonText: TEXT_BUTTON_TEXT,
+  textButtonDanger: TEXT_BUTTON_DANGER,
+  textButtonDangerText: TEXT_BUTTON_DANGER_TEXT,
   warning: { fontFamily: FONTS.body, color: "#ffb347", textAlign: "center" },
   overlay: {
     position: "absolute",

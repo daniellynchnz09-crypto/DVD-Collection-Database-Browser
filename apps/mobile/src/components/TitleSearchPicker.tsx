@@ -27,7 +27,7 @@ import SingleSelectChips from "./SingleSelectChips";
 import BigChoice from "./BigChoice";
 import SummaryRow from "./SummaryRow";
 import SlideFlow, { type Slide } from "./SlideFlow";
-import { FONTS, GLOSS, WELL } from "../theme";
+import { FONTS, GLOSS, TEXT_BUTTON, TEXT_BUTTON_DANGER, TEXT_BUTTON_DANGER_TEXT, TEXT_BUTTON_TEXT, WELL } from "../theme";
 
 /** One title added to a Collection scan's running member list (ConfirmScreen.tsx's
  * Collection flow, added 2026-09-20 - see Claude/TECH STACK AND ARCHITECTURE/
@@ -721,8 +721,8 @@ export default function TitleSearchPicker({
           <TouchableOpacity style={styles.button} onPress={handleSearch} disabled={searching || !query.trim()}>
             <Text style={styles.buttonText}>{searching ? "Searching..." : "Search"}</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleSkipToManual} disabled={searching}>
-            <Text style={styles.link}>Skip - enter manually instead</Text>
+          <TouchableOpacity style={styles.textButton} onPress={handleSkipToManual} disabled={searching}>
+            <Text style={styles.textButtonText}>Skip - enter manually instead</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -742,8 +742,8 @@ export default function TitleSearchPicker({
                   </Text>
                 </TouchableOpacity>
               ))}
-              <TouchableOpacity onPress={() => setHasSearched(false)}>
-                <Text style={styles.link}>Search again</Text>
+              <TouchableOpacity style={styles.textButton} onPress={() => setHasSearched(false)}>
+                <Text style={styles.textButtonText}>Search again</Text>
               </TouchableOpacity>
             </>
           ) : (
@@ -775,7 +775,7 @@ export default function TitleSearchPicker({
             {selectedCandidate.Title}
             {selectedCandidate.Year ? ` (${selectedCandidate.Year})` : ""}
           </Text>
-          <TouchableOpacity
+          <TouchableOpacity style={styles.textButton}
             onPress={() => {
               previewForImdbIdRef.current = null;
               setSelectedImdbId(null);
@@ -788,7 +788,7 @@ export default function TitleSearchPicker({
               setCutLookupLoading(false);
             }}
           >
-            <Text style={styles.link}>Not this one - pick again</Text>
+            <Text style={styles.textButtonText}>Not this one - pick again</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -1184,8 +1184,8 @@ export default function TitleSearchPicker({
           returnKey={slideReturn}
           slides={slides}
         />
-        <TouchableOpacity onPress={onCancel}>
-          <Text style={styles.link}>Cancel</Text>
+        <TouchableOpacity style={styles.textButton} onPress={onCancel}>
+          <Text style={styles.textButtonText}>Cancel</Text>
         </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -1207,7 +1207,10 @@ const styles = StyleSheet.create({
   hintNeeded: { fontFamily: FONTS.body, color: "#eab308", fontStyle: "italic" },
   labelNeeded: { color: "#eab308" },
   inputNeeded: { borderColor: "#eab308" },
-  link: { fontFamily: FONTS.body, color: "#5cc8ff" },
+  textButton: TEXT_BUTTON,
+  textButtonText: TEXT_BUTTON_TEXT,
+  textButtonDanger: TEXT_BUTTON_DANGER,
+  textButtonDangerText: TEXT_BUTTON_DANGER_TEXT,
   error: { fontFamily: FONTS.body, color: "#f87171" },
   input: {
     ...WELL,
