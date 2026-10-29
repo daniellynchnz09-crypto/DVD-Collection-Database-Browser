@@ -361,13 +361,6 @@ export default function PendingScansScreen({
             </Text>
           </View>
         )}
-        {/* Below the UPC bar as plain text rather than a header button (2026-10-29, the user's
-            call - it crowded the button bar). */}
-        {scans.length > 0 && !selectionMode && (
-          <TouchableOpacity style={styles.selectLink} onPress={() => setSelectionMode(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Text style={styles.selectLinkText}>Select</Text>
-          </TouchableOpacity>
-        )}
       </View>
       <SectionList
         sections={sections}
@@ -378,6 +371,15 @@ export default function PendingScansScreen({
           { paddingBottom: insets.bottom },
         ]}
         ListEmptyComponent={<Text style={styles.empty}>No pending scans to review.</Text>}
+        // Plain text at the top of the list itself, not in the header bar (2026-10-29, the
+        // user's call - it crowded the header's buttons).
+        ListHeaderComponent={
+          scans.length > 0 && !selectionMode ? (
+            <TouchableOpacity style={styles.selectLink} onPress={() => setSelectionMode(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.selectLinkText}>Select</Text>
+            </TouchableOpacity>
+          ) : undefined
+        }
         renderSectionHeader={({ section }) => (
           <Text style={styles.sectionHeader}>{section.title}</Text>
         )}
@@ -438,7 +440,7 @@ const styles = StyleSheet.create({
   },
   addButtonText: { letterSpacing: 1, color: "#fff", fontSize: 20, fontFamily: FONTS.displayBold, lineHeight: 22 },
   textButtonDisabled: { opacity: 0.4 },
-  selectLink: { alignSelf: "flex-start", marginTop: 4 },
+  selectLink: { alignSelf: "flex-end", paddingHorizontal: 16, paddingTop: 12 },
   selectLinkText: { fontFamily: FONTS.displaySemiBold, color: COLORS.accent, fontSize: 14, letterSpacing: 1 },
   title: { color: "#e9f1f9", fontSize: 18, fontFamily: FONTS.displayBold },
   quotaRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 },
