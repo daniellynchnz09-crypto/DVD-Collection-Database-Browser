@@ -326,11 +326,6 @@ export default function PendingScansScreen({
             </TouchableOpacity>
           ) : (
             <>
-              {scans.length > 0 && (
-                <TouchableOpacity style={styles.textButton} onPress={() => setSelectionMode(true)}>
-                  <Text style={styles.textButtonText}>Select</Text>
-                </TouchableOpacity>
-              )}
               {onGoToOfflineQueue && !!offlineQueueCount && (
                 <TouchableOpacity style={styles.textButton} onPress={onGoToOfflineQueue}>
                   <Text style={styles.textButtonText}>Offline Queue ({offlineQueueCount})</Text>
@@ -365,6 +360,13 @@ export default function PendingScansScreen({
               UPC lookups: {upcQuota.used}/{upcQuota.limit} today
             </Text>
           </View>
+        )}
+        {/* Below the UPC bar as plain text rather than a header button (2026-10-29, the user's
+            call - it crowded the button bar). */}
+        {scans.length > 0 && !selectionMode && (
+          <TouchableOpacity style={styles.selectLink} onPress={() => setSelectionMode(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={styles.selectLinkText}>Select</Text>
+          </TouchableOpacity>
         )}
       </View>
       <SectionList
@@ -436,6 +438,8 @@ const styles = StyleSheet.create({
   },
   addButtonText: { letterSpacing: 1, color: "#fff", fontSize: 20, fontFamily: FONTS.displayBold, lineHeight: 22 },
   textButtonDisabled: { opacity: 0.4 },
+  selectLink: { alignSelf: "flex-start", marginTop: 4 },
+  selectLinkText: { fontFamily: FONTS.displaySemiBold, color: COLORS.accent, fontSize: 14, letterSpacing: 1 },
   title: { color: "#e9f1f9", fontSize: 18, fontFamily: FONTS.displayBold },
   quotaRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10 },
   quotaBarTrack: { ...WELL, flex: 1, height: 6, borderRadius: 3, backgroundColor: "#16294a", overflow: "hidden" },
