@@ -369,11 +369,10 @@ export default function TitleSearchPicker({
   // user has actually typed - only fills in while the field is still blank.
   useEffect(() => {
     if (specialFeaturesDiscFormat.trim()) return;
+    // Only a separate disc has a "special features disc" format to fill (2026-10-29) - the
+    // film's own disc is just the film's format.
     for (const n of selectedSpecialFeaturesDiscs) {
-      if (selectedDiscs.includes(n) && format) {
-        setSpecialFeaturesDiscFormat(format);
-        return;
-      }
+      if (selectedDiscs.includes(n)) continue;
       if (discFormatLookup[n]) {
         setSpecialFeaturesDiscFormat(discFormatLookup[n]);
         return;
@@ -390,6 +389,12 @@ export default function TitleSearchPicker({
   // disc count being >1, which made no sense once the bonus-features disc question moved to
   // its own numbered checklist independent of how many discs the movie itself is on.
   const showMemberSpecialFeaturesDiscFields = specialFeatures;
+  // The ticked special features discs that are NOT this title's own disc(s) - the only ones
+  // that make a "special features disc" (2026-10-29, the user: features on the film's own disc
+  // are just special features, not a special features disc, so they mustn't be asked for a
+  // features-disc format or shown as one). Same rule handleAddPressed already applied on save.
+  const separateSpecialFeaturesDiscs = selectedSpecialFeaturesDiscs.filter((d) => !selectedDiscs.includes(d)).sort((a, b) => a - b);
+  const featuresOnOwnDiscOnly = selectedSpecialFeaturesDiscs.length > 0 && separateSpecialFeaturesDiscs.length === 0;
   // Same shape as ConfirmScreen.tsx's own showRatingField - hidden while a real TMDb lookup
   // for this member is still in flight (so it doesn't flash on then off once the lookup
   // resolves), shown once that lookup has genuinely come up empty, or immediately for a
@@ -954,7 +959,13 @@ export default function TitleSearchPicker({
             ) : (
               <Text style={styles.hint}>Set the collection&apos;s Total Disc Count first, then come back.</Text>
             )}
+            {featuresOnOwnDiscOnly && (
+              <Text style={styles.hint}>
+                On the film&apos;s own disc - saved as having special features, not as a separate special features disc.
+              </Text>
+            )}
           </View>
+          {separateSpecialFeaturesDiscs.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.label}>Format of Special Features Disc(s)</Text>
             <SearchableModalInput
@@ -968,6 +979,7 @@ export default function TitleSearchPicker({
               yours to correct if it&apos;s wrong.
             </Text>
           </View>
+          )}
         </>
       )}
     </>
@@ -1113,11 +1125,18 @@ export default function TitleSearchPicker({
       <SummaryRow
         label="Special features"
         value={
-          specialFeatures
-            ? `disc(s) ${selectedSpecialFeaturesDiscs.join(",") || "?"}, ${specialFeaturesDiscFormat || "format?"}`
-            : "None"
+          !specialFeatures
+            ? "None"
+            : featuresOnOwnDiscOnly
+              ? "On the film's own disc"
+              : separateSpecialFeaturesDiscs.length > 0
+                ? `Separate disc(s) ${separateSpecialFeaturesDiscs.join(",")}, ${specialFeaturesDiscFormat || "format?"}`
+                : "disc(s) ?"
         }
-        missing={specialFeatures && (selectedSpecialFeaturesDiscs.length === 0 || !specialFeaturesDiscFormat.trim())}
+        missing={
+          specialFeatures &&
+          (selectedSpecialFeaturesDiscs.length === 0 || (separateSpecialFeaturesDiscs.length > 0 && !specialFeaturesDiscFormat.trim()))
+        }
         // Worth a glance when off (2026-09-24, per the user's own request) - easy to forget to
         // tick for a title that does have its own bonus content.
         notable={!specialFeatures}
